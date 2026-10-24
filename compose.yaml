@@ -1,0 +1,108 @@
+# celld-sites: SvelteKit sites (adapter-cloudflare builds) served by one celld
+# node, each in its own Dynamic Worker isolate, picked by the Host header.
+# Site code, assets and Durable Object data live in the S3 bucket below.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # S3-compatible object store (VersityGW, posix backend) holding celld's state:
+  # deployments, site code and assets, and all Durable Object data. Objects are
+  # plain files in the s3-data volume, so the VM backup covers them.
+  s3:
+    image: versity/versitygw:v1.10.0
+    restart: unless-stopped
+    environment:
+      VGW_BACKEND: posix
+      VGW_BACKEND_ARG: /data
+      # Flush each object to disk before acknowledging it. celld confirms a write
+      # only once the bucket has it, so without this a VM crash could lose writes
+      # celld already confirmed.
+      VGW_FSYNC: ${S3_FSYNC:-true}
+      ROOT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in .env}
+      ROOT_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY in .env}
+    volumes:
+      - s3-data:/data
+    mem_limit: 1g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      # Unauthenticated requests get 403; any HTTP answer means the gateway is up.
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1:7070/ 2>&1 | grep -q 'HTTP/'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *logging
+    networks:
+      - default
+
+  # One celld node running the host-header router (router/index.js). On every
+  # start it creates the bucket if needed, deploys the router, starts the node
+  # and deploys the bundled example site to ${HOST_DOMAIN}.
+  celld:
+    build:
+      context: .
+      dockerfile: node/Dockerfile
+    image: celld-sites-node
+    restart: unless-stopped
+    init: true
+    depends_on:
+      s3:
+        condition: service_healthy
+        restart: true
+    environment:
+      CELLD_BUCKET: s3://celld
+      S3_ENDPOINT: http://s3:7070
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
+      # The deploy API answers only on this hostname, which Traefik never routes.
+      ADMIN_HOST: admin.internal
+      EXAMPLE_HOST: ${HOST_DOMAIN:?Set HOST_DOMAIN in .env}
+      # Delete write-log epochs no restore needs once they are this old (epoch GC,
+      # a pass at most every 5 min). Covers the router's KV (site code and assets)
+      # and its root objects. celld 0.6.3 skips Durable Object facets, so site
+      # object logs still grow (~4-6 KB per write); see README.
+      CELLD_LTX_RETENTION_SECS: ${CELLD_LTX_RETENTION_SECS:-3600}
+    # celld's local working copy (SQLite, replication); the bucket is the source
+    # of truth, this just saves re-downloading objects after a restart.
+    volumes:
+      - celld-state:/var/lib/celld
+    mem_limit: 3g
+    # celld drains for up to 40 s (CELLD_SHUTDOWN_TOTAL_MS) before it exits.
+    stop_grace_period: 50s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/.well-known/celld/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      # LAN only: the hostname is not in the Cloudflare tunnel. Add more sites
+      # with SITES_RULE in .env, e.g. Host(`a.example.com`) || Host(`b.example.com`)
+      - 'traefik.http.routers.celld-sites.rule=${SITES_RULE:-Host(`${HOST_DOMAIN}`)}'
+      - 'traefik.http.services.celld-sites.loadbalancer.server.port=8080'
+
+volumes:
+  s3-data:
+  celld-state:
+
+networks:
+  traefik_web:
+    external: true

@@ -1,0 +1,13 @@
+{
+	"name": "site-router",
+	"main": "index.js",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"worker_loaders": [{ "binding": "LOADER" }],
+	"kv_namespaces": [{ "binding": "CODE", "id": "code" }],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE_OBJECTS", "class_name": "SiteObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteObject"] }],
+	"vars": { "ADMIN_TOKEN": "@ADMIN_TOKEN@", "ADMIN_HOST": "@ADMIN_HOST@" }
+}
