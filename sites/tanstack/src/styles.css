@@ -1,0 +1,106 @@
+:root {
+	color-scheme: light dark;
+	font-family: system-ui, sans-serif;
+	--bg: #f6f7f9;
+	--card: #ffffff;
+	--line: #e3e6eb;
+	--text: #1b1f24;
+	--muted: #5b6370;
+	--accent: #3b5bdb;
+	--error: #c92a2a;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #111418;
+		--card: #1a1e24;
+		--line: #2a3039;
+		--text: #e6e9ef;
+		--muted: #8c94a4;
+	}
+}
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+}
+main {
+	max-width: 46rem;
+	margin: 0 auto;
+	padding: 2rem 1rem 3rem;
+	display: grid;
+	gap: 1.25rem;
+}
+h1 {
+	margin: 0 0 0.25rem;
+}
+h2 {
+	margin: 0 0 0.75rem;
+	font-size: 1.1rem;
+}
+.sub {
+	color: var(--muted);
+	margin: 0;
+	line-height: 1.5;
+}
+.stats {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+	gap: 0.75rem;
+}
+.card {
+	background: var(--card);
+	border: 1px solid var(--line);
+	border-radius: 0.75rem;
+	padding: 1rem;
+}
+.stats b {
+	display: block;
+	font-size: 1.35rem;
+}
+.stats span {
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+form {
+	display: grid;
+	gap: 0.5rem;
+}
+textarea,
+button {
+	font: inherit;
+	padding: 0.6rem 0.75rem;
+	border-radius: 0.5rem;
+	border: 1px solid var(--line);
+	background: var(--bg);
+	color: inherit;
+}
+button {
+	background: var(--accent);
+	color: #fff;
+	border: none;
+	cursor: pointer;
+	justify-self: start;
+}
+button:disabled {
+	opacity: 0.6;
+}
+.error {
+	color: var(--error);
+	margin: 0;
+}
+ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 0.75rem;
+}
+li p {
+	margin: 0.25rem 0 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+time {
+	color: var(--muted);
+	font-size: 0.85rem;
+}

@@ -1,0 +1,7 @@
+{
+	"worker": "dist/server/index.js",
+	"assets": "dist/client",
+	"objects": "src/objects.ts",
+	"immutable": ["assets/"],
+	"notFound": "none"
+}

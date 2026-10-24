@@ -1,0 +1,9 @@
+{
+	// Used only by @cloudflare/vite-plugin during the build. celld-sites does not
+	// deploy with wrangler and ignores the wrangler.json the build emits.
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "celld-tanstack",
+	"main": "@tanstack/react-start/server-entry",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"]
+}

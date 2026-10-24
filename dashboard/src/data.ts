@@ -18,10 +18,13 @@ export const config = {
 };
 if (!config.readToken) throw new Error("READ_TOKEN is required");
 
-export interface Deploy { host: string; at: string; version: string; assets?: number; sourceBytes?: number }
-export interface SiteObject { host: string; className: string; name: string; id?: string; firstSeen?: string; bytes: number; files: number; resident: boolean }
+export interface Deploy { site: string; at: string; version: string; assets?: number; sourceBytes?: number; pruned?: boolean }
+export interface SiteObject { site: string; className: string; name: string; id?: string; firstSeen?: string; bytes: number; files: number; resident: boolean }
 export interface Site {
-	host: string;
+	/** Site id: owns the versions and objects; the first hostname it was deployed to. */
+	id: string;
+	/** Hostnames that serve the site: its id (unless that is aliased elsewhere) plus aliases. */
+	hostnames: string[];
 	version: string;
 	deploys: Deploy[];
 	objects: SiteObject[];
@@ -154,9 +157,10 @@ function safeList(dir: string): string[] {
 }
 
 interface Overview {
-	sites: { host: string; version: string }[];
+	sites: { id: string; version: string; aliases: string[] }[];
+	aliases: { host: string; site: string }[];
 	deploys: Deploy[];
-	objects: { host: string; className: string; name: string; id?: string; firstSeen?: string }[];
+	objects: { site: string; className: string; name: string; id?: string; firstSeen?: string }[];
 	versions: { version: string; assets: number }[];
 }
 
@@ -197,18 +201,23 @@ async function build(): Promise<Model> {
 	const indexedIds = new Set<string>();
 
 	const sites: Site[] = (overview?.sites ?? [])
-		.map(({ host, version }) => {
+		.map(({ id, version, aliases }) => {
+			const aliasedAway = (overview?.aliases ?? []).some((a) => a.host === id && a.site !== id);
 			const objects = (overview?.objects ?? [])
-				.filter((o) => o.host === host)
+				.filter((o) => o.site === id)
 				.map((o) => {
 					if (o.id) indexedIds.add(o.id);
 					const u = (o.id && bucket?.perObject.get(o.id)) || ZERO;
 					return { ...o, ...u, resident: Boolean(o.id && resident.has(o.id)) };
 				})
 				.sort((a, b) => b.bytes - a.bytes);
-			const deploys = (overview?.deploys ?? []).filter((d) => d.host === host).sort((a, b) => b.at.localeCompare(a.at));
+			const deploys = (overview?.deploys ?? [])
+				.filter((d) => d.site === id)
+				.map((d) => ({ ...d, pruned: !assetsByVersion.has(d.version) }))
+				.sort((a, b) => b.at.localeCompare(a.at));
 			return {
-				host,
+				id,
+				hostnames: [...(aliasedAway ? [] : [id]), ...aliases].sort(),
 				version,
 				deploys,
 				objects,
@@ -216,7 +225,7 @@ async function build(): Promise<Model> {
 				assets: assetsByVersion.get(version),
 			};
 		})
-		.sort((a, b) => a.host.localeCompare(b.host));
+		.sort((a, b) => a.id.localeCompare(b.id));
 	// Index entries of sites that no longer exist still count as indexed.
 	for (const o of overview?.objects ?? []) if (o.id) indexedIds.add(o.id);
 

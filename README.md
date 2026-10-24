@@ -18,9 +18,11 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `compose.yaml` | `s3` (VersityGW, files in a Docker volume), `celld` (the node) and `dashboard` |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node, bundled sites) and `push.sh` |
 | `router/` | The host-header router Worker and its config template |
-| `tools/pack.mjs` | Packs a built site into a deploy payload |
+| `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
+| `tools/admin.sh` | Admin API from the host: aliases, rollback, pruning |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) |
+| `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
 | `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the image |
 
 ## Run
@@ -58,7 +60,9 @@ before the index existed show up as "not in the index" with their total size.
 
 ## Deploy a site
 
-Sites are SvelteKit apps built with `@sveltejs/adapter-cloudflare`:
+Any build that is a Workers `fetch` handler plus static files works (SvelteKit,
+Nuxt, TanStack Start, static-only); see `docs/SITES.md`, `sites/AGENTS.md` (for
+agents building sites) and the examples in `sites/` (each has a `RECIPE.md`).
 
 ```sh
 tools/deploy.sh path/to/site blog.example.com
@@ -66,16 +70,27 @@ tools/deploy.sh path/to/site blog.example.com
 
 Then add the hostname to Traefik with `SITES_RULE` in `.env`, e.g.
 ``SITES_RULE=Host(`celld-test.example.com`) || Host(`blog.example.com`)``,
-and run `docker compose up -d`. Each deploy is a new version keyed by a hash of
-its content; the switch to it happens after everything is stored, and old
-versions stay in the bucket (rollback = point `site:<host>` at an old version).
+and run `docker compose up -d`.
 
-Site code notes (SvelteKit 3):
+A deploy uploads each static file in its own request (at most 20 MiB per file),
+then the server code and file list, then activates the version. Visitors switch
+to it only at that last step. Each version is keyed by a hash of its content.
 
-- Bindings come from `import { env } from 'cloudflare:workers'`; there is no
-  `platform.env`. A site gets exactly two: `ASSETS` (its own files) and `OBJECTS`.
-- `$lib` is now `#lib`, and subpath imports need the file extension
-  (`#lib/server/objects.ts`).
+```sh
+tools/admin.sh POST '/activate?host=blog.example.com&version=<id>'    # roll back (or forward)
+tools/admin.sh PUT '/alias?host=new.example.com&site=blog.example.com' # serve a site under another name
+tools/admin.sh DELETE '/alias?host=new.example.com'
+tools/admin.sh POST '/prune?keep=3'   # delete versions except current + 3 most recent per site
+```
+
+**Site ids.** A site's id is the hostname it was first deployed to, and the id
+owns its versions and Durable Objects. To rename a site, alias the new hostname
+to it; deploying to a new hostname instead creates a new, empty site. The
+dashboard shows each site's id, hostnames and deploy history.
+
+SvelteKit sites should set `version: { name: <git commit> }` (see
+`sites/example/vite.config.ts`): the default is a build timestamp, which makes
+every rebuild a new version even with no changes.
 
 ## Durable Objects
 
@@ -86,8 +101,8 @@ await env.OBJECTS.call('Guestbook', 'main', 'add', name, message);
 ```
 
 Each `(site, class, name)` is a separate object with its own SQLite database.
-The router runs it as a facet of its `SiteObject`, keyed by the site's
-hostname, so a site can only reach its own objects. Data survives redeploys.
+The router runs it as a facet of its `SiteObject`, keyed by the site id, so a
+site can only reach its own objects. Data survives redeploys and aliases.
 See `sites/example/src/objects.ts`.
 
 Limits: arguments and results must be plain (structured-cloneable) data, so
@@ -122,25 +137,32 @@ container creates it and redeploys the router and the example by itself.
   cleaned up: `CELLD_LTX_RETENTION_SECS` (default 3600) deletes write-log
   epochs older than an hour that no restore needs. A new epoch starts when an
   object is restored, e.g. after a celld restart.
-- **Old site versions** are never deleted: roughly one payload (~0.5 MB for
-  the example) per deploy.
+- **Old site versions** stay until pruned (`tools/admin.sh POST '/prune?keep=3'`):
+  roughly the size of the build (~0.5 MB for the example) per deploy.
 
 ## Security
 
 - celld's internal operator listener (unauthenticated) stays on 127.0.0.1
   inside the container; the bucket is only on the project network.
-- The deploy API answers only for the hostname `admin.internal`, which Traefik
-  never routes, and requires `ADMIN_TOKEN`; `tools/deploy.sh` reaches it with
-  `docker compose exec`.
+- The admin API answers only for the hostname `admin.internal`, which Traefik
+  never routes. Writes need `ADMIN_TOKEN`; the dashboard's `READ_TOKEN` only
+  allows the two read endpoints. The router gets only SHA-256 hashes of both
+  tokens, so the bucket (which stores deployments, and which the dashboard can
+  read) never holds a usable token. `tools/deploy.sh` and `tools/admin.sh`
+  reach the API with `docker compose exec`.
+- Uploads are size-checked before they are read (413 above 20 MiB per file,
+  16 MiB for code), so a big deploy cannot exhaust the router's memory.
+- `tools/pack.mjs` refuses symlinks in a site's static directory, so a link in
+  a build folder cannot publish files from elsewhere on the machine.
 - Sites are isolated from each other and from the router (separate isolates,
-  only `ASSETS` and `OBJECTS`), and each request is capped at 1 s of CPU.
+  only `ASSETS` and `OBJECTS`), and each request, including a Durable Object
+  call, is capped at 1 s of CPU. The isolates share one process, so this is not
+  a boundary against hostile code: fine for your own sites only.
 - Sites have no outbound network (`globalOutbound: null`): `fetch()` throws.
   Otherwise site code could reach celld's unauthenticated operator API on
   127.0.0.1 (stop the node, evict objects, call other sites' objects); this
   was verified with a probe site. A site that needs an external API needs an
-  explicit allowlist in the router. The
-  isolates share one process, so this is not a boundary against hostile code:
-  fine for your own sites only.
+  explicit allowlist in the router.
 - Both containers drop all capabilities; celld runs as uid 10001.
 
 ## Measured (this VM)

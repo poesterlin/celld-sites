@@ -10,7 +10,7 @@ COPY tools tools
 COPY sites/example sites/example
 RUN cd sites/example && npm run build \
  && mkdir -p /out \
- && node /build/tools/pack.mjs . > /out/example.json \
+ && node /build/tools/pack.mjs . /out/sites/example \
  # `celld deploy` bundles the router with esbuild; reuse the native binary.
  && cp "$(node -p "require.resolve('@esbuild/linux-' + process.arch + '/bin/esbuild')")" /out/esbuild
 
@@ -22,9 +22,9 @@ RUN apt-get update \
  && useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin celld \
  && install -d -o celld -g celld -m 700 /var/lib/celld
 COPY --from=sites /out/esbuild /usr/local/bin/esbuild
-COPY --from=sites /out/example.json /app/sites/example.json
+COPY --from=sites /out/sites /app/sites
 COPY router /app/router
-COPY --chmod=755 node/entrypoint.sh node/push.sh /app/
+COPY --chmod=755 node/entrypoint.sh node/push.sh node/admin.sh /app/
 ENV CELLD_ESBUILD=/usr/local/bin/esbuild \
     CELLD_WATCH=/var/lib/celld \
     HOME=/tmp

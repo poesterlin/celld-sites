@@ -5,7 +5,7 @@
 #   2. deploy the router app (cheap and idempotent, so on every start)
 #   3. start the node
 #   4. once it is healthy, deploy every bundled site in /app/sites
-#      (/app/sites/<hostname>.json, packed at image build time)
+#      (/app/sites/<name>/, packed at image build time)
 set -eu
 
 : "${CELLD_BUCKET:?}" "${S3_ENDPOINT:?}" "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}"
@@ -39,7 +39,11 @@ rm -f "$s3auth"
 # 2. Router app ---------------------------------------------------------------
 work=$(mktemp -d)
 cp /app/router/index.js "$work/"
-sed -e "s/@ADMIN_TOKEN@/$ADMIN_TOKEN/" -e "s/@READ_TOKEN@/$READ_TOKEN/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" /app/router/wrangler.template.json > "$work/wrangler.json"
+# The router gets only SHA-256 hashes of the tokens: deployments are stored in
+# the bucket, which the dashboard can read.
+admin_hash=$(printf '%s' "$ADMIN_TOKEN" | sha256sum | cut -d' ' -f1)
+read_hash=$(printf '%s' "$READ_TOKEN" | sha256sum | cut -d' ' -f1)
+sed -e "s/@ADMIN_TOKEN_SHA256@/$admin_hash/" -e "s/@READ_TOKEN_SHA256@/$read_hash/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" /app/router/wrangler.template.json > "$work/wrangler.json"
 log "deploying the router"
 # shellcheck disable=SC2086
 celld deploy "$work" $STORE
@@ -59,12 +63,13 @@ trap 'kill -TERM "$node" 2>/dev/null' TERM INT
 		kill -0 "$node" 2>/dev/null || exit 0
 		sleep 1
 	done
-	for payload in /app/sites/*.json; do
-		[ -e "$payload" ] || continue
-		host=$(basename "$payload" .json)
-		[ "$host" = example ] && host="${EXAMPLE_HOST:?}"
+	for bundle in /app/sites/*/; do
+		[ -d "$bundle" ] || continue
+		host=$(basename "$bundle")
+		[ "$host" = example ] && host="${EXAMPLE_HOST:-}"
+		[ -n "$host" ] || continue
 		for attempt in 1 2 3 4 5; do
-			if /app/push.sh "$host" < "$payload" >/dev/null; then log "deployed $host"; break; fi
+			if tar -C "$bundle" -cf - . | /app/push.sh "$host" >/dev/null; then log "deployed $host"; break; fi
 			log "deploying $host failed (attempt $attempt), retrying"; sleep 2
 		done
 	done

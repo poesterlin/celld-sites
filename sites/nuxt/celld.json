@@ -1,0 +1,8 @@
+{
+	"worker": ".output/server/index.mjs",
+	"assets": ".output/public",
+	"objects": "server/objects.ts",
+	"immutable": ["_nuxt/"],
+	"notFound": "none",
+	"exclude": []
+}

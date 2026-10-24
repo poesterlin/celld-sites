@@ -1,0 +1,8 @@
+{
+	"worker": ".svelte-kit/cloudflare/_worker.js",
+	"assets": ".svelte-kit/cloudflare",
+	"objects": "src/objects.ts",
+	"immutable": ["_app/immutable/"],
+	"notFound": "none",
+	"exclude": []
+}

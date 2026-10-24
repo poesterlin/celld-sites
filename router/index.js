@@ -1,15 +1,19 @@
 // One router Worker hosting many sites: any build that is a Workers `fetch`
 // handler plus static files (SvelteKit, Nuxt/Nitro, TanStack Start, static-only).
-// Each site's code lives in KV and runs in its own Dynamic Worker isolate,
-// picked by hostname:
-//   site:<host>                 -> current version id
+// Each site's code lives in KV and runs in its own Dynamic Worker isolate. A
+// request's hostname picks the site: an alias if one exists, otherwise the
+// hostname itself is the site id. The site id (not the hostname) owns the
+// site's versions and Durable Objects, so a site keeps its data under new names.
+//   alias:<hostname>            -> site id
+//   site:<site>                 -> current version id
 //   code:<version>              -> { compatibilityDate, source, assets: [paths],
 //                                    immutable: [prefixes], notFound }
 //   asset:<version>:<path>      -> file bytes, metadata { type }
-//   deploy:<host>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
-//   obj:<host>|<class>|<name>   -> "", metadata { id, firstSeen }  (object index)
-// Deploying writes a new version, then flips site:<host> as the last step, so
-// visitors never see a half-written version.
+//   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
+//   obj:<site>|<class>|<name>   -> "", metadata { id, firstSeen }  (object index)
+// Deploying uploads a version piece by piece (each file, then the code and file
+// list), then activates it by flipping site:<site>, so visitors never see a
+// half-written version. Activating an older version is a rollback.
 //
 // Requests: static files are served first, like Cloudflare's static assets
 // (exact path, then <path>/index.html, then <path>.html), straight from KV
@@ -27,18 +31,62 @@
 // other sites' objects.
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
+// Runs in each site isolate before the site's own code, papering over APIs that
+// celld 0.6.3 exposes but that throw "not implemented":
+//  - console.createTask: libraries that feature-detect it (Nitro's hookable, so
+//    every Nuxt site) then fail on every request. Removing it makes them take
+//    their fallback path.
+//  - process.nextTick: throws in celld. Nuxt/Nitro's process polyfill copies
+//    nextTick from the global process object, and h3 then fails per request.
+//    It is replaced with a queueMicrotask-based version.
+//  - setImmediate: the global works today; a setTimeout-based stand-in is
+//    installed only if it ever does not (Nitro prefers an existing global).
+// The prelude must not import node:* modules: doing so breaks the site's own
+// named imports from them ("does not provide an export named ...").
+const PRELUDE = `
+try { console.createTask?.("celld"); } catch {
+	try { console.createTask = undefined; } catch {}
+	if (console.createTask) Object.defineProperty(console, "createTask", { value: undefined, configurable: true, writable: true });
+}
+
+const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+const replace = (obj, name, value) => {
+	try { obj[name] = value; } catch {}
+	if (obj[name] !== value) { try { Object.defineProperty(obj, name, { value, configurable: true, writable: true }); } catch {} }
+};
+
+if (typeof globalThis.setImmediate !== "function" || throws(() => globalThis.clearImmediate(globalThis.setImmediate(() => {})))) {
+	replace(globalThis, "setImmediate", (fn, ...args) => {
+		const timer = setTimeout(fn, 0, ...args);
+		return { timer, ref() { return this; }, unref() { return this; }, hasRef() { return true; } };
+	});
+	replace(globalThis, "clearImmediate", (handle) => { if (handle) clearTimeout(handle.timer ?? handle); });
+}
+
+const proc = globalThis.process;
+if (proc && throws(() => proc.nextTick(() => {}))) {
+	replace(proc, "nextTick", (fn, ...args) => queueMicrotask(() => fn(...args)));
+}
+`;
+// The isolate's main module: prelude first (ES modules evaluate imports in
+// order), then the site's handler and its Durable Object classes.
+const MAIN = `import "./prelude.js";
+export { default } from "./worker.js";
+export * from "./worker.js";
+`;
+
 /** Load (or reuse) the isolate for one version of a site. */
-function loadSite(env, exports, host, version) {
-	return env.LOADER.get(`${host}@${version}`, async () => {
+function loadSite(env, exports, site, version) {
+	return env.LOADER.get(`${site}@${version}`, async () => {
 		const code = await env.CODE.get(`code:${version}`, "json");
 		return {
 			compatibilityDate: code.compatibilityDate,
 			compatibilityFlags: ["nodejs_compat"],
-			mainModule: "worker.js",
-			modules: { "worker.js": code.source },
+			mainModule: "main.js",
+			modules: { "main.js": MAIN, "prelude.js": PRELUDE, "worker.js": code.source },
 			env: {
 				ASSETS: exports.SiteAssets({ props: { version, immutable: code.immutable ?? DEFAULT_IMMUTABLE } }),
-				OBJECTS: exports.SiteObjects({ props: { host } }),
+				OBJECTS: exports.SiteObjects({ props: { site } }),
 			},
 			globalOutbound: null, // fetch() and connect() throw inside sites
 			limits: { cpuMs: 1000 },
@@ -118,18 +166,18 @@ function assetFor(meta, pathname) {
  *  structured-cloneable (plain data). */
 export class SiteObjects extends WorkerEntrypoint {
 	async call(className, name, method, ...args) {
-		const { host } = this.ctx.props;
+		const { site } = this.ctx.props;
 		const ident = /^[A-Za-z_$][\w$]*$/;
 		if (!ident.test(className) || !ident.test(method) || typeof name !== "string" || name.length > 200) {
 			throw new Error("bad object reference");
 		}
-		const key = `${host}|${className}|${name}`;
+		const key = `${site}|${className}|${name}`;
 		if (!indexed.has(key)) {
 			indexed.add(key);
 			this.ctx.waitUntil(indexObject(this.env, key));
 		}
-		const version = await this.env.CODE.get(`site:${host}`);
-		return this.env.SITE_OBJECTS.getByName(key).handle(host, version, className, method, args);
+		const version = await this.env.CODE.get(`site:${site}`);
+		return this.env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
 	}
 }
 
@@ -142,8 +190,8 @@ async function indexObject(env, key) {
 
 /** One per (site, class, name): runs the site's class as a facet. */
 export class SiteObject extends DurableObject {
-	async handle(host, version, className, method, args) {
-		const worker = loadSite(this.env, this.ctx.exports, host, version);
+	async handle(site, version, className, method, args) {
+		const worker = loadSite(this.env, this.ctx.exports, site, version);
 		// The facet name selects the database, so data survives redeploys; a new
 		// version only changes the class the facet is started from.
 		if (this.version && this.version !== version) this.ctx.facets.abort(className, new Error("site redeployed"));
@@ -153,34 +201,32 @@ export class SiteObject extends DurableObject {
 	}
 }
 
-const sameToken = (a, b) => {
-	const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
-	return x.length === y.length && crypto.subtle.timingSafeEqual(x, y);
-};
+/** Largest single static file (KV allows 25 MiB per value). */
+const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+/** Largest code upload (bundled server code plus the file list). */
+const MAX_CODE_BYTES = 16 * 1024 * 1024;
+const VERSION = /^[a-f0-9]{12}$/;
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
-/** POST /__admin/deploy?host=<hostname> with a payload from tools/pack.mjs. Old
- *  versions stay in KV, so a rollback is pointing site:<host> back at one. */
-async function deploy(request, env, url) {
-	if (request.method !== "POST" || !sameToken(request.headers.get("authorization") ?? "", `Bearer ${env.ADMIN_TOKEN}`)) {
-		return new Response("Forbidden", { status: 403 });
-	}
-	const host = url.searchParams.get("host") ?? "";
-	const { version, compatibilityDate, source = "", assets, immutable = DEFAULT_IMMUTABLE, notFound = "none" } = await request.json();
-	const validOptions =
-		Array.isArray(immutable) && immutable.every((p) => typeof p === "string") && (notFound === "none" || notFound === "spa");
-	if (!/^[a-z0-9.-]+$/.test(host) || !/^[a-f0-9]{12}$/.test(version) || typeof source !== "string" || !validOptions) {
-		return new Response("Bad request", { status: 400 });
-	}
-	for (const a of assets) {
-		const bytes = Uint8Array.from(atob(a.b64), (c) => c.charCodeAt(0));
-		await env.CODE.put(`asset:${version}:${a.path}`, bytes, { metadata: { type: a.type } });
-	}
-	const paths = assets.map((a) => a.path);
-	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, assets: paths, immutable, notFound }));
-	await env.CODE.put(`site:${host}`, version); // the switch
-	const summary = { assets: assets.length, sourceBytes: source.length };
-	await env.CODE.put(`deploy:${host}:${new Date().toISOString()}`, version, { metadata: summary });
-	return Response.json({ host, version, ...summary });
+const json = (body, status = 200) => Response.json(body, { status });
+const fail = (status, error) => json({ error }, status);
+
+/** True if the request's bearer token hashes (SHA-256) to `expectedHex`. Only the
+ *  hashes are deployment vars, so the bucket never stores a usable token. */
+async function bearerMatches(request, expectedHex) {
+	const auth = request.headers.get("authorization") ?? "";
+	if (!expectedHex || !/^[a-f0-9]{64}$/.test(expectedHex) || !auth.startsWith("Bearer ")) return false;
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(auth.slice(7))));
+	const expected = Uint8Array.from(expectedHex.match(/../g), (h) => parseInt(h, 16));
+	return crypto.subtle.timingSafeEqual(digest, expected);
+}
+
+/** Reject a body before reading it if it is larger than `max` bytes. */
+function tooLarge(request, max) {
+	const length = Number(request.headers.get("content-length"));
+	if (!Number.isFinite(length) || request.headers.get("content-length") === null) return fail(411, "content-length required");
+	if (length > max) return fail(413, `body is ${length} bytes, limit ${max}`);
+	return null;
 }
 
 /** Every key under a prefix, following list cursors. */
@@ -195,24 +241,166 @@ async function listAll(kv, prefix) {
 	return keys;
 }
 
-/** GET /__admin/overview: sites, deploy history, versions and the object index. */
+/** Hostname -> site id, cached briefly so routing costs no extra KV read per request. */
+const aliasCache = new Map();
+async function siteFor(env, host) {
+	const hit = aliasCache.get(host);
+	if (hit && hit.until > Date.now()) return hit.site;
+	const site = (await env.CODE.get(`alias:${host}`)) ?? host;
+	if (aliasCache.size > 1000) aliasCache.clear();
+	aliasCache.set(host, { site, until: Date.now() + 5000 });
+	return site;
+}
+
+// --- Deploy: upload files, upload code, activate -------------------------------
+
+/** PUT /__admin/asset?version=V&path=P  body: the file bytes, Content-Type: its type. */
+async function putAsset(request, env, url) {
+	const version = url.searchParams.get("version") ?? "";
+	const path = url.searchParams.get("path") ?? "";
+	if (!VERSION.test(version)) return fail(400, "bad version");
+	if (!path || path.startsWith("/") || path.includes("\0") || new TextEncoder().encode(path).length > 400) return fail(400, "bad path");
+	const big = tooLarge(request, MAX_ASSET_BYTES);
+	if (big) return big;
+	const bytes = await request.arrayBuffer();
+	if (bytes.byteLength > MAX_ASSET_BYTES) return fail(413, "file too large");
+	const type = request.headers.get("content-type") || "application/octet-stream";
+	await env.CODE.put(`asset:${version}:${path}`, bytes, { metadata: { type } });
+	return json({ version, path, bytes: bytes.byteLength });
+}
+
+/** PUT /__admin/code?version=V  body: { compatibilityDate, source, assets: [paths], immutable, notFound }.
+ *  Refused unless every listed file was uploaded first. */
+async function putCode(request, env, url) {
+	const version = url.searchParams.get("version") ?? "";
+	if (!VERSION.test(version)) return fail(400, "bad version");
+	const big = tooLarge(request, MAX_CODE_BYTES);
+	if (big) return big;
+	let body;
+	try {
+		body = await request.json();
+	} catch {
+		return fail(400, "body is not JSON");
+	}
+	const { compatibilityDate, source = "", assets, immutable = DEFAULT_IMMUTABLE, notFound = "none" } = body;
+	const valid =
+		typeof compatibilityDate === "string" &&
+		typeof source === "string" &&
+		Array.isArray(assets) &&
+		assets.every((a) => typeof a === "string") &&
+		Array.isArray(immutable) &&
+		immutable.every((p) => typeof p === "string") &&
+		(notFound === "none" || notFound === "spa");
+	if (!valid) return fail(400, "bad code record");
+	const stored = new Set((await listAll(env.CODE, `asset:${version}:`)).map((k) => k.name.slice(`asset:${version}:`.length)));
+	const missing = assets.filter((a) => !stored.has(a));
+	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
+	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, assets, immutable, notFound }));
+	return json({ version, assets: assets.length, sourceBytes: source.length });
+}
+
+/** POST /__admin/activate?host=H&version=V  points H's site at an uploaded version
+ *  (a new deploy, or a rollback to an older one). */
+async function activate(env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	const version = url.searchParams.get("version") ?? "";
+	if (!HOSTNAME.test(host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	const code = await env.CODE.get(`code:${version}`, "json");
+	if (!code) return fail(404, `version ${version} is not uploaded (or was pruned)`);
+	const site = await siteFor(env, host);
+	await env.CODE.put(`site:${site}`, version); // the switch
+	const summary = { assets: code.assets?.length ?? 0, sourceBytes: code.source?.length ?? 0 };
+	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}`, version, { metadata: summary });
+	return json({ host, site, version, ...summary });
+}
+
+// --- Aliases -----------------------------------------------------------------
+
+/** PUT /__admin/alias?host=H&site=S serves site S under hostname H as well (same
+ *  versions, same objects). DELETE /__admin/alias?host=H removes it. */
+async function alias(request, env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	if (!HOSTNAME.test(host) || host === env.ADMIN_HOST) return fail(400, "bad host");
+	if (request.method === "DELETE") {
+		await env.CODE.delete(`alias:${host}`);
+		aliasCache.delete(host);
+		return json({ host, alias: null });
+	}
+	const site = url.searchParams.get("site") ?? "";
+	if (!HOSTNAME.test(site)) return fail(400, "bad site");
+	if (site === host) return fail(400, "a hostname already serves the site with its own name");
+	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, `no site ${site}`);
+	// Don't silently hide a hostname that is itself a deployed site.
+	if ((await env.CODE.get(`site:${host}`)) !== null) return fail(409, `${host} is a site of its own; it would be hidden`);
+	await env.CODE.put(`alias:${host}`, site);
+	aliasCache.delete(host);
+	return json({ host, site });
+}
+
+// --- Pruning -------------------------------------------------------------------
+
+/** POST /__admin/prune?keep=N deletes stored versions except each site's current
+ *  version and the N most recent versions in its deploy history (default 3). */
+async function prune(env, url) {
+	const keep = Math.max(0, Math.min(100, Number(url.searchParams.get("keep") ?? 3) || 0));
+	const [siteKeys, deployKeys, codeKeys] = await Promise.all(["site:", "deploy:", "code:"].map((p) => listAll(env.CODE, p)));
+	const kept = new Set();
+	for (const k of siteKeys) kept.add(await env.CODE.get(k.name));
+	const history = new Map(); // site -> [{ at, version }]
+	for (const k of deployKeys) {
+		const rest = k.name.slice("deploy:".length);
+		const site = rest.slice(0, rest.indexOf(":")); // site ids are hostnames: no ":"
+		const list = history.get(site) ?? [];
+		list.push({ at: rest.slice(site.length + 1), key: k.name });
+		history.set(site, list);
+	}
+	for (const list of history.values()) {
+		list.sort((a, b) => b.at.localeCompare(a.at));
+		const recent = [];
+		for (const entry of list) {
+			const version = await env.CODE.get(entry.key);
+			if (!recent.includes(version)) recent.push(version);
+			if (recent.length >= keep) break;
+		}
+		recent.forEach((v) => kept.add(v));
+	}
+	const deleted = [];
+	for (const k of codeKeys) {
+		const version = k.name.slice("code:".length);
+		if (kept.has(version)) continue;
+		for (const a of await listAll(env.CODE, `asset:${version}:`)) await env.CODE.delete(a.name);
+		await env.CODE.delete(k.name);
+		deleted.push(version);
+	}
+	return json({ keep, kept: [...kept].filter(Boolean), deleted });
+}
+
+// --- Read-only ------------------------------------------------------------------
+
+/** GET /__admin/overview: sites (with aliases), deploy history, versions, object index. */
 async function overview(env) {
-	const [siteKeys, deployKeys, objKeys, codeKeys] = await Promise.all(
-		["site:", "deploy:", "obj:", "code:"].map((p) => listAll(env.CODE, p)),
+	const [siteKeys, aliasKeys, deployKeys, objKeys, codeKeys] = await Promise.all(
+		["site:", "alias:", "deploy:", "obj:", "code:"].map((p) => listAll(env.CODE, p)),
 	);
+	const aliases = await Promise.all(aliasKeys.map(async (k) => ({ host: k.name.slice(6), site: await env.CODE.get(k.name) })));
 	const sites = await Promise.all(
-		siteKeys.map(async (k) => ({ host: k.name.slice(5), version: await env.CODE.get(k.name) })),
+		siteKeys.map(async (k) => {
+			const id = k.name.slice(5);
+			return { id, version: await env.CODE.get(k.name), aliases: aliases.filter((a) => a.site === id).map((a) => a.host) };
+		}),
 	);
 	const deploys = await Promise.all(
 		deployKeys.map(async (k) => {
-			const rest = k.name.slice(7); // <host>:<iso time>
+			const rest = k.name.slice(7); // <site>:<iso time>
 			const at = rest.slice(rest.indexOf(":") + 1);
-			return { host: rest.slice(0, rest.indexOf(":")), at, version: await env.CODE.get(k.name), ...k.metadata };
+			return { site: rest.slice(0, rest.indexOf(":")), at, version: await env.CODE.get(k.name), ...k.metadata };
 		}),
 	);
 	const objects = objKeys.map((k) => {
-		const [host, className, name] = k.name.slice(4).split("|");
-		return { host, className, name, ...k.metadata };
+		const rest = k.name.slice(4);
+		const first = rest.indexOf("|");
+		const second = rest.indexOf("|", first + 1);
+		return { site: rest.slice(0, first), className: rest.slice(first + 1, second), name: rest.slice(second + 1), ...k.metadata };
 	});
 	const versions = await Promise.all(
 		codeKeys.map(async (k) => {
@@ -220,7 +408,7 @@ async function overview(env) {
 			return { version, assets: (await listAll(env.CODE, `asset:${version}:`)).length };
 		}),
 	);
-	return Response.json({ sites, deploys, objects, versions });
+	return json({ sites, aliases, deploys, objects, versions });
 }
 
 /** GET /__admin/state: celld's live node counters (the only operator call made). */
@@ -229,15 +417,22 @@ async function nodeState() {
 	return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
 }
 
-/** The admin API: deploys need ADMIN_TOKEN; the read-only GETs also accept READ_TOKEN. */
-function admin(request, env, url) {
-	const auth = request.headers.get("authorization") ?? "";
-	if (url.pathname === "/__admin/deploy") return deploy(request, env, url);
-	const reader = sameToken(auth, `Bearer ${env.READ_TOKEN}`) || sameToken(auth, `Bearer ${env.ADMIN_TOKEN}`);
-	if (request.method !== "GET" || !reader) return new Response("Forbidden", { status: 403 });
-	if (url.pathname === "/__admin/overview") return overview(env);
-	if (url.pathname === "/__admin/state") return nodeState();
-	return new Response("Not found", { status: 404 });
+/** The admin API. Writes need the deploy token; the read-only GETs also accept the read token. */
+async function admin(request, env, url) {
+	const { pathname } = url;
+	const method = request.method;
+	const isAdmin = await bearerMatches(request, env.ADMIN_TOKEN_SHA256);
+	if (method === "GET" && (pathname === "/__admin/overview" || pathname === "/__admin/state")) {
+		if (!isAdmin && !(await bearerMatches(request, env.READ_TOKEN_SHA256))) return fail(403, "forbidden");
+		return pathname === "/__admin/overview" ? overview(env) : nodeState();
+	}
+	if (!isAdmin) return fail(403, "forbidden");
+	if (method === "PUT" && pathname === "/__admin/asset") return putAsset(request, env, url);
+	if (method === "PUT" && pathname === "/__admin/code") return putCode(request, env, url);
+	if (method === "POST" && pathname === "/__admin/activate") return activate(env, url);
+	if ((method === "PUT" || method === "DELETE") && pathname === "/__admin/alias") return alias(request, env, url);
+	if (method === "POST" && pathname === "/__admin/prune") return prune(env, url);
+	return fail(404, "not found");
 }
 
 export default {
@@ -248,7 +443,8 @@ export default {
 		// routes, so only the project's containers reach it, and every call needs a token.
 		if (host === env.ADMIN_HOST) return admin(request, env, url);
 
-		const version = await env.CODE.get(`site:${host}`);
+		const site = await siteFor(env, host);
+		const version = await env.CODE.get(`site:${site}`);
 		if (!version) return new Response(`No site for ${host}`, { status: 404 });
 
 		const meta = await siteMeta(env, version);
@@ -278,6 +474,6 @@ export default {
 		}
 
 		// Compiled once per version; later requests reuse the warm isolate.
-		return loadSite(env, ctx.exports, host, version).getEntrypoint().fetch(siteRequest);
+		return loadSite(env, ctx.exports, site, version).getEntrypoint().fetch(siteRequest);
 	},
 };

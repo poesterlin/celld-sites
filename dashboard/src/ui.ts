@@ -92,13 +92,13 @@ export function overviewPage(m: Model) {
 		.map((site) => {
 			const last = site.deploys[0];
 			return `<tr>
-  <td data-label="Site"><span><a href="/site/${encodeURIComponent(site.host)}"><b>${esc(site.host)}</b></a></span></td>
+  <td data-label="Site"><span><a href="/site/${encodeURIComponent(site.id)}"><b>${esc(site.id)}</b></a></span></td>
   <td data-label="Version"><span><code>${esc(site.version)}</code></span></td>
   <td data-label="Deployed"><span>${last && last.version === site.version ? ago(last.at) : '<span class="dim">before history</span>'}</span></td>
   <td data-label="Assets"><span>${site.assets ?? "—"}</span></td>
   <td data-label="Objects"><span>${site.objects.length}</span></td>
   <td data-label="Object data"><span>${bytes(site.objectBytes)}</span></td>
-  <td data-label="Open"><span><a href="https://${esc(site.host)}/" rel="noreferrer">open ↗</a></span></td>
+  <td data-label="Hostnames"><span>${openLinks(site)}</span></td>
 </tr>`;
 		})
 		.join("");
@@ -106,7 +106,7 @@ export function overviewPage(m: Model) {
   <h2>Sites <span class="dim">${m.sites.length} sites · ${m.versions} stored versions</span></h2>
   ${
 		m.sites.length
-			? `<table><thead><tr><th>Site</th><th>Version</th><th>Deployed</th><th>Assets</th><th>Objects</th><th>Object data</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+			? `<table><thead><tr><th>Site</th><th>Version</th><th>Deployed</th><th>Assets</th><th>Objects</th><th>Object data</th><th>Hostnames</th></tr></thead><tbody>${rows}</tbody></table>`
 			: `<p class="dim">No sites deployed.</p>`
 	}
 </section>`;
@@ -114,12 +114,20 @@ export function overviewPage(m: Model) {
 	return shell("celld-sites", nodeCard + storageCard + sitesCard, m);
 }
 
+const openLinks = (site: Site) =>
+	site.hostnames.length
+		? site.hostnames.map((h) => `<a href="https://${esc(h)}/" rel="noreferrer">${esc(h)} ↗</a>`).join("<br>")
+		: '<span class="dim">no hostname</span>';
+
 export function sitePage(m: Model, site: Site) {
+	// Only the newest history entry of the current version is "current"; a
+	// rollback and roll-forward list the same version more than once.
+	const currentIndex = site.deploys.findIndex((d) => d.version === site.version);
 	const deploys = site.deploys
 		.map(
-			(d) => `<tr>
+			(d, i) => `<tr>
   <td data-label="Deployed"><span>${ago(d.at)}</span></td>
-  <td data-label="Version"><span><code>${esc(d.version)}</code> ${d.version === site.version ? '<span class="pill ok">current</span>' : ""}</span></td>
+  <td data-label="Version"><span><code>${esc(d.version)}</code> ${i === currentIndex ? '<span class="pill ok">current</span>' : d.pruned ? '<span class="dim">pruned</span>' : ""}</span></td>
   <td data-label="Assets"><span>${d.assets ?? "—"}</span></td>
   <td data-label="Server code"><span>${d.sourceBytes ? bytes(d.sourceBytes) : "—"}</span></td>
 </tr>`,
@@ -141,7 +149,8 @@ export function sitePage(m: Model, site: Site) {
 		: `<p class="note">The current version <code>${esc(site.version)}</code> was deployed before deploy history was recorded.</p>`;
 
 	const body = `<section class="card">
-  <h2>${esc(site.host)} <a class="small" href="https://${esc(site.host)}/" rel="noreferrer">open ↗</a></h2>
+  <h2>${esc(site.id)}</h2>
+  <p class="small">${openLinks(site)}</p>
   <div class="stats">
     ${stat("Current version", `<code>${esc(site.version)}</code>`)}
     ${stat("Assets", String(site.assets ?? "—"))}
@@ -162,7 +171,7 @@ export function sitePage(m: Model, site: Site) {
 	}
   <p class="dim small">Data is the disk space of the object's write log in the bucket. celld keeps every write (compaction only adds summaries), so it only grows.</p>
 </section>`;
-	return shell(`${site.host} · celld-sites`, body, m);
+	return shell(`${site.id} · celld-sites`, body, m);
 }
 
 export function notFoundPage(m: Model, what: string) {
