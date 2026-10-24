@@ -9,5 +9,5 @@
 		"bindings": [{ "name": "SITE_OBJECTS", "class_name": "SiteObject" }]
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteObject"] }],
-	"vars": { "ADMIN_TOKEN": "@ADMIN_TOKEN@", "ADMIN_HOST": "@ADMIN_HOST@" }
+	"vars": { "ADMIN_TOKEN": "@ADMIN_TOKEN@", "READ_TOKEN": "@READ_TOKEN@", "ADMIN_HOST": "@ADMIN_HOST@" }
 }

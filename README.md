@@ -15,11 +15,12 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | `s3` (VersityGW, files in a Docker volume) and `celld` (the node) |
+| `compose.yaml` | `s3` (VersityGW, files in a Docker volume), `celld` (the node) and `dashboard` |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node, bundled sites) and `push.sh` |
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy payload |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
+| `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) |
 | `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the image |
 
 ## Run
@@ -33,6 +34,27 @@ The test app is served at `https://$HOST_DOMAIN` (set in `.env`). On every
 start the `celld` container creates the bucket if it is missing, deploys the
 router, starts the node and deploys the bundled example, so a fresh or wiped
 bucket needs no manual steps.
+
+## Dashboard
+
+`https://$DASHBOARD_HOST` shows node health and memory, bucket disk usage by
+area, every site with its deploy history, and each site's Durable Objects with
+their disk usage and whether they are loaded. `/api/overview.json` returns the
+same data as JSON. It has **no authentication**, so keep the hostname LAN-only.
+
+It cannot change anything:
+
+- It serves only `GET`/`HEAD` (other methods get 405) and has no write routes.
+- It calls the router's admin API with `READ_TOKEN`, which only allows
+  `GET /__admin/overview` and `GET /__admin/state`; deploying needs
+  `ADMIN_TOKEN`. `/__admin/state` is the router fetching celld's `/state`, the
+  only operator call it makes.
+- Storage sizes come from the bucket volume mounted read-only; it holds no S3
+  credentials. The container filesystem is read-only and runs as non-root.
+
+Object names only exist as hashes in storage, so the router keeps an index
+(`obj:` keys in KV) written the first time each object is used. Objects created
+before the index existed show up as "not in the index" with their total size.
 
 ## Deploy a site
 
@@ -111,7 +133,12 @@ container creates it and redeploys the router and the example by itself.
   never routes, and requires `ADMIN_TOKEN`; `tools/deploy.sh` reaches it with
   `docker compose exec`.
 - Sites are isolated from each other and from the router (separate isolates,
-  only `ASSETS` and `OBJECTS`), and each request is capped at 1 s of CPU. The
+  only `ASSETS` and `OBJECTS`), and each request is capped at 1 s of CPU.
+- Sites have no outbound network (`globalOutbound: null`): `fetch()` throws.
+  Otherwise site code could reach celld's unauthenticated operator API on
+  127.0.0.1 (stop the node, evict objects, call other sites' objects); this
+  was verified with a probe site. A site that needs an external API needs an
+  explicit allowlist in the router. The
   isolates share one process, so this is not a boundary against hostile code:
   fine for your own sites only.
 - Both containers drop all capabilities; celld runs as uid 10001.

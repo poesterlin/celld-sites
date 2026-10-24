@@ -1,0 +1,9 @@
+{
+	"name": "celld-sites-dashboard",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "bun src/server.ts",
+		"check": "bun build src/server.ts --target=bun --outdir=/tmp/dashboard-check"
+	}
+}

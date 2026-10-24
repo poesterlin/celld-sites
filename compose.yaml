@@ -62,7 +62,9 @@ services:
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
-      # The deploy API answers only on this hostname, which Traefik never routes.
+      # Read-only admin API (overview, node state) for the dashboard; cannot deploy.
+      READ_TOKEN: ${READ_TOKEN:?Set READ_TOKEN in .env}
+      # The admin API answers only on this hostname, which Traefik never routes.
       ADMIN_HOST: admin.internal
       EXAMPLE_HOST: ${HOST_DOMAIN:?Set HOST_DOMAIN in .env}
       # Delete write-log epochs no restore needs once they are this old (epoch GC,
@@ -89,8 +91,12 @@ services:
       start_period: 60s
     logging: *logging
     networks:
-      - default
-      - traefik_web
+      default:
+        # The dashboard reaches the admin API as http://admin.internal:8080, so
+        # the Host header matches; this name exists only on the project network.
+        aliases:
+          - admin.internal
+      traefik_web: {}
     labels:
       - 'traefik.enable=true'
       - 'traefik.docker.network=traefik_web'
@@ -98,6 +104,47 @@ services:
       # with SITES_RULE in .env, e.g. Host(`a.example.com`) || Host(`b.example.com`)
       - 'traefik.http.routers.celld-sites.rule=${SITES_RULE:-Host(`${HOST_DOMAIN}`)}'
       - 'traefik.http.services.celld-sites.loadbalancer.server.port=8080'
+
+  # Read-only dashboard, no authentication: LAN-only (not in the Cloudflare
+  # tunnel). It can't change anything: GET routes only, a read-only token for the
+  # router's admin API, and the bucket volume mounted read-only (no S3 keys).
+  dashboard:
+    build: ./dashboard
+    image: celld-sites-dashboard
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - celld
+    environment:
+      READ_TOKEN: ${READ_TOKEN}
+      PORT: 3000
+    volumes:
+      - s3-data:/bucket:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      # Traefik only routes healthy containers, so check quickly after a start.
+      start_period: 20s
+      start_interval: 2s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.celld-sites-dashboard.rule=Host(`${DASHBOARD_HOST:?Set DASHBOARD_HOST in .env}`)'
+      - 'traefik.http.services.celld-sites-dashboard.loadbalancer.server.port=3000'
 
 volumes:
   s3-data:

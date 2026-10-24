@@ -9,12 +9,14 @@
 set -eu
 
 : "${CELLD_BUCKET:?}" "${S3_ENDPOINT:?}" "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}"
-: "${ADMIN_TOKEN:?}" "${ADMIN_HOST:?}"
+: "${ADMIN_TOKEN:?}" "${READ_TOKEN:?}" "${ADMIN_HOST:?}"
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 STORE="--bucket $CELLD_BUCKET --endpoint $S3_ENDPOINT --region $AWS_REGION"
 log() { echo "entrypoint: $*" >&2; }
 
-case "$ADMIN_TOKEN" in *[!A-Za-z0-9_-]*) log "ADMIN_TOKEN may only contain A-Z a-z 0-9 _ -"; exit 1 ;; esac
+for token in "$ADMIN_TOKEN" "$READ_TOKEN"; do
+	case "$token" in *[!A-Za-z0-9_-]*) log "ADMIN_TOKEN and READ_TOKEN may only contain A-Z a-z 0-9 _ -"; exit 1 ;; esac
+done
 
 umask 077
 s3auth=$(mktemp)
@@ -37,7 +39,7 @@ rm -f "$s3auth"
 # 2. Router app ---------------------------------------------------------------
 work=$(mktemp -d)
 cp /app/router/index.js "$work/"
-sed -e "s/@ADMIN_TOKEN@/$ADMIN_TOKEN/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" /app/router/wrangler.template.json > "$work/wrangler.json"
+sed -e "s/@ADMIN_TOKEN@/$ADMIN_TOKEN/" -e "s/@READ_TOKEN@/$READ_TOKEN/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" /app/router/wrangler.template.json > "$work/wrangler.json"
 log "deploying the router"
 # shellcheck disable=SC2086
 celld deploy "$work" $STORE
