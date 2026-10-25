@@ -1,0 +1,1 @@
+{ "worker": "worker.js", "assets": "public", "objects": "objects.js", "immutable": ["assets/"] }

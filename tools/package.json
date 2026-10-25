@@ -1,0 +1,11 @@
+{
+	"name": "celld-sites-tools",
+	"private": true,
+	"description": "Tooling dependencies (esbuild for tools/preview.sh and tools/pack.mjs when a site has none) and the API test suite. Install with: npm ci --prefix tools",
+	"devDependencies": {
+		"esbuild": "0.28.2"
+	},
+	"scripts": {
+		"test": "node --test --test-concurrency=1 ../tests/api.test.mjs"
+	}
+}

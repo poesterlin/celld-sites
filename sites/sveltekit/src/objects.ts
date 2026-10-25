@@ -31,6 +31,33 @@ export class Notes extends DurableObject {
 		return { note };
 	}
 
+	/** All notes, oldest first: the input format of seed(). For copying data between
+	 *  production and a local preview (tools/seed.mjs --call Notes main export). */
+	export(): { text: string; at: string }[] {
+		return this.#sql().exec('SELECT text, at FROM notes ORDER BY id').toArray() as unknown as { text: string; at: string }[];
+	}
+
+	/** Load notes, validated like user input. `replace: true` empties the board first,
+	 *  so seeding twice gives the same result. Called through the admin API only
+	 *  (tools/seed.mjs); no route exposes it. */
+	seed(rows: { text: string; at?: string }[], options: { replace?: boolean } = {}): { loaded: number; skipped: number } {
+		const sql = this.#sql();
+		if (options.replace) sql.exec('DELETE FROM notes');
+		let loaded = 0;
+		let skipped = 0;
+		for (const row of Array.isArray(rows) ? rows : []) {
+			const checked = checkNote(row?.text);
+			if ('error' in checked) {
+				skipped++;
+				continue;
+			}
+			const at = typeof row.at === 'string' && !Number.isNaN(Date.parse(row.at)) ? row.at : new Date().toISOString();
+			sql.exec('INSERT INTO notes (text, at) VALUES (?, ?)', checked.text, at);
+			loaded++;
+		}
+		return { loaded, skipped };
+	}
+
 	list(limit = 50): { notes: Note[]; total: number } {
 		const sql = this.#sql();
 		const notes = sql

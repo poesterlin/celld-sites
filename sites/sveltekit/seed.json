@@ -1,0 +1,15 @@
+[
+	{
+		"class": "Notes",
+		"name": "main",
+		"method": "seed",
+		"args": [
+			[
+				{ "text": "Welcome to the notes board.", "at": "2026-10-01T09:00:00.000Z" },
+				{ "text": "This note came from seed.json, loaded with tools/seed.mjs.", "at": "2026-10-01T09:05:00.000Z" },
+				{ "text": "Seeding runs through Notes.seed(), so it is validated like user input." }
+			],
+			{ "replace": true }
+		]
+	}
+]

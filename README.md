@@ -21,8 +21,12 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
 | `tools/admin.sh` | Admin API from the host: aliases, rollback, pruning |
+| `tools/preview.sh` | Local preview: the production router under `celld dev` with one site |
+| `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
+| `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
+| `sites/static/` | A plain static site (no build, no server code), with a `RECIPE.md` |
 | `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the image |
 
 ## Run
@@ -58,23 +62,62 @@ Object names only exist as hashes in storage, so the router keeps an index
 (`obj:` keys in KV) written the first time each object is used. Objects created
 before the index existed show up as "not in the index" with their total size.
 
-## Deploy a site
+## Workflow: develop, preview, deploy, seed
+
+The platform holds only production versions. Previews run on your machine.
 
 Any build that is a Workers `fetch` handler plus static files works (SvelteKit,
 Nuxt, TanStack Start, static-only); see `docs/SITES.md`, `sites/AGENTS.md` (for
 agents building sites) and the examples in `sites/` (each has a `RECIPE.md`).
 
+**1. Develop.** Use the framework's own dev server (`npm run dev`) for UI work
+with hot reload. It does not provide the `OBJECTS` binding (only the router
+does), so anything that touches Durable Objects needs a preview.
+
+**2. Preview locally**, running exactly as in production: the production router
+under `celld dev` on your machine, with the site deployed into it (same
+isolation, bindings and runtime patches). Local data persists in
+`<site>/.celld-preview/` (gitignored).
+
 ```sh
-tools/deploy.sh path/to/site blog.example.com
+tools/preview.sh sites/blog            # build and deploy; http://localhost:8790/ (any hostname)
+tools/preview.sh sites/blog            # again after an edit (~5 s)
+tools/preview.sh sites/blog --stop     # or --reset to delete the local data
+```
+
+`PREVIEW_HOST=0.0.0.0` makes it reachable from other machines. The node log is
+`<site>/.celld-preview/celld.log`.
+
+**3. Deploy to production.**
+
+```sh
+tools/deploy.sh sites/blog blog.example.com
 ```
 
 Then add the hostname to Traefik with `SITES_RULE` in `.env`, e.g.
 ``SITES_RULE=Host(`celld-test.example.com`) || Host(`blog.example.com`)``,
-and run `docker compose up -d`.
+and run `docker compose up -d`. A deploy uploads each static file in its own
+request (at most 20 MiB per file), then the server code and file list, then
+activates the version; visitors switch only at that last step. Each version is
+keyed by a hash of its content.
 
-A deploy uploads each static file in its own request (at most 20 MiB per file),
-then the server code and file list, then activates the version. Visitors switch
-to it only at that last step. Each version is keyed by a hash of its content.
+**4. Seed or export data.** Site code has no secrets, so it can't guard a seed
+or import route itself. Instead, give the object methods for it (see `seed()`
+and `export()` in `sites/sveltekit/src/objects.ts`) and call them through the
+admin API:
+
+```sh
+node tools/seed.mjs blog.example.com sites/blog/seed.json            # production
+node tools/seed.mjs --preview sites/blog sites/blog/seed.json         # local preview
+node tools/seed.mjs blog.example.com --call Notes main export > notes.json
+```
+
+A calls file is a JSON array of `{ "class", "name", "method", "args" }`
+(`sites/sveltekit/seed.json`). Copy production data into a preview by exporting
+it and loading the result with the preview's seed method. Add `"version"` to a
+call to seed a version that is uploaded but not active yet.
+
+**5. Operate.**
 
 ```sh
 tools/admin.sh POST '/activate?host=blog.example.com&version=<id>'    # roll back (or forward)
@@ -139,6 +182,17 @@ container creates it and redeploys the router and the example by itself.
   object is restored, e.g. after a celld restart.
 - **Old site versions** stay until pruned (`tools/admin.sh POST '/prune?keep=3'`):
   roughly the size of the build (~0.5 MB for the example) per deploy.
+
+## Tests
+
+`npm test --prefix tools` (after `npm ci --prefix tools` once) validates the
+APIs against a throwaway local `celld dev` node, never production: the admin
+API (auth and the read/write split, upload limits, code checks, activation and
+rollback, aliases, object calls, overview, pruning), routing (static-first,
+clean URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site
+bindings (`OBJECTS` validation, plain-data rule, errors, CPU limit; `ASSETS`;
+blocked network) and the packer's refusals. 39 tests, about 6 s. Run it after
+changing the router, the tools or the push/admin scripts.
 
 ## Security
 

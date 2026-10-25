@@ -11,6 +11,9 @@ project=$(cd "$(dirname "$0")/.." && pwd)
 bundle=$(mktemp -d)
 trap 'rm -rf "$bundle"' EXIT
 
-(cd "$site" && npm run build >/dev/null)
+# Build if the site has a build script; a plain static folder is deployed as is.
+if [ -f "$site/package.json" ] && grep -q '"build"[[:space:]]*:' "$site/package.json"; then
+	(cd "$site" && npm run build >/dev/null)
+fi
 node "$project/tools/pack.mjs" "$site" "$bundle"
 tar -C "$bundle" -cf - . | docker compose --project-directory "$project" exec -T celld /app/push.sh "$host"

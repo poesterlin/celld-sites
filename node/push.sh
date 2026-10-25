@@ -13,7 +13,8 @@ trap 'rm -rf "$work"' EXIT
 printf 'header = "Authorization: Bearer %s"\n' "$ADMIN_TOKEN" > "$work/auth"
 tar -xf - -C "$work"
 version=$(cat "$work/version")
-api="http://127.0.0.1:8080/__admin"
+# CELLD_ADMIN_API: the node to deploy to (tools/preview.sh points it at a local one).
+api="${CELLD_ADMIN_API:-http://127.0.0.1:8080}/__admin"
 call() { curl -sS --fail-with-body -K "$work/auth" -H "Host: $ADMIN_HOST" "$@"; }
 
 tab=$(printf '\t')

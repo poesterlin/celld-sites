@@ -106,20 +106,98 @@ and call them from server code: `await env.OBJECTS.call("Notes", "main", "add", 
   no `Request`, `Response`, functions or class instances.
 - Objects cannot set alarms.
 
-## Deploy and test
+## Migrations
 
-```sh
-tools/deploy.sh sites/<name> <hostname>        # npm run build, pack, upload, activate
-docker exec celld-sites-celld-1 curl -s -H 'Host: <hostname>' http://127.0.0.1:8080/
+Each Durable Object has its own SQLite database, so there is no central
+database to migrate: **each object migrates itself**, in its constructor, the
+first time new code runs in it. After a deploy that is the object's next call,
+so objects migrate lazily, one by one, while the site is live. The pattern
+(tested on celld-sites, including under load):
+
+```js
+import { DurableObject } from "cloudflare:workers";
+
+// Append-only: never edit or reorder an entry once it is deployed.
+const MIGRATIONS = [
+	(sql) => sql.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)"),
+	(sql) => sql.exec("ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"),
+];
+
+function migrate(storage) {
+	const sql = storage.sql;
+	sql.exec("CREATE TABLE IF NOT EXISTS _schema (version INTEGER NOT NULL)");
+	let version = sql.exec("SELECT version FROM _schema").toArray()[0]?.version;
+	if (version === undefined) {
+		sql.exec("INSERT INTO _schema (version) VALUES (0)");
+		version = 0;
+	}
+	for (; version < MIGRATIONS.length; version++) {
+		storage.transactionSync(() => {
+			MIGRATIONS[version](sql);
+			sql.exec("UPDATE _schema SET version = ?", version + 1);
+		});
+	}
+}
+
+export class Notes extends DurableObject {
+	constructor(ctx, env) {
+		super(ctx, env);
+		ctx.blockConcurrencyWhile(async () => migrate(ctx.storage)); // before any call
+	}
+}
 ```
 
-Requests made this way are plain `http://`, so a POST that is origin-checked
-needs `-H 'Origin: http://<hostname>'`. A hostname is reachable in a browser
-only after it is added to `SITES_RULE` in `.env`.
+- `blockConcurrencyWhile` in the constructor runs the migrations before any
+  call reaches the object; `transactionSync` makes each step all-or-nothing
+  (it rolls back if the step throws).
+- Track the version in a table: `PRAGMA user_version` is not allowed, and
+  neither is raw `BEGIN`. `ALTER TABLE ... ADD COLUMN` and table rebuilds
+  (create, copy, drop, rename inside `transactionSync`) work.
+- If an object's table predates the `_schema` table, count the steps it already
+  has as done (check `sqlite_master`) instead of re-running them.
 
-Limits: a single static file can be at most 20 MiB (the packer refuses larger
-ones, and the router answers 413), the server code at most 16 MiB. Symlinks in
-the static directory are refused. Data belongs to the site id (the first
-hostname deployed to), so serve a site under a new name with an alias
+**Live deploys and rollbacks.** During a deploy, requests that started on the
+old version can still reach an object that already runs the new code, and a
+rollback runs the old code on the migrated schema. So make each deploy's
+migrations **additive** (expand): add tables and columns with defaults, and
+have code name its columns instead of `SELECT *`. Remove or rename things only
+in a later deploy (contract), once every object has migrated and you won't roll
+back. Tested: 13 switches between a schema-1 and a schema-2 version under
+continuous writes and reads gave no failed request and no lost or duplicated
+write; the old version kept working on the migrated table.
+
+**Objects that are never called stay on the old schema**, which is fine:
+they migrate on their next call. To migrate one now, call any method on it
+(`node tools/seed.mjs <hostname> --call <Class> <name> <method>`); the
+dashboard lists a site's objects.
+
+## Preview, deploy, seed
+
+```sh
+tools/preview.sh sites/<name>                    # local preview, http://localhost:8790/
+node tools/seed.mjs --preview sites/<name> sites/<name>/seed.json
+tools/deploy.sh sites/<name> <hostname>          # production: npm run build, pack, upload, activate
+node tools/seed.mjs <hostname> sites/<name>/seed.json
+```
+
+A preview runs the production router under `celld dev` with the site
+deployed, so it behaves like production, including bindings and runtime
+patches. Framework dev servers lack the `OBJECTS` binding. Local data lives in
+`<site>/.celld-preview/`. Preview requests are plain `http://`, so a POST that
+is origin-checked needs `-H 'Origin: http://localhost:<port>'`. A production
+hostname is reachable in a browser only after it is added to `SITES_RULE` in
+`.env`.
+
+**Seeding.** Sites have no secrets, so they can't guard a seed route. Put
+`seed()`/`export()` methods on the object classes; `tools/seed.mjs` calls them
+through the admin endpoint `POST /__admin/call?host=&class=&name=&method=`
+(body: JSON array of arguments, deploy token required). The calls file is a
+JSON array of `{ "class", "name", "method", "args" }`; add `"version"` to seed
+a version that is uploaded but not yet active.
+
+**Limits.** A single static file can be at most 20 MiB (the packer refuses
+larger ones, and the router answers 413), the server code at most 16 MiB.
+Symlinks in the static directory are refused. Data belongs to the site id (the
+first hostname deployed to), so serve a site under a new name with an alias
 (`tools/admin.sh PUT '/alias?host=<new>&site=<id>'`) rather than deploying it
 to the new name.

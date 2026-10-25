@@ -168,7 +168,7 @@ export class SiteObjects extends WorkerEntrypoint {
 	async call(className, name, method, ...args) {
 		const { site } = this.ctx.props;
 		const ident = /^[A-Za-z_$][\w$]*$/;
-		if (!ident.test(className) || !ident.test(method) || typeof name !== "string" || name.length > 200) {
+		if (!ident.test(className) || !ident.test(method) || typeof name !== "string" || !name || name.length > 200) {
 			throw new Error("bad object reference");
 		}
 		const key = `${site}|${className}|${name}`;
@@ -375,6 +375,49 @@ async function prune(env, url) {
 	return json({ keep, kept: [...kept].filter(Boolean), deleted });
 }
 
+// --- Calling objects (seeding, exporting) ------------------------------------------
+
+/** Largest argument payload for an admin object call. */
+const MAX_CALL_BYTES = 8 * 1024 * 1024;
+
+/** POST /__admin/call?host=H&class=C&name=N&method=M[&version=V]  body: JSON array of args.
+ *  Runs a method on one of H's site's Durable Objects and returns { result }. This is
+ *  how data is seeded or exported: site code has no secrets, so it cannot guard such
+ *  routes itself. `version` targets an uploaded but not yet active version, to seed a
+ *  site before it goes live. */
+async function adminCall(request, env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	const className = url.searchParams.get("class") ?? "";
+	const name = url.searchParams.get("name") ?? "";
+	const method = url.searchParams.get("method") ?? "";
+	const ident = /^[A-Za-z_$][\w$]*$/;
+	if (!HOSTNAME.test(host) || !ident.test(className) || !ident.test(method) || !name || name.length > 200) {
+		return fail(400, "need host, class, name and method");
+	}
+	const big = tooLarge(request, MAX_CALL_BYTES);
+	if (big) return big;
+	let args;
+	try {
+		const text = await request.text();
+		args = text.trim() ? JSON.parse(text) : [];
+	} catch {
+		return fail(400, "body must be a JSON array of arguments");
+	}
+	if (!Array.isArray(args)) return fail(400, "body must be a JSON array of arguments");
+	const site = await siteFor(env, host);
+	const version = url.searchParams.get("version") ?? (await env.CODE.get(`site:${site}`));
+	if (!version || !VERSION.test(version)) return fail(404, `no site for ${host}`);
+	if ((await env.CODE.get(`code:${version}`)) === null) return fail(404, `version ${version} is not uploaded`);
+	const key = `${site}|${className}|${name}`;
+	await indexObject(env, key);
+	try {
+		const result = await env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		return json({ site, className, name, method, result: result ?? null });
+	} catch (e) {
+		return fail(500, `${className}.${method}: ${String(e?.message ?? e).slice(0, 500)}`);
+	}
+}
+
 // --- Read-only ------------------------------------------------------------------
 
 /** GET /__admin/overview: sites (with aliases), deploy history, versions, object index. */
@@ -411,10 +454,17 @@ async function overview(env) {
 	return json({ sites, aliases, deploys, objects, versions });
 }
 
-/** GET /__admin/state: celld's live node counters (the only operator call made). */
-async function nodeState() {
-	const res = await fetch("http://127.0.0.1:8081/state", { signal: AbortSignal.timeout(5000) });
-	return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+/** GET /__admin/state: celld's live node counters (the only operator call made).
+ *  OPERATOR_URL is the node's internal listener (production pins it to
+ *  127.0.0.1:8081); `celld dev` picks a random port, so previews leave it empty. */
+async function nodeState(env) {
+	if (!env.OPERATOR_URL) return fail(503, "node state is not available here (no OPERATOR_URL; e.g. celld dev)");
+	try {
+		const res = await fetch(`${env.OPERATOR_URL}/state`, { signal: AbortSignal.timeout(5000) });
+		return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+	} catch (e) {
+		return fail(502, `node state unreachable: ${String(e?.message ?? e).slice(0, 200)}`);
+	}
 }
 
 /** The admin API. Writes need the deploy token; the read-only GETs also accept the read token. */
@@ -424,7 +474,7 @@ async function admin(request, env, url) {
 	const isAdmin = await bearerMatches(request, env.ADMIN_TOKEN_SHA256);
 	if (method === "GET" && (pathname === "/__admin/overview" || pathname === "/__admin/state")) {
 		if (!isAdmin && !(await bearerMatches(request, env.READ_TOKEN_SHA256))) return fail(403, "forbidden");
-		return pathname === "/__admin/overview" ? overview(env) : nodeState();
+		return pathname === "/__admin/overview" ? overview(env) : nodeState(env);
 	}
 	if (!isAdmin) return fail(403, "forbidden");
 	if (method === "PUT" && pathname === "/__admin/asset") return putAsset(request, env, url);
@@ -432,6 +482,7 @@ async function admin(request, env, url) {
 	if (method === "POST" && pathname === "/__admin/activate") return activate(env, url);
 	if ((method === "PUT" || method === "DELETE") && pathname === "/__admin/alias") return alias(request, env, url);
 	if (method === "POST" && pathname === "/__admin/prune") return prune(env, url);
+	if (method === "POST" && pathname === "/__admin/call") return adminCall(request, env, url);
 	return fail(404, "not found");
 }
 
@@ -443,8 +494,14 @@ export default {
 		// routes, so only the project's containers reach it, and every call needs a token.
 		if (host === env.ADMIN_HOST) return admin(request, env, url);
 
-		const site = await siteFor(env, host);
-		const version = await env.CODE.get(`site:${site}`);
+		let site = await siteFor(env, host);
+		let version = await env.CODE.get(`site:${site}`);
+		// Local previews (tools/preview.sh) set DEFAULT_SITE so the one site answers on
+		// any hostname (localhost, an IP); production leaves it empty.
+		if (!version && env.DEFAULT_SITE) {
+			site = env.DEFAULT_SITE;
+			version = await env.CODE.get(`site:${site}`);
+		}
 		if (!version) return new Response(`No site for ${host}`, { status: 404 });
 
 		const meta = await siteMeta(env, version);

@@ -43,7 +43,7 @@ cp /app/router/index.js "$work/"
 # the bucket, which the dashboard can read.
 admin_hash=$(printf '%s' "$ADMIN_TOKEN" | sha256sum | cut -d' ' -f1)
 read_hash=$(printf '%s' "$READ_TOKEN" | sha256sum | cut -d' ' -f1)
-sed -e "s/@ADMIN_TOKEN_SHA256@/$admin_hash/" -e "s/@READ_TOKEN_SHA256@/$read_hash/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" /app/router/wrangler.template.json > "$work/wrangler.json"
+sed -e "s/@ADMIN_TOKEN_SHA256@/$admin_hash/" -e "s/@READ_TOKEN_SHA256@/$read_hash/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" -e "s/@DEFAULT_SITE@//" -e "s#@OPERATOR_URL@#http://127.0.0.1:8081#" /app/router/wrangler.template.json > "$work/wrangler.json"
 log "deploying the router"
 # shellcheck disable=SC2086
 celld deploy "$work" $STORE

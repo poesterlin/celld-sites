@@ -23,7 +23,7 @@
 // Without celld.json, the SvelteKit adapter-cloudflare layout applies:
 //   { "worker": ".svelte-kit/cloudflare/_worker.js", "assets": ".svelte-kit/cloudflare",
 //     "objects": "src/objects.ts" (if present) }
-// The site needs esbuild in its devDependencies.
+// esbuild comes from the site's devDependencies, else from tools/ (npm ci --prefix tools).
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -84,12 +84,15 @@ const celldShims = {
 
 let source = "";
 if (workerPath) {
+	// The site's own esbuild, else the tools' copy (npm ci --prefix tools).
 	let esbuild;
-	try {
-		esbuild = createRequire(join(siteDir, "package.json"))("esbuild");
-	} catch {
-		fail("esbuild not found: add it to the site's devDependencies");
+	for (const from of [join(siteDir, "package.json"), new URL("./package.json", import.meta.url).pathname]) {
+		try {
+			esbuild = createRequire(from)("esbuild");
+			break;
+		} catch {}
 	}
+	if (!esbuild) fail("esbuild not found: add it to the site's devDependencies, or run 'npm ci --prefix tools'");
 	// The entry re-exports the framework's handler plus the site's Durable Object
 	// classes (the router runs those as facets).
 	const entry =
