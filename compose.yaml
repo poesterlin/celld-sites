@@ -74,6 +74,8 @@ services:
       # and its root objects. celld 0.6.3 skips Durable Object facets, so site
       # object logs still grow (~4-6 KB per write); see README.
       CELLD_LTX_RETENTION_SECS: ${CELLD_LTX_RETENTION_SECS:-3600}
+      # Wall-clock limit for a site's response and each Durable Object call (504 after).
+      SITE_TIMEOUT_SECS: ${SITE_TIMEOUT_SECS:-30}
     # celld's local working copy (SQLite, replication); the bucket is the source
     # of truth, this just saves re-downloading objects after a restart.
     volumes:
@@ -121,7 +123,8 @@ services:
 
   # Read-only dashboard, no authentication: LAN-only (not in the Cloudflare
   # tunnel). It can't change anything: GET routes only, a read-only token for the
-  # router's admin API, and the bucket volume mounted read-only (no S3 keys).
+  # router's admin API. It has no access to the bucket (site code and data);
+  # storage sizes come from the sizer below.
   dashboard:
     build: ./dashboard
     image: celld-sites-dashboard
@@ -129,11 +132,10 @@ services:
     init: true
     depends_on:
       - celld
+      - sizer
     environment:
       READ_TOKEN: ${READ_TOKEN}
       PORT: 3000
-    volumes:
-      - s3-data:/bucket:ro
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -159,6 +161,39 @@ services:
       - 'traefik.docker.network=traefik_web'
       - 'traefik.http.routers.celld-sites-dashboard.rule=Host(`${DASHBOARD_HOST:?Set DASHBOARD_HOST in .env}`)'
       - 'traefik.http.services.celld-sites-dashboard.loadbalancer.server.port=3000'
+
+  # Bucket disk usage for the dashboard: the only container with the bucket volume
+  # (read-only). Serves sizes only (GET /sizes), on the project network; no Traefik
+  # route, no token, no file contents.
+  sizer:
+    # Built by the dashboard service (same image, other entry point).
+    image: celld-sites-dashboard
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    command: ["bun", "src/sizer.ts"]
+    environment:
+      PORT: 3001
+    volumes:
+      - s3-data:/bucket:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
+    logging: *logging
+    networks:
+      - default
 
 volumes:
   s3-data:

@@ -100,6 +100,25 @@ function loadSite(env, exports, site, version) {
 	});
 }
 
+/** Wall-clock limit for a site's response (until its headers). CPU is capped
+ *  separately (1 s per request); this catches code that waits forever, which would
+ *  otherwise hold the visitor's connection open. Object calls get 80% of it, so the
+ *  site can still answer when one of them times out. */
+const timeoutMs = (env) => (Number(env.SITE_TIMEOUT_SECS) || 30) * 1000;
+const objectTimeoutMs = (env) => Math.round(timeoutMs(env) * 0.8);
+class Timeout extends Error {}
+async function withTimeout(promise, ms, what) {
+	let timer;
+	const expired = new Promise((_, reject) => {
+		timer = setTimeout(() => reject(new Timeout(`${what} did not finish within ${ms / 1000} s`)), ms);
+	});
+	try {
+		return await Promise.race([promise, expired]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 /** Objects already in the index, so each costs one KV read per router isolate.
  *  Bounded: site code picks object names, so it could otherwise grow forever. */
 const indexed = new Set();
@@ -254,7 +273,8 @@ export class SiteObjects extends WorkerEntrypoint {
 				}),
 			);
 		}
-		return this.env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		const call = this.env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		return withTimeout(call, objectTimeoutMs(this.env), `${className}.${method}`);
 	}
 }
 
@@ -399,6 +419,7 @@ async function putCode(request, env, url) {
 	const entries = files && typeof files === "object" && !Array.isArray(files) ? Object.entries(files) : null;
 	const valid =
 		typeof compatibilityDate === "string" &&
+		/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate) &&
 		typeof source === "string" &&
 		entries !== null &&
 		entries.length <= MAX_FILES &&
@@ -617,20 +638,27 @@ async function deleteSite(env, url) {
 /** Largest argument payload for an admin object call. */
 const MAX_CALL_BYTES = 8 * 1024 * 1024;
 
-/** True if `version` is (or was) H's site's code: active, in its deploy history, or
- *  staged for it at upload. Other sites' versions would run foreign code on its data. */
-async function versionOfSite(env, site, version) {
-	if ((await env.CODE.get(`site:${site}`)) === version) return true;
-	if ((await env.CODE.get(`staged:${site}:${version}`)) !== null) return true;
-	for (const k of await listAll(env.CODE, `deploy:${site}:`)) if ((await env.CODE.get(k.name)) === version) return true;
-	return false;
+/** Why an admin call may not run `version` on the site's objects, or null if it may.
+ *  Only the active version touches live data: any other version's code (and its
+ *  constructor migrations) would run against the data the live version is using, and
+ *  swap the class under it. A site that is not live yet may be seeded with a
+ *  version staged for it (PUT /code?host=), or one from its history. */
+async function callRefusal(env, site, version) {
+	const active = await env.CODE.get(`site:${site}`);
+	if (active === version) return null;
+	if (active !== null) {
+		return `${site} is live with version ${active}; seeding another version would run its code on live data (activate it first)`;
+	}
+	if ((await env.CODE.get(`staged:${site}:${version}`)) !== null) return null;
+	for (const k of await listAll(env.CODE, `deploy:${site}:`)) if ((await env.CODE.get(k.name)) === version) return null;
+	return `version ${version} was not uploaded for ${site}`;
 }
 
 /** POST /__admin/call?host=H&class=C&name=N&method=M[&version=V]  body: JSON array of args.
  *  Runs a method on one of H's site's Durable Objects and returns { result }. This is
  *  how data is seeded or exported: site code has no secrets, so it cannot guard such
- *  routes itself. `version` targets another version of the same site, e.g. one
- *  uploaded but not yet active, to seed a site before it goes live. */
+ *  routes itself. `version` seeds a site that is not live yet with a version staged
+ *  for it (see callRefusal). */
 async function adminCall(request, env, url) {
 	const host = url.searchParams.get("host") ?? "";
 	const className = url.searchParams.get("class") ?? "";
@@ -654,13 +682,16 @@ async function adminCall(request, env, url) {
 	const version = url.searchParams.get("version") ?? (await env.CODE.get(`site:${site}`));
 	if (!version || !VERSION.test(version)) return fail(404, `no site for ${host}`);
 	if ((await env.CODE.get(`code:${version}`)) === null) return fail(404, `version ${version} is not uploaded`);
-	if (!(await versionOfSite(env, site, version))) return fail(409, `version ${version} was not uploaded for ${site}`);
+	const refusal = await callRefusal(env, site, version);
+	if (refusal) return fail(409, refusal);
 	const key = `${site}|${className}|${name}`;
 	await indexObject(env, key);
 	try {
-		const result = await env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		const call = env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		const result = await withTimeout(call, objectTimeoutMs(env), `${className}.${method}`);
 		return json({ site, className, name, method, result: result ?? null });
 	} catch (e) {
+		if (e instanceof Timeout) return fail(504, e.message);
 		return fail(500, `${className}.${method}: ${String(e?.message ?? e).slice(0, 500)}`);
 	}
 }
@@ -781,6 +812,11 @@ export default {
 		}
 
 		// Compiled once per version; later requests reuse the warm isolate.
-		return loadSite(env, ctx.exports, site, version).getEntrypoint().fetch(siteRequest);
+		try {
+			return await withTimeout(loadSite(env, ctx.exports, site, version).getEntrypoint().fetch(siteRequest), timeoutMs(env), "the site");
+		} catch (e) {
+			if (e instanceof Timeout) return new Response(`${e.message}\n`, { status: 504 });
+			throw e;
+		}
 	},
 };

@@ -34,6 +34,7 @@ relative to the site directory):
 | `objects` | Module exporting the site's Durable Object classes (see below). |
 | `immutable` | Path prefixes of content-hashed files (1-year cache). Default: whichever of `_app/immutable/` and `_nuxt/` exist, plus `assets/` if every file in it has a hash in its name. |
 | `mutable` | Exact paths under those prefixes that change between builds (served `no-cache`). `_nuxt/builds/latest.json` is always included. |
+| `compatibilityDate` | workerd compatibility date, `YYYY-MM-DD`. Default `2026-10-01`. |
 | `notFound` | `"spa"`: a static-only site answers page navigations to unknown paths with `index.html`. Default `"none"`. |
 | `exclude` | Asset paths never to serve (adapters' `_worker.js`, `_routes.json`, `_headers`, `_redirects`, `.assetsignore` are always excluded). |
 
@@ -62,8 +63,11 @@ argument and via `import { env } from "cloudflare:workers"`:
 
 There is **no KV, D1, R2, Queues or secrets**, and **no outbound network**:
 `fetch()` to anything except the bindings throws. Each request has 1 second
-of CPU. The runtime is workerd-compatible with compatibility date
-`2026-10-01` and `nodejs_compat`.
+of CPU, and has to start its response within 30 s (`SITE_TIMEOUT_SECS`, else
+504); an object call gives up after 80% of that. The runtime is
+workerd-compatible with `nodejs_compat` and compatibility date `2026-10-01`, or
+`compatibilityDate` (YYYY-MM-DD) from `celld.json`. celld 0.6.3 accepts any
+date without complaint, so test a site with a non-default date in a preview.
 
 ### Runtime gaps the platform papers over
 
@@ -197,7 +201,8 @@ works as soon as it is deployed.
 through the admin endpoint `POST /__admin/call?host=&class=&name=&method=`
 (body: JSON array of arguments, deploy token required). The calls file is a
 JSON array of `{ "class", "name", "method", "args" }`; add `"version"` to seed
-a version that is uploaded but not yet active.
+a site that is not live yet with a version uploaded for it (refused once the
+site is live: only the active version runs on live data).
 
 **Limits.** A single static file can be at most 20 MiB (the packer refuses
 larger ones, and the router answers 413), the server code at most 16 MiB.

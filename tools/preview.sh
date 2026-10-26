@@ -57,7 +57,7 @@ hash=$(printf '%s' "$token" | sha256sum | cut -d' ' -f1)
 mkdir -p "$state/router"
 cp "$project/router/index.js" "$state/router/index.js"
 sed -e "s/@ADMIN_TOKEN_SHA256@/$hash/" -e "s/@READ_TOKEN_SHA256@/$hash/" \
-	-e "s/@ADMIN_HOST@/admin.internal/" -e "s/@DEFAULT_SITE@/preview/" -e "s/@OPERATOR_URL@//" \
+	-e "s/@ADMIN_HOST@/admin.internal/" -e "s/@DEFAULT_SITE@/preview/" -e "s/@OPERATOR_URL@//" -e "s/@SITE_TIMEOUT_SECS@/30/" \
 	"$project/router/wrangler.template.json" > "$state/router/wrangler.json"
 
 health() { curl -sf -o /dev/null "http://127.0.0.1:$port/.well-known/celld/health"; }

@@ -36,7 +36,8 @@ export class Node {
 			.replace("@READ_TOKEN_SHA256@", sha256(this.readToken))
 			.replace("@ADMIN_HOST@", ADMIN_HOST)
 			.replace("@DEFAULT_SITE@", "")
-			.replace("@OPERATOR_URL@", "");
+			.replace("@OPERATOR_URL@", "")
+			.replace("@SITE_TIMEOUT_SECS@", "2");
 		writeFileSync(join(router, "wrangler.json"), template);
 		return this.#launch();
 	}

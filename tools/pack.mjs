@@ -21,6 +21,7 @@
 //              exist, plus assets/ (Vite) if every file in it has a hash in its name.
 //   mutable    exact paths under those prefixes that do change between builds
 //              (never cached for long). _nuxt/builds/latest.json is always added.
+//   compatibilityDate  workerd compatibility date, YYYY-MM-DD (default 2026-10-01).
 //   notFound   "none" (default) or "spa": a static-only site answers unknown
 //              paths with index.html (client-side routing).
 // Without celld.json, the SvelteKit adapter-cloudflare layout applies:
@@ -48,8 +49,10 @@ const config = existsSync(configFile)
 			assets: ".svelte-kit/cloudflare",
 			objects: existsSync(join(siteDir, "src/objects.ts")) ? "src/objects.ts" : undefined,
 		};
-const { notFound = "none", exclude = [] } = config;
+const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01" } = config;
 if (notFound !== "none" && notFound !== "spa") fail(`notFound must be "none" or "spa"`);
+// celld 0.6.3 accepts any string here (even a non-date), so check it ourselves.
+if (typeof compatibilityDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) fail("compatibilityDate must be YYYY-MM-DD");
 // Files that sit under an immutable prefix but change with every build.
 const ALWAYS_MUTABLE = ["_nuxt/builds/latest.json"];
 const mutable = [...new Set([...(config.mutable ?? []), ...ALWAYS_MUTABLE])];
@@ -164,17 +167,20 @@ if (immutable === undefined) {
 	else if (vite.length) console.error("pack: assets/ has files without a hash in their name; not caching it as immutable (set \"immutable\" in celld.json to override)");
 }
 
-// `mutable` only counts when it matters, so versions of other sites stay as they were.
 const relevantMutable = mutable.filter((m) => assets.some((a) => a.path === m) && immutable.some((p) => m.startsWith(p)));
+// The version id covers everything the router stores for it: options, server code,
+// and each file's path, content type and bytes (NUL-separated, so no two inputs
+// run together).
 const hash = createHash("sha256")
-	.update(source)
-	.update(JSON.stringify(relevantMutable.length ? { immutable, notFound, mutable: relevantMutable } : { immutable, notFound }));
+	.update(JSON.stringify({ compatibilityDate, immutable, mutable: relevantMutable, notFound }))
+	.update("\0")
+	.update(source);
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, "blobs"), { recursive: true });
 const fileMap = {};
 for (const a of assets) {
 	const bytes = readFileSync(join(assetsDir, a.path));
-	hash.update(a.path).update(bytes);
+	hash.update("\0").update(a.path).update("\0").update(a.type).update("\0").update(bytes);
 	const sha = createHash("sha256").update(bytes).digest("hex");
 	fileMap[a.path] = [sha, a.type];
 	writeFileSync(join(outDir, "blobs", sha), bytes);
@@ -183,7 +189,7 @@ const version = hash.digest("hex").slice(0, 12);
 writeFileSync(join(outDir, "version"), `${version}\n`);
 writeFileSync(
 	join(outDir, "code.json"),
-	JSON.stringify({ compatibilityDate: "2026-10-01", source, files: fileMap, immutable, mutable: relevantMutable, notFound }),
+	JSON.stringify({ compatibilityDate, source, files: fileMap, immutable, mutable: relevantMutable, notFound }),
 );
 console.error(
 	`packed ${relative(process.cwd(), siteDir) || "."}: version ${version}, ${assets.length} assets, ` +

@@ -23,6 +23,9 @@ export default {
 				return attempt(() => env.OBJECTS.call("Kv", "x", "echo", new Request("http://example.com/")));
 			case "/egress":
 				return attempt(() => fetch("https://example.com/").then((r) => r.status));
+			case "/hang":
+				await new Promise((r) => setTimeout(r, 10_000));
+				return new Response("too late");
 			case "/spin":
 				for (;;) {}
 			case "/assets-binding":

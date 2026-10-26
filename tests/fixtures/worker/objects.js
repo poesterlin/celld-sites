@@ -22,6 +22,10 @@ export class Kv extends DurableObject {
 	fn() {
 		return () => 1;
 	}
+	async hang() {
+		await new Promise((r) => setTimeout(r, 10_000));
+		return "too late";
+	}
 	spin() {
 		for (;;) {}
 	}

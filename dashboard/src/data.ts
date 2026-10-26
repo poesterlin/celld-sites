@@ -1,9 +1,7 @@
 // Everything the dashboard shows, gathered read-only:
 //  - the router's admin API (GET only, READ_TOKEN): sites, deploys, versions, object index
 //  - celld's node counters, fetched by the router from its operator API (GET /state)
-//  - bucket storage sizes from a read-only mount of the bucket volume
-import { readdirSync, lstatSync, statfsSync } from "node:fs";
-import { join } from "node:path";
+//  - bucket storage sizes from the sizer, which alone has the bucket mounted
 
 export const config = {
 	port: Number(process.env.PORT ?? 3000),
@@ -13,7 +11,7 @@ export const config = {
 	readToken: process.env.READ_TOKEN ?? "",
 	healthUrl: process.env.CELLD_HEALTH_URL ?? "http://celld:8080/.well-known/celld/health",
 	s3Url: process.env.S3_URL ?? "http://s3:7070/",
-	bucketDir: process.env.BUCKET_DIR ?? "/bucket/celld",
+	sizerUrl: process.env.SIZER_URL ?? "http://sizer:3001",
 	cacheMs: Number(process.env.CACHE_SECONDS ?? 15) * 1000,
 };
 if (!config.readToken) throw new Error("READ_TOKEN is required");
@@ -84,77 +82,27 @@ async function up(url: string, okStatus: (s: number) => boolean) {
 	}
 }
 
-/** Disk usage (allocated blocks, like `du`) and file count of a directory tree.
- *  celld's logs are thousands of small files, so this is several times their
- *  apparent size, and it's what fills the disk. Symlinks are not followed. */
-function usage(dir: string): Usage {
-	let bytes = 0, files = 0;
-	const walk = (d: string) => {
-		let entries;
-		try {
-			bytes += lstatSync(d).blocks * 512;
-			entries = readdirSync(d, { withFileTypes: true });
-		} catch {
-			return;
-		}
-		for (const e of entries) {
-			const p = join(d, e.name);
-			if (e.isDirectory()) walk(p);
-			else if (e.isFile()) {
-				bytes += lstatSync(p).blocks * 512;
-				files++;
-			}
-		}
-	};
-	walk(dir);
-	return { bytes, files };
+type BucketSizes = {
+	perObject: Map<string, Usage>;
+	total: Usage;
+	siteObjects: Usage;
+	kv: Usage;
+	deployments: Usage;
+	other: Usage;
+	volumeFreeBytes: number;
+	volumeSizeBytes: number;
+};
+
+/** Bucket usage from the sizer (src/sizer.ts), the only container with the bucket mounted. */
+async function bucketSizes(): Promise<BucketSizes> {
+	const res = await fetch(`${config.sizerUrl}/sizes`, { signal: AbortSignal.timeout(5000) });
+	const body = (await res.json()) as any;
+	if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+	return { ...body, perObject: new Map(Object.entries(body.perObject ?? {})) };
 }
 
-const add = (a: Usage, b: Usage): Usage => ({ bytes: a.bytes + b.bytes, files: a.files + b.files });
 const ZERO: Usage = { bytes: 0, files: 0 };
-
-/** Bucket usage by area, and per Durable Object (cells/SiteObject:<id>). */
-function scanBucket() {
-	const perObject = new Map<string, Usage>();
-	let siteObjects = ZERO, kv = ZERO, other = ZERO;
-	const cellsDir = join(config.bucketDir, "cells");
-	for (const name of safeList(cellsDir)) {
-		const u = usage(join(cellsDir, name));
-		if (name.startsWith("SiteObject:")) {
-			perObject.set(name.slice("SiteObject:".length), u);
-			siteObjects = add(siteObjects, u);
-		} else if (name.startsWith("__KvNamespace:")) kv = add(kv, u);
-		else other = add(other, u);
-	}
-	const deployments = usage(join(config.bucketDir, "deploy"));
-	for (const name of safeList(config.bucketDir)) {
-		if (name !== "cells" && name !== "deploy") other = add(other, usage(join(config.bucketDir, name)));
-	}
-	let fs = { bavail: 0, blocks: 0, bsize: 0 };
-	try {
-		fs = statfsSync(config.bucketDir);
-	} catch {
-		// free space unknown; the rest of the scan is still useful
-	}
-	return {
-		perObject,
-		total: add(add(add(siteObjects, kv), deployments), other),
-		siteObjects,
-		kv,
-		deployments,
-		other,
-		volumeFreeBytes: fs.bavail * fs.bsize,
-		volumeSizeBytes: fs.blocks * fs.bsize,
-	};
-}
-
-function safeList(dir: string): string[] {
-	try {
-		return readdirSync(dir);
-	} catch {
-		return [];
-	}
-}
+const add = (a: Usage, b: Usage): Usage => ({ bytes: a.bytes + b.bytes, files: a.files + b.files });
 
 interface Overview {
 	sites: { id: string; version: string; aliases: string[] }[];
@@ -185,11 +133,11 @@ async function build(): Promise<Model> {
 		up(config.s3Url, (s) => s < 500), // unauthenticated requests get 403
 	]);
 
-	let bucket: ReturnType<typeof scanBucket> | undefined;
+	let bucket: BucketSizes | undefined;
 	try {
-		bucket = scanBucket();
+		bucket = await bucketSizes();
 	} catch (e) {
-		errors.push(`bucket scan: ${(e as Error).message}`);
+		errors.push(`bucket sizes: ${(e as Error).message}`);
 	}
 
 	const resident = new Set(

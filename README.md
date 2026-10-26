@@ -16,7 +16,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | `s3` (VersityGW, files in a Docker volume), `celld` (the node) and `dashboard` |
+| `compose.yaml` | `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard` and `sizer` |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node, bundled sites), `push.sh` and `admin.sh` |
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
@@ -25,7 +25,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/preview.sh` | Local preview: the production router under `celld dev` with one site |
 | `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
-| `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) |
+| `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
 | `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the image |
@@ -60,8 +60,12 @@ It cannot change anything:
   `GET /__admin/overview` and `GET /__admin/state`; deploying needs
   `ADMIN_TOKEN`. `/__admin/state` is the router fetching celld's `/state`, the
   only operator call it makes.
-- Storage sizes come from the bucket volume mounted read-only; it holds no S3
-  credentials. The container filesystem is read-only and runs as non-root.
+- It has no access to the bucket, which holds every site's code and Durable
+  Object data. Storage sizes come from the `sizer` service (same image,
+  `src/sizer.ts`): the only container with the bucket volume (read-only), on
+  the project network only, answering `GET /sizes` with sizes and nothing else.
+  It rescans every 60 s, so sizes can be up to a minute old. Both containers
+  have read-only filesystems and run as non-root.
 
 Object names only exist as hashes in storage, so the router keeps an index
 (`obj:` keys in KV) written the first time each object is used. Objects created
@@ -130,11 +134,11 @@ node tools/seed.mjs blog.example.com --call Notes main export > notes.json
 A calls file is a JSON array of `{ "class", "name", "method", "args" }`
 (`sites/sveltekit/seed.json`). Copy production data into a preview by exporting
 it and loading the result with the preview's seed method. Add `"version"` to a
-call to target another version of the same site: one in its deploy history, or
-one uploaded for it but not active yet (`PUT /code?version=V&host=H` records
-that). Versions of other sites are refused. Seeding a staged version runs its
-code against the live objects, so its migrations apply to production data
-before the version is active.
+call to seed a site that is not live yet with a version uploaded for it but not
+activated (`PUT /code?version=V&host=H` records that), then activate it. A live
+site's objects only ever run its active version: any other version would run
+its code and migrations on the data the live version is using, so the router
+refuses it (409).
 
 **5. Operate.**
 
@@ -224,10 +228,10 @@ API (auth and the read/write split, upload limits and hash checks, code checks,
 activation and rollback, aliases, object calls, overview, pruning, deleting
 sites), routing (static-first, clean URLs, HEAD, SPA and 404.html fallbacks,
 forwarded scheme), the site bindings (`OBJECTS` validation, plain-data rule,
-errors, CPU limit; `ASSETS`; blocked network), static-file validators and
-caching, and the packer's refusals and defaults, and upgrading from per-version
-files. 58 tests, about 12 s. Run it after changing the router, the tools or the
-push/admin scripts.
+errors, CPU and wall-clock limits; `ASSETS`; blocked network), static-file
+validators and caching, and the packer's refusals and defaults, and upgrading
+from per-version files. 62 tests, about 20 s. Run it after changing the router,
+the tools or the push/admin scripts.
 
 ## Security
 
@@ -236,7 +240,7 @@ push/admin scripts.
 - The admin API answers only for the hostname `admin.internal`, which Traefik
   never routes. Writes need `ADMIN_TOKEN`; the dashboard's `READ_TOKEN` only
   allows the two read endpoints. The router gets only SHA-256 hashes of both
-  tokens, so the bucket (which stores deployments, and which the dashboard can
+  tokens, so the bucket (which stores deployments, and which the sizer can
   read) never holds a usable token. `tools/deploy.sh` and `tools/admin.sh`
   reach the API with `docker compose exec`.
 - Uploads are size-checked before they are read (413 above 20 MiB per file,
@@ -247,7 +251,10 @@ push/admin scripts.
   a build folder cannot publish files from elsewhere on the machine.
 - Sites are isolated from each other and from the router (separate isolates,
   only `ASSETS` and `OBJECTS`), and each request, including a Durable Object
-  call, is capped at 1 s of CPU. The isolates share one process, so this is not
+  call, is capped at 1 s of CPU. A response that takes longer than
+  `SITE_TIMEOUT_SECS` (default 30) of wall-clock time to start gets a 504, and
+  an object call gives up after 80% of that, so code that waits forever can't
+  hold connections open. The isolates share one process, so this is not
   a boundary against hostile code: fine for your own sites only.
 - Sites have no outbound network (`globalOutbound: null`): `fetch()` throws.
   Otherwise site code could reach celld's unauthenticated operator API on

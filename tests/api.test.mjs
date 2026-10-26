@@ -2,7 +2,7 @@
 // Run: npm test --prefix tools   (needs celld in ~/.local/bin and npm ci --prefix tools)
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -98,6 +98,7 @@ describe("deploy: upload, code, activate", () => {
 		assert.equal((await put({ compatibilityDate: "2026-10-01", files: { "/abs": ok["ok.txt"] } })).status, 400);
 		assert.equal((await put({ compatibilityDate: "2026-10-01", files: { ["a".repeat(401)]: ok["ok.txt"] } })).status, 400);
 		assert.equal((await put({ compatibilityDate: "2026-10-01", files: ok, notFound: "maybe" })).status, 400);
+		assert.equal((await put({ compatibilityDate: "soon", files: ok })).status, 400);
 		const missing = await put({ compatibilityDate: "2026-10-01", files: { ...ok, "missing.txt": [sha256("nope"), "text/plain"] } });
 		assert.equal(missing.status, 409);
 		assert.match(missing.json().error, /missing 1 files, e\.g\. missing\.txt/);
@@ -262,6 +263,19 @@ describe("bindings: ASSETS, network, CPU", () => {
 		assert.equal(r.ok, false);
 		assert.match(r.error, /not permitted/);
 	});
+	it("answers 504 when the site never responds, and keeps serving", async () => {
+		const started = Date.now();
+		const r = await site("/hang");
+		assert.equal(r.status, 504);
+		assert.match(r.text, /did not finish within 2 s/);
+		assert.ok(Date.now() - started < 10_000);
+		assert.equal((await site("/echo")).status, 200);
+	});
+	it("gives up on an object call that never finishes", async () => {
+		const r = await obj("Kv", "x", "hang");
+		assert.equal(r.ok, false);
+		assert.match(r.error, /Kv\.hang did not finish within 1\.6 s/);
+	});
 	it("stops a runaway request and keeps serving", async () => {
 		const r = await site("/spin");
 		assert.equal(r.status, 500);
@@ -314,31 +328,38 @@ describe("admin object calls (seeding)", () => {
 		assert.deepEqual((await obj("Kv", "seeded", "get", ["k"])).result, 42, "visible to the site");
 	});
 	it("refuses versions that were not uploaded for the site", async () => {
-		const r = await call(`host=worker.test&class=Kv&name=x&method=get&version=${spa.version}`, '["k"]');
+		// A site that is not live (here: none at all) may only use versions uploaded for it.
+		const r = await call(`host=never.test&class=Kv&name=x&method=get&version=${spa.version}`, '["k"]');
 		assert.equal(r.status, 409);
-		assert.match(r.json().error, /not uploaded for worker\.test/);
+		assert.match(r.json().error, /not uploaded for never\.test/);
 	});
-	it("accepts the site's staged and earlier versions", async () => {
+	it("seeds a site that is not live yet with its staged version, but never a live one", async () => {
 		const copy = mkdtempSync(join(tmpdir(), "celld-api-staged-"));
 		try {
 			cpSync(join(fixtures, "worker"), copy, { recursive: true });
 			writeFileSync(join(copy, "public/hello.txt"), "staged\n");
 			const bundle = node.pack(copy);
-			const version = await node.stage(bundle, W);
-			rmSync(bundle, { recursive: true, force: true });
+			const version = await node.stage(bundle, "seed.test");
 			assert.notEqual(version, worker.version);
-			assert.equal((await call(`host=worker.test&class=Kv&name=staged&method=put&version=${version}`, '["k", 1]')).status, 200);
-			assert.equal((await site("/hello.txt")).text, "hello from assets\n", "staging does not activate");
-			// The same version staged without a host belongs to no site.
-			const strayBundle = node.pack(copy);
-			assert.equal(await node.stage(strayBundle), version);
-			rmSync(strayBundle, { recursive: true, force: true });
-			assert.equal((await call(`host=spa.test&class=Kv&name=x&method=get&version=${version}`, '["k"]')).status, 409);
-			// The active version is still the default target.
-			assert.equal((await call(`host=worker.test&class=Kv&name=staged&method=get`, '["k"]')).json().result, 1);
+			assert.equal((await call(`host=seed.test&class=Kv&name=seeded&method=put&version=${version}`, '["k", 1]')).status, 200);
+			assert.equal((await site("/hello.txt", { host: "seed.test" })).status, 404, "staging does not activate");
+			assert.equal((await node.admin("POST", `/activate?host=seed.test&version=${version}`)).status, 200);
+			assert.equal((await call("host=seed.test&class=Kv&name=seeded&method=get", '["k"]')).json().result, 1, "seeded data is live");
+			// A live site only runs its active version on its data.
+			assert.equal(await node.stage(bundle, W), version);
+			const live = await call(`host=worker.test&class=Kv&name=x&method=get&version=${version}`, '["k"]');
+			assert.equal(live.status, 409);
+			assert.match(live.json().error, /is live with version/);
+			rmSync(bundle, { recursive: true, force: true });
+			assert.equal((await call(`host=worker.test&class=Kv&name=x&method=get&version=${worker.version}`, '["k"]')).status, 200);
 		} finally {
 			rmSync(copy, { recursive: true, force: true });
 		}
+	});
+	it("gives up on an object method that never finishes", async () => {
+		const r = await call("host=worker.test&class=Kv&name=x&method=hang", "[]");
+		assert.equal(r.status, 504);
+		assert.match(r.json().error, /Kv\.hang did not finish within 1\.6 s/);
 	});
 	it("reports method errors", async () => {
 		const r = await call("host=worker.test&class=Kv&name=x&method=boom", "[]");
@@ -580,6 +601,26 @@ describe("packer", () => {
 		rmSync(dir, { recursive: true, force: true });
 		assert.equal(r.ok, false);
 		assert.match(r.error, /limit/);
+	});
+	it("takes the compatibility date from celld.json and checks it", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "celld-api-compat-"));
+		try {
+			cpSync(join(fixtures, "static"), dir, { recursive: true });
+			const bundle = node.pack(dir);
+			const plain = JSON.parse(readFileSync(join(bundle, "code.json"), "utf8"));
+			const plainVersion = readFileSync(join(bundle, "version"), "utf8");
+			rmSync(bundle, { recursive: true, force: true });
+			assert.equal(plain.compatibilityDate, "2026-10-01");
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ assets: "public", immutable: [], compatibilityDate: "2026-06-01" }));
+			const dated = node.pack(dir);
+			assert.equal(JSON.parse(readFileSync(join(dated, "code.json"), "utf8")).compatibilityDate, "2026-06-01");
+			assert.notEqual(readFileSync(join(dated, "version"), "utf8"), plainVersion, "the date is part of the version");
+			rmSync(dated, { recursive: true, force: true });
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ assets: "public", compatibilityDate: "June" }));
+			assert.throws(() => node.pack(dir), /compatibilityDate must be YYYY-MM-DD/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 	it("refuses an invalid notFound option", () => {
 		const dir = copy();
