@@ -2,9 +2,9 @@
 // Run: npm test --prefix tools   (needs celld in ~/.local/bin and npm ci --prefix tools)
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Node, project } from "./harness.mjs";
 
@@ -360,6 +360,58 @@ describe("overview and pruning", () => {
 			404,
 			"pruned staged version is gone",
 		);
+	});
+});
+
+describe("static files: validators, HEAD, cache", () => {
+	it("sends an ETag and answers a matching If-None-Match with 304", async () => {
+		const first = await site("/hello.txt");
+		const etag = first.headers.etag;
+		assert.match(etag, /^"[a-f0-9]{12}:hello\.txt"$/);
+		const again = await site("/hello.txt", { headers: { "if-none-match": etag } });
+		assert.equal(again.status, 304);
+		assert.equal(again.text, "");
+		assert.equal(again.headers.etag, etag);
+		assert.equal((await site("/hello.txt", { headers: { "if-none-match": `W/${etag}, "other"` } })).status, 304);
+		assert.equal((await site("/hello.txt", { headers: { "if-none-match": '"other"' } })).status, 200);
+	});
+	it("changes the ETag with the version", async () => {
+		const a = (await site("/", { host: "static.test" })).headers.etag;
+		const b = (await site("/", { host: "spa.test" })).headers.etag;
+		assert.notEqual(a, b);
+	});
+	it("gives HEAD the content length", async () => {
+		const get = await site("/hello.txt");
+		const head = await site("/hello.txt", { method: "HEAD" });
+		assert.equal(head.headers["content-length"], String(Buffer.byteLength(get.text)));
+	});
+	it("serves the same bytes from the memory cache", async () => {
+		const texts = [];
+		for (let i = 0; i < 4; i++) texts.push((await site("/hello.txt")).text);
+		assert.deepEqual(texts, Array(4).fill("hello from assets\n"));
+	});
+	it("defaults immutable to the prefixes the build has, minus files that change", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "celld-api-cache-"));
+		try {
+			const files = {
+				"index.html": "home",
+				"_nuxt/app.Ab12Cd34Ef.js": "js",
+				"_nuxt/builds/latest.json": "{}",
+				"assets/logo.png": "png",
+			};
+			for (const [path, body] of Object.entries(files)) {
+				mkdirSync(join(dir, "public", dirname(path)), { recursive: true });
+				writeFileSync(join(dir, "public", path), body);
+			}
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ assets: "public" }));
+			node.deploy(dir, "cache.test");
+			const cc = async (path) => (await site(path, { host: "cache.test" })).headers["cache-control"];
+			assert.equal(await cc("/_nuxt/app.Ab12Cd34Ef.js"), "public, immutable, max-age=31536000");
+			assert.equal(await cc("/_nuxt/builds/latest.json"), "no-cache", "Nuxt's build manifest changes per build");
+			assert.equal(await cc("/assets/logo.png"), "no-cache", "assets/ without hashes is not immutable");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

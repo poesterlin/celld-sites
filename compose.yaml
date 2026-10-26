@@ -114,6 +114,9 @@ services:
       # so a wide pattern never takes over another service's hostname (e.g. the
       # dashboard); above static-host's priority-1 catch-all.
       - 'traefik.http.routers.celld-sites.priority=10'
+      # gzip/br/zstd for text only; images and fonts are compressed already.
+      - 'traefik.http.middlewares.celld-sites-compress.compress.includedContentTypes=text/html,text/css,text/javascript,text/plain,application/javascript,application/json,application/xml,image/svg+xml,application/manifest+json,application/wasm'
+      - 'traefik.http.routers.celld-sites.middlewares=celld-sites-compress'
       - 'traefik.http.services.celld-sites.loadbalancer.server.port=8080'
 
   # Read-only dashboard, no authentication: LAN-only (not in the Cloudflare

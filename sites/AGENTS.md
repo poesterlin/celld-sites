@@ -53,7 +53,10 @@ Design within these; none of them can be worked around from site code.
 All paths are relative to the site directory and point at **build output**.
 Omit `worker` for a static-only site; use `"notFound": "spa"` for a client-side
 router (unknown page navigations get `index.html`). The default `immutable` is
-`["_app/immutable/", "_nuxt/", "assets/"]`. Without `celld.json` the SvelteKit
+whichever of `_app/immutable/` and `_nuxt/` the build has, plus `assets/` only
+if every file in it has a content hash in its name; `mutable` lists exact
+paths under those prefixes that change per build (Nuxt's
+`_nuxt/builds/latest.json` is always included). Without `celld.json` the SvelteKit
 `adapter-cloudflare` layout is assumed. Put `esbuild` in devDependencies: the
 packer needs it.
 

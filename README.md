@@ -214,11 +214,12 @@ container creates it and redeploys the router and the example by itself.
 `npm test --prefix tools` (after `npm ci --prefix tools` once) validates the
 APIs against a throwaway local `celld dev` node, never production: the admin
 API (auth and the read/write split, upload limits, code checks, activation and
-rollback, aliases, object calls, overview, pruning, deleting sites), routing (static-first,
-clean URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site
-bindings (`OBJECTS` validation, plain-data rule, errors, CPU limit; `ASSETS`;
-blocked network) and the packer's refusals. 49 tests, about 8 s. Run it after
-changing the router, the tools or the push/admin scripts.
+rollback, aliases, object calls, overview, pruning, deleting sites), routing
+(static-first, clean URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme),
+the site bindings (`OBJECTS` validation, plain-data rule, errors, CPU limit;
+`ASSETS`; blocked network), static-file validators and caching, and the
+packer's refusals and defaults. 54 tests, about 8 s. Run it after changing the
+router, the tools or the push/admin scripts.
 
 ## Security
 
@@ -272,10 +273,21 @@ Memory: ~100 MB celld and ~25 MB VersityGW at rest. Each resident Durable
 Object adds ~1.4 MB to celld; it sheds objects at ~2.4 GB (80% of its 3 GB
 limit), so ~1,500-2,000 objects can be resident at once.
 
-These numbers predate serving static files straight from the router (without
-the site's isolate) and need re-measuring. Each static file is still a KV read
-per request, uncompressed and without an ETag; caching immutable files in the
-router and adding validators and compression would help.
+Static files (2026-10-26). The router serves them without starting the site's
+isolate, keeps up to 32 MiB of files (each up to 1 MiB) in memory, sends an
+ETag (`"<version>:<path>"`) and answers `If-None-Match` with 304; Traefik
+compresses text types. Router alone, `celld dev`, 50 connections, VM load
+average ~16:
+
+| | Before (KV read per request) | Memory cache |
+| --- | --- | --- |
+| 18-byte file | ~2,750 req/s | ~4,200 req/s |
+| 80 KB file | ~1,290 req/s | ~3,500 req/s |
+
+Through Traefik (HTTPS) the same build measured ~1,000 req/s for a small
+SvelteKit chunk and ~920 req/s (identity) / ~690 req/s (gzip) for a 76 KB Nuxt
+chunk; TLS and compression in Traefik are the limit there. The page and
+Durable Object numbers above are older.
 
 ## Status
 

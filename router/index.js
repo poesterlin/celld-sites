@@ -7,7 +7,7 @@
 //   alias:<hostname>            -> site id
 //   site:<site>                 -> current version id
 //   code:<version>              -> { compatibilityDate, source, assets: [paths],
-//                                    immutable: [prefixes], notFound }
+//                                    immutable: [prefixes], mutable: [paths], notFound }
 //   asset:<version>:<path>      -> file bytes, metadata { type, at }
 //   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
 //   staged:<site>:<version>     -> ""  (uploaded for that site, not necessarily active)
@@ -86,7 +86,7 @@ function loadSite(env, exports, site, version) {
 			mainModule: "main.js",
 			modules: { "main.js": MAIN, "prelude.js": PRELUDE, "worker.js": code.source },
 			env: {
-				ASSETS: exports.SiteAssets({ props: { version, immutable: code.immutable ?? DEFAULT_IMMUTABLE } }),
+				ASSETS: exports.SiteAssets({ props: { version } }),
 				OBJECTS: exports.SiteObjects({ props: { site } }),
 			},
 			globalOutbound: null, // fetch() and connect() throw inside sites
@@ -103,17 +103,74 @@ const MAX_INDEXED = 10_000;
 /** Path prefixes of content-hashed build output: SvelteKit, Nuxt, Vite. */
 const DEFAULT_IMMUTABLE = ["_app/immutable/", "_nuxt/", "assets/"];
 
-/** One static file of a version, or null if it does not exist. */
-async function assetResponse(env, version, path, immutable, { head = false, status = 200 } = {}) {
-	const { value, metadata } = await env.CODE.getWithMetadata(`asset:${version}:${path}`, "arrayBuffer");
+/** File bytes by version and path. A version's files never change, so any file
+ *  can be cached; small ones are kept in memory (LRU, bounded) per router isolate. */
+const ASSET_CACHE_BYTES = 32 * 1024 * 1024;
+const ASSET_CACHE_MAX_ENTRY = 1024 * 1024;
+const assetCache = new Map(); // "<version>:<path>" -> { value, type }
+let assetCacheBytes = 0;
+
+async function readAsset(env, version, path) {
+	const key = `${version}:${path}`;
+	const hit = assetCache.get(key);
+	if (hit) {
+		assetCache.delete(key); // most recently used goes last
+		assetCache.set(key, hit);
+		return hit;
+	}
+	const { value, metadata } = await env.CODE.getWithMetadata(`asset:${key}`, "arrayBuffer");
 	if (value === null) return null;
-	return new Response(head ? null : value, {
-		status,
-		headers: {
-			"content-type": metadata?.type ?? "application/octet-stream",
-			"cache-control": immutable.some((p) => path.startsWith(p)) ? "public, immutable, max-age=31536000" : "no-cache",
-		},
+	const entry = { value, type: metadata?.type ?? "application/octet-stream" };
+	if (value.byteLength <= ASSET_CACHE_MAX_ENTRY) {
+		assetCache.set(key, entry);
+		assetCacheBytes += value.byteLength;
+		for (const [k, e] of assetCache) {
+			if (assetCacheBytes <= ASSET_CACHE_BYTES) break;
+			assetCache.delete(k);
+			assetCacheBytes -= e.value.byteLength;
+		}
+	}
+	return entry;
+}
+
+function forgetAsset(version, path) {
+	const e = assetCache.get(`${version}:${path}`);
+	if (!e) return;
+	assetCache.delete(`${version}:${path}`);
+	assetCacheBytes -= e.value.byteLength;
+}
+
+/** Whether a path gets the 1-year immutable cache: under an immutable prefix and
+ *  not one of the exact paths that change between builds. */
+const isImmutable = (cache, path) => cache.immutable.some((p) => path.startsWith(p)) && !cache.mutable.includes(path);
+
+/** Strong validator: a version's file never changes. */
+const etagFor = (version, path) => `"${version}:${encodeURIComponent(path)}"`;
+
+function notModified(request, etag) {
+	const header = request?.headers.get("if-none-match");
+	if (!header) return false;
+	return header.split(",").some((t) => {
+		t = t.trim();
+		return t === "*" || t === etag || t === `W/${etag}`;
 	});
+}
+
+/** One static file of a version, or null if it does not exist. `known` means the
+ *  caller checked the version's file list, so a matching If-None-Match can be
+ *  answered with 304 without reading the file. */
+async function assetResponse(env, version, path, cache, { head = false, status = 200, request, known = false } = {}) {
+	const headers = { "cache-control": isImmutable(cache, path) ? "public, immutable, max-age=31536000" : "no-cache" };
+	if (status === 200) {
+		headers.etag = etagFor(version, path);
+		if (known && notModified(request, headers.etag)) return new Response(null, { status: 304, headers });
+	}
+	const file = await readAsset(env, version, path);
+	if (file === null) return null;
+	if (status === 200 && notModified(request, headers.etag)) return new Response(null, { status: 304, headers });
+	headers["content-type"] = file.type;
+	headers["content-length"] = String(file.value.byteLength);
+	return new Response(head ? null : file.value, { status, headers });
 }
 
 /** The ASSETS binding handed to each site: serves only that version's files. */
@@ -125,11 +182,11 @@ export class SiteAssets extends WorkerEntrypoint {
 		} catch {
 			return new Response("Bad path", { status: 400 });
 		}
-		const { version, immutable = DEFAULT_IMMUTABLE } = this.ctx.props;
-		return (
-			(await assetResponse(this.env, version, path, immutable, { head: request.method === "HEAD" })) ??
-			new Response("Not found", { status: 404 })
-		);
+		const { version } = this.ctx.props;
+		const meta = await siteMeta(this.env, version);
+		if (!meta.legacy && !meta.assets.has(path)) return new Response("Not found", { status: 404 });
+		const opts = { head: request.method === "HEAD", request, known: !meta.legacy };
+		return (await assetResponse(this.env, version, path, meta, opts)) ?? new Response("Not found", { status: 404 });
 	}
 }
 
@@ -144,6 +201,7 @@ async function siteMeta(env, version) {
 			assets: new Set(code.assets ?? []),
 			worker: Boolean(code.source),
 			immutable: code.immutable ?? DEFAULT_IMMUTABLE,
+			mutable: code.mutable ?? [],
 			notFound: code.notFound ?? "none",
 		};
 		if (metas.size > 500) metas.clear();
@@ -282,10 +340,11 @@ async function putAsset(request, env, url) {
 	if (bytes.byteLength > MAX_ASSET_BYTES) return fail(413, "file too large");
 	const type = request.headers.get("content-type") || "application/octet-stream";
 	await env.CODE.put(`asset:${version}:${path}`, bytes, { metadata: { type, at: Date.now() } });
+	forgetAsset(version, path);
 	return json({ version, path, bytes: bytes.byteLength });
 }
 
-/** PUT /__admin/code?version=V[&host=H]  body: { compatibilityDate, source, assets: [paths], immutable, notFound }.
+/** PUT /__admin/code?version=V[&host=H]  body: { compatibilityDate, source, assets: [paths], immutable, mutable, notFound }.
  *  Refused unless every listed file was uploaded first. `host` records the version
  *  as staged for H's site, so admin object calls may target it before activation. */
 async function putCode(request, env, url) {
@@ -301,7 +360,7 @@ async function putCode(request, env, url) {
 	} catch {
 		return fail(400, "body is not JSON");
 	}
-	const { compatibilityDate, source = "", assets, immutable = DEFAULT_IMMUTABLE, notFound = "none" } = body;
+	const { compatibilityDate, source = "", assets, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none" } = body;
 	const valid =
 		typeof compatibilityDate === "string" &&
 		typeof source === "string" &&
@@ -309,12 +368,14 @@ async function putCode(request, env, url) {
 		assets.every((a) => typeof a === "string") &&
 		Array.isArray(immutable) &&
 		immutable.every((p) => typeof p === "string") &&
+		Array.isArray(mutable) &&
+		mutable.every((p) => typeof p === "string") &&
 		(notFound === "none" || notFound === "spa");
 	if (!valid) return fail(400, "bad code record");
 	const stored = new Set((await listAll(env.CODE, `asset:${version}:`)).map((k) => k.name.slice(`asset:${version}:`.length)));
 	const missing = assets.filter((a) => !stored.has(a));
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
-	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, assets, immutable, notFound }));
+	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, assets, immutable, mutable, notFound }));
 	if (host !== null) await env.CODE.put(`staged:${await siteFor(env, host)}:${version}`, "");
 	return json({ version, assets: assets.length, sourceBytes: source.length });
 }
@@ -631,7 +692,7 @@ export default {
 		const head = request.method === "HEAD";
 		if (!meta.legacy && (request.method === "GET" || head)) {
 			const path = assetFor(meta, url.pathname);
-			const res = path && (await assetResponse(env, version, path, meta.immutable, { head }));
+			const res = path && (await assetResponse(env, version, path, meta, { head, request, known: true }));
 			if (res) return res;
 		}
 		if (!meta.legacy && !meta.worker) {
@@ -639,9 +700,9 @@ export default {
 			// missing scripts or images), then 404.html, then a bare 404.
 			const navigation = (request.headers.get("accept") ?? "").includes("text/html");
 			if ((request.method === "GET" || head) && navigation && meta.notFound === "spa" && meta.assets.has("index.html")) {
-				return assetResponse(env, version, "index.html", meta.immutable, { head });
+				return assetResponse(env, version, "index.html", meta, { head, request, known: true });
 			}
-			const notFound = meta.assets.has("404.html") && (await assetResponse(env, version, "404.html", meta.immutable, { head, status: 404 }));
+			const notFound = meta.assets.has("404.html") && (await assetResponse(env, version, "404.html", meta, { head, status: 404 }));
 			return notFound || new Response("Not found", { status: 404 });
 		}
 

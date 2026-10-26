@@ -4,7 +4,7 @@
 // the site's build first. node/push.sh uploads a bundle (tools/deploy.sh does
 // both). Bundle layout:
 //   version     the version id
-//   code.json   { compatibilityDate, source, assets: [paths], immutable, notFound }
+//   code.json   { compatibilityDate, source, assets: [paths], immutable, mutable, notFound }
 //   files.tsv   <n> TAB <content-type> TAB <url-encoded path>, one line per file
 //   files/<n>   the file bytes
 // Symlinks in the static directory and files over 20 MiB are refused.
@@ -17,7 +17,10 @@
 //   exclude    asset paths (relative to `assets`) never to serve, in addition
 //              to the adapters' server files (_worker.js, _routes.json, ...).
 //   immutable  path prefixes of content-hashed files, served with a 1-year cache.
-//              Default: ["_app/immutable/", "_nuxt/", "assets/"].
+//              Default: whichever of _app/immutable/ (SvelteKit) and _nuxt/ (Nuxt)
+//              exist, plus assets/ (Vite) if every file in it has a hash in its name.
+//   mutable    exact paths under those prefixes that do change between builds
+//              (never cached for long). _nuxt/builds/latest.json is always added.
 //   notFound   "none" (default) or "spa": a static-only site answers unknown
 //              paths with index.html (client-side routing).
 // Without celld.json, the SvelteKit adapter-cloudflare layout applies:
@@ -45,8 +48,11 @@ const config = existsSync(configFile)
 			assets: ".svelte-kit/cloudflare",
 			objects: existsSync(join(siteDir, "src/objects.ts")) ? "src/objects.ts" : undefined,
 		};
-const { immutable = ["_app/immutable/", "_nuxt/", "assets/"], notFound = "none", exclude = [] } = config;
+const { notFound = "none", exclude = [] } = config;
 if (notFound !== "none" && notFound !== "spa") fail(`notFound must be "none" or "spa"`);
+// Files that sit under an immutable prefix but change with every build.
+const ALWAYS_MUTABLE = ["_nuxt/builds/latest.json"];
+const mutable = [...new Set([...(config.mutable ?? []), ...ALWAYS_MUTABLE])];
 
 const workerPath = config.worker ? join(siteDir, config.worker) : undefined;
 const assetsDir = config.assets ? join(siteDir, config.assets) : undefined;
@@ -145,7 +151,24 @@ const assets = (assetsDir ? files(assetsDir) : [])
 	.sort()
 	.map((path) => ({ path, type: TYPES[path.split(".").pop().toLowerCase()] ?? "application/octet-stream" }));
 
-const hash = createHash("sha256").update(source).update(JSON.stringify({ immutable, notFound }));
+// Default immutable prefixes: only those the build really has, and assets/ only if
+// it is Vite output (a content hash in every file name), not hand-written files
+// like assets/logo.png that would then be cached for a year.
+const HASHED = /[-.][A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
+let immutable = config.immutable;
+if (immutable === undefined) {
+	const under = (prefix) => assets.filter((a) => a.path.startsWith(prefix));
+	immutable = ["_app/immutable/", "_nuxt/"].filter((p) => under(p).length);
+	const vite = under("assets/");
+	if (vite.length && vite.every((a) => HASHED.test(a.path))) immutable.push("assets/");
+	else if (vite.length) console.error("pack: assets/ has files without a hash in their name; not caching it as immutable (set \"immutable\" in celld.json to override)");
+}
+
+// `mutable` only counts when it matters, so versions of other sites stay as they were.
+const relevantMutable = mutable.filter((m) => assets.some((a) => a.path === m) && immutable.some((p) => m.startsWith(p)));
+const hash = createHash("sha256")
+	.update(source)
+	.update(JSON.stringify(relevantMutable.length ? { immutable, notFound, mutable: relevantMutable } : { immutable, notFound }));
 for (const a of assets) hash.update(a.path).update(readFileSync(join(assetsDir, a.path)));
 const version = hash.digest("hex").slice(0, 12);
 
@@ -154,7 +177,7 @@ mkdirSync(join(outDir, "files"), { recursive: true });
 writeFileSync(join(outDir, "version"), `${version}\n`);
 writeFileSync(
 	join(outDir, "code.json"),
-	JSON.stringify({ compatibilityDate: "2026-10-01", source, assets: assets.map((a) => a.path), immutable, notFound }),
+	JSON.stringify({ compatibilityDate: "2026-10-01", source, assets: assets.map((a) => a.path), immutable, mutable: relevantMutable, notFound }),
 );
 const lines = assets.map((a, i) => {
 	writeFileSync(join(outDir, "files", String(i)), readFileSync(join(assetsDir, a.path)));

@@ -32,7 +32,8 @@ relative to the site directory):
 | `worker` | Server entry with `export default { fetch }`. Omit for a static-only site. |
 | `assets` | Directory of static files. |
 | `objects` | Module exporting the site's Durable Object classes (see below). |
-| `immutable` | Path prefixes of content-hashed files (1-year cache). Default `["_app/immutable/", "_nuxt/", "assets/"]`. |
+| `immutable` | Path prefixes of content-hashed files (1-year cache). Default: whichever of `_app/immutable/` and `_nuxt/` exist, plus `assets/` if every file in it has a hash in its name. |
+| `mutable` | Exact paths under those prefixes that change between builds (served `no-cache`). `_nuxt/builds/latest.json` is always included. |
 | `notFound` | `"spa"`: a static-only site answers page navigations to unknown paths with `index.html`. Default `"none"`. |
 | `exclude` | Asset paths never to serve (adapters' `_worker.js`, `_routes.json`, `_headers`, `_redirects`, `.assetsignore` are always excluded). |
 
@@ -43,7 +44,9 @@ The site needs `esbuild` in its devDependencies.
 
 1. `GET`/`HEAD` for a path that exists as a static file is answered by the
    router directly (exact path, then `<path>/index.html`, then `<path>.html`).
-   The worker never sees these requests.
+   The worker never sees these requests. Each response has an ETag and a
+   matching `If-None-Match` gets 304; non-immutable files are `no-cache`
+   (revalidated every time, which is then cheap).
 2. Everything else goes to the worker's `fetch`.
 3. Behind Traefik, the router rewrites the request URL to `https://` (from
    `X-Forwarded-Proto`), so origin checks see the browser's origin.
