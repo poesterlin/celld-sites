@@ -21,7 +21,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
-| `tools/admin.sh` | Admin API from the host: aliases, rollback, pruning |
+| `tools/admin.sh` | Admin API from the host: aliases, egress allowlists, rollback, pruning |
 | `tools/preview.sh` | Local preview: the production router under `celld dev` with one site |
 | `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
 | `tools/restore-drill.sh` | Restore drill: a throwaway node on a copy of a bucket volume, checked against live |
@@ -160,6 +160,9 @@ tools/admin.sh PUT '/alias?host=new.example.com&site=blog.example.com' # serve a
 tools/admin.sh DELETE '/alias?host=new.example.com'
 tools/admin.sh POST '/prune?keep=3'   # keep each site's current version and its 3 most recent deploys
 tools/admin.sh DELETE '/site?id=blog.example.com&confirm=blog.example.com'  # delete a site and all its data
+printf '["api.example.com"]\n' | tools/admin.sh PUT '/egress?host=blog.example.com' -  # let a site fetch these hosts
+tools/admin.sh GET '/egress?host=blog.example.com'
+tools/admin.sh DELETE '/egress?host=blog.example.com'  # back to no outbound network
 ```
 
 Pruning also deletes versions that were uploaded but never activated, files
@@ -281,11 +284,16 @@ scripts.
   an object call gives up after 80% of that, so code that waits forever can't
   hold connections open. The isolates share one process, so this is not
   a boundary against hostile code: fine for your own sites only.
-- Sites have no outbound network (`globalOutbound: null`): `fetch()` throws.
-  Otherwise site code could reach celld's unauthenticated operator API on
-  127.0.0.1 (stop the node, evict objects, call other sites' objects); this
-  was verified with a probe site. A site that needs an external API needs an
-  explicit allowlist in the router.
+- Sites have no outbound network unless the operator allowlists hostnames for
+  that site (`PUT /__admin/egress?host=…`, a JSON array). Without a list
+  (`globalOutbound: null`) `fetch()` throws; with one, `fetch()` reaches exactly
+  those hosts and gets a 403 for anything else. The proxy refuses IP literals
+  and internal names, does not follow redirects (the site follows them, so
+  each hop is checked), and cannot broker `connect()` or WebSockets. This keeps
+  site code away from celld's unauthenticated operator API on 127.0.0.1 (stop
+  the node, evict objects, call other sites' objects), which was verified with
+  a probe site. Only allowlist names whose DNS you control: a name that
+  resolves to a private address (DNS rebinding) is not caught by a name check.
 - Both containers drop all capabilities; celld runs as uid 10001.
 
 ## Measured (this VM)

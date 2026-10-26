@@ -26,15 +26,19 @@
 // without starting the site's isolate. Everything else goes to the site's
 // worker; a static-only site answers 404 (or index.html with notFound "spa").
 //
-// Sites get two capabilities and nothing else:
+// Sites get three capabilities and nothing else:
 //   ASSETS   their own static files
 //   OBJECTS  their own Durable Objects. Each (site, class, name) is a SiteObject
 //            supervisor that runs the site's class as a facet with its own
 //            SQLite database. The hostname is fixed by the router, so a site
 //            can never address another site's objects.
-// Sites have no outbound network: celld's operator API on 127.0.0.1 has no
-// authentication, and a site that can fetch it could stop the node or reach
-// other sites' objects.
+//   EGRESS   outbound fetch() to the hosts the operator allowlisted for that
+//            site (egress:<site> in KV). Off by default: celld's operator API
+//            on 127.0.0.1 has no authentication, and a site that can fetch it
+//            could stop the node or reach other sites' objects. The proxy checks
+//            every request against the list, refuses IP literals and internal
+//            names, and does not follow redirects (the site follows them, so
+//            the next hop is checked too). connect() stays unavailable.
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
 // Runs in each site isolate before the site's own code, papering over APIs that
@@ -87,9 +91,19 @@ export * from "./worker.js";
 const scratchFor = (site, version) => `~check~${site}~${version}`;
 const isScratch = (site) => site.startsWith("~check~");
 
-/** Load (or reuse) the isolate for one version of a site. */
-function loadSite(env, exports, site, version) {
-	return env.LOADER.get(`${site}@${version}`, async () => {
+/** The hosts one site may fetch(), as stored by PUT /__admin/egress. */
+async function egressHosts(env, site) {
+	const allow = await env.CODE.get(`egress:${site}`, "json");
+	return Array.isArray(allow) ? allow : [];
+}
+
+/** Load (or reuse) the isolate for one version of a site. A changed allowlist
+ *  gives a different loader key, so the next request gets an isolate with the
+ *  new proxy instead of waiting for the old one to be evicted. */
+async function loadSite(env, exports, site, version) {
+	const allow = await egressHosts(env, site);
+	const tag = allow.length ? `~e${hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(allow.join(",")))).slice(0, 10)}` : "";
+	return env.LOADER.get(`${site}@${version}${tag}`, async () => {
 		const code = await env.CODE.get(`code:${version}`, "json");
 		return {
 			compatibilityDate: code.compatibilityDate,
@@ -101,7 +115,8 @@ function loadSite(env, exports, site, version) {
 				// A scratch site has no active version, so its objects run the checked one.
 				OBJECTS: exports.SiteObjects({ props: isScratch(site) ? { site, version } : { site } }),
 			},
-			globalOutbound: null, // fetch() and connect() throw inside sites
+			// No allowlist: fetch() throws. Otherwise the proxy below decides.
+			globalOutbound: allow.length ? exports.SiteEgress({ props: { site, allow } }) : null,
 			limits: { cpuMs: 1000 },
 		};
 	});
@@ -287,6 +302,39 @@ export class SiteObjects extends WorkerEntrypoint {
 	}
 }
 
+/** Why a hostname may not be reached, even when it is on an allowlist. Names
+ *  only: an allowlisted name can still resolve to a private address (DNS
+ *  rebinding), so only allowlist names whose DNS the operator controls. */
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+const INTERNAL_SUFFIXES = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example"];
+function internalHost(host, adminHost) {
+	if (host === adminHost) return "is the admin hostname";
+	if (!host.includes(".")) return "is a single-label name";
+	if (IPV4.test(host) || host.includes(":") || host.startsWith("[")) return "is an IP address";
+	const suffix = INTERNAL_SUFFIXES.find((s) => host.endsWith(s));
+	return suffix ? `ends in ${suffix}` : null;
+}
+
+/** The outbound network handed to a site with an allowlist. fetch() reaches
+ *  only the hosts on it; everything else gets a 403 the site can read. */
+export class SiteEgress extends WorkerEntrypoint {
+	async fetch(request) {
+		const { site, allow } = this.ctx.props;
+		const url = new URL(request.url);
+		const deny = (why) => new Response(`egress blocked: ${why}\n`, { status: 403 });
+		if (url.protocol !== "https:" && url.protocol !== "http:") return deny(`${url.protocol} is not http(s)`);
+		if (!allow.includes(url.hostname)) return deny(`${url.hostname} is not allowlisted for ${site}`);
+		const internal = internalHost(url.hostname, this.env.ADMIN_HOST);
+		if (internal) return deny(`${url.hostname} ${internal}`);
+		try {
+			// Manual redirects: the site follows them, so every hop is checked.
+			return await fetch(new Request(request, { redirect: "manual" }));
+		} catch (e) {
+			return new Response(`egress to ${url.hostname} failed: ${String(e?.message ?? e).slice(0, 300)}\n`, { status: 502 });
+		}
+	}
+}
+
 /** Record an object for the dashboard; object names are only hashes in storage. */
 async function indexObject(env, key) {
 	if ((await env.CODE.get(`obj:${key}`)) !== null) return;
@@ -297,7 +345,7 @@ async function indexObject(env, key) {
 /** One per (site, class, name): runs the site's class as a facet. */
 export class SiteObject extends DurableObject {
 	async handle(site, version, className, method, args) {
-		const worker = loadSite(this.env, this.ctx.exports, site, version);
+		const worker = await loadSite(this.env, this.ctx.exports, site, version);
 		// The facet name selects the database, so data survives redeploys; a new
 		// version only changes the class the facet is started from.
 		if (this.version && this.version !== version) this.ctx.facets.abort(className, new Error("site redeployed"));
@@ -685,6 +733,7 @@ async function deleteSite(env, url) {
 		history++;
 	}
 	for (const k of await listAll(env.CODE, `staged:${id}:`)) await env.CODE.delete(k.name);
+	await env.CODE.delete(`egress:${id}`);
 	const result = { id, aliases: aliasKeys.map((k) => k.slice(6)), objects: objects.length, history, errors };
 	return errors.length ? json(result, 500) : json(result);
 }
@@ -750,6 +799,50 @@ async function adminCall(request, env, url) {
 		if (e instanceof Timeout) return fail(504, e.message);
 		return fail(500, `${className}.${method}: ${String(e?.message ?? e).slice(0, 500)}`);
 	}
+}
+
+/** GET /__admin/egress?host=H: the hosts H's site may fetch().
+ *  PUT with a JSON array of hostnames replaces the list; DELETE clears it. */
+async function getEgress(env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	if (!HOSTNAME.test(host)) return fail(400, "bad host");
+	const site = await siteFor(env, host);
+	return json({ host, site, allow: await egressHosts(env, site) });
+}
+
+const MAX_EGRESS_HOSTS = 20;
+async function putEgress(request, env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	if (!HOSTNAME.test(host)) return fail(400, "bad host");
+	const site = await siteFor(env, host);
+	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, `no site for ${host}`);
+	let list;
+	try {
+		list = await request.json();
+	} catch {
+		return fail(400, "body must be a JSON array of hostnames");
+	}
+	if (!Array.isArray(list)) return fail(400, "body must be a JSON array of hostnames");
+	const allow = [];
+	for (const raw of list) {
+		if (typeof raw !== "string") return fail(400, "hostnames must be strings");
+		const name = raw.trim().toLowerCase();
+		if (!HOSTNAME.test(name)) return fail(400, `bad hostname: ${raw}`);
+		const internal = internalHost(name, env.ADMIN_HOST);
+		if (internal) return fail(400, `${name} ${internal} and cannot be allowlisted`);
+		if (!allow.includes(name)) allow.push(name);
+	}
+	if (allow.length > MAX_EGRESS_HOSTS) return fail(400, `at most ${MAX_EGRESS_HOSTS} hostnames`);
+	await env.CODE.put(`egress:${site}`, JSON.stringify(allow));
+	return json({ host, site, allow });
+}
+
+async function deleteEgress(env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	if (!HOSTNAME.test(host)) return fail(400, "bad host");
+	const site = await siteFor(env, host);
+	await env.CODE.delete(`egress:${site}`);
+	return json({ host, site, allow: [] });
 }
 
 // --- Read-only ------------------------------------------------------------------
@@ -821,6 +914,11 @@ async function admin(request, env, ctx, url) {
 	if (method === "POST" && pathname === "/__admin/prune") return prune(env, url);
 	if (method === "DELETE" && pathname === "/__admin/site") return deleteSite(env, url);
 	if (method === "POST" && pathname === "/__admin/call") return adminCall(request, env, url);
+	if (pathname === "/__admin/egress") {
+		if (method === "GET") return getEgress(env, url);
+		if (method === "PUT") return putEgress(request, env, url);
+		if (method === "DELETE") return deleteEgress(env, url);
+	}
 	return fail(404, "not found");
 }
 
@@ -876,7 +974,7 @@ async function serve(request, env, ctx, site, version) {
 
 	// Compiled once per version; later requests reuse the warm isolate.
 	try {
-		return await withTimeout(loadSite(env, ctx.exports, site, version).getEntrypoint().fetch(siteRequest), timeoutMs(env), "the site");
+		return await withTimeout((await loadSite(env, ctx.exports, site, version)).getEntrypoint().fetch(siteRequest), timeoutMs(env), "the site");
 	} catch (e) {
 		if (e instanceof Timeout) return new Response(`${e.message}\n`, { status: 504 });
 		throw e;

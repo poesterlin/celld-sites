@@ -62,8 +62,13 @@ argument and via `import { env } from "cloudflare:workers"`:
 - `OBJECTS.call(className, name, method, ...args)`: calls `method` on the
   Durable Object `className` named `name`, and returns its result.
 
-There is **no KV, D1, R2, Queues or secrets**, and **no outbound network**:
-`fetch()` to anything except the bindings throws. Each request has 1 second
+There is **no KV, D1, R2, Queues or secrets**, and **no outbound network by
+default**: `fetch()` throws until the operator allowlists hostnames for the
+site (`PUT /__admin/egress?host=…`, a JSON array). With a list, `fetch()`
+reaches exactly those hosts and gets a 403 for anything else. `connect()` and
+WebSockets stay unavailable, redirects come back to the site rather than being
+followed (so every hop is checked), and IP literals and internal names cannot
+be allowlisted. Each request has 1 second
 of CPU, and has to start its response within 30 s (`SITE_TIMEOUT_SECS`, else
 504); an object call gives up after 80% of that. The runtime is
 workerd-compatible with `nodejs_compat` and compatibility date `2026-10-01`, or

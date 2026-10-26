@@ -285,6 +285,59 @@ describe("bindings: ASSETS, network, CPU", () => {
 	});
 });
 
+describe("egress allowlist", () => {
+	const allow = (list, host = W) =>
+		node.admin("PUT", `/egress?host=${encodeURIComponent(host)}`, { body: JSON.stringify(list) });
+	const clear = (host = W) => node.admin("DELETE", `/egress?host=${encodeURIComponent(host)}`);
+
+	it("is empty by default, and only deploy-token callers can read it", async () => {
+		assert.deepEqual((await node.admin("GET", `/egress?host=${W}`)).json().allow, []);
+		assert.equal((await node.admin("GET", `/egress?host=${W}`, { token: "read" })).status, 403);
+		assert.equal((await node.admin("PUT", `/egress?host=${W}`, { token: "read", body: "[]" })).status, 403);
+	});
+	it("refuses malformed and internal target names", async () => {
+		for (const bad of ["127.0.0.1", "10.0.0.4", "[::1]", "localhost", "s3.internal", "metadata.google.internal", "*.example.com", "no_space.example.com"]) {
+			assert.equal((await allow([bad])).status, 400, bad);
+		}
+		assert.equal((await allow("example.com")).status, 400); // not an array
+		assert.equal((await node.admin("PUT", `/egress?host=${W}`, { body: JSON.stringify(Array.from({ length: 21 }, (_, i) => `h${i}.example.com`)) })).status, 400);
+		assert.equal((await node.admin("PUT", "/egress?host=nobody.test", { body: "[]" })).status, 404);
+	});
+	it("lets an allowlisted site fetch, blocks other hosts, and clears", async (t) => {
+		const online = await fetch("https://example.com/", { signal: AbortSignal.timeout(5000) })
+			.then((r) => r.ok)
+			.catch(() => false);
+		if (!online) return t.skip("the test host has no internet");
+		assert.equal((await allow(["example.com"])).status, 200);
+		assert.deepEqual((await node.admin("GET", `/egress?host=${W}`)).json().allow, ["example.com"]);
+		// The site was loaded without a proxy before the PUT: the new list must apply.
+		const reached = await (await site("/egress")).json();
+		assert.equal(reached.ok, true);
+		assert.equal(reached.result, 200);
+		assert.equal((await clear()).status, 200);
+		const blocked = await (await site("/egress")).json();
+		assert.equal(blocked.ok, false);
+		assert.match(blocked.error, /not permitted/);
+	});
+	it("returns 403 to the site for a host that is not listed", async () => {
+		assert.equal((await allow(["example.org"])).status, 200);
+		const r = await (await site("/egress")).json();
+		assert.equal(r.ok, true);
+		assert.equal(r.result, 403);
+		assert.equal((await clear()).status, 200);
+	});
+	it("follows a site's alias and is deleted with the site", async () => {
+		node.deploy(join(fixtures, "static"), "egress.test");
+		assert.equal((await allow(["example.com"], "egress.test")).status, 200);
+		assert.equal((await node.admin("GET", "/egress?host=egress.test")).json().site, "egress.test");
+		// An alias resolves to the site id, so the same list applies.
+		assert.equal((await node.admin("PUT", `/alias?host=egress-alias.test&site=egress.test`)).status, 200);
+		assert.deepEqual((await node.admin("GET", "/egress?host=egress-alias.test")).json().allow, ["example.com"]);
+		assert.equal((await node.admin("DELETE", "/site?id=egress.test&confirm=egress.test&aliases=delete")).status, 200);
+		assert.deepEqual((await node.admin("GET", "/egress?host=egress.test")).json().allow, []);
+	});
+});
+
 describe("aliases", () => {
 	it("serve a site, with its data, under another hostname", async () => {
 		assert.equal((await node.admin("PUT", `/alias?host=alias.test&site=${W}`)).status, 200);
