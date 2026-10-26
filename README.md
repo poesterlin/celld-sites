@@ -24,6 +24,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/admin.sh` | Admin API from the host: aliases, rollback, pruning |
 | `tools/preview.sh` | Local preview: the production router under `celld dev` with one site |
 | `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
+| `tools/restore-drill.sh` | Restore drill: a throwaway node on a copy of a bucket volume, checked against live |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
@@ -215,6 +216,18 @@ the last seconds of confirmed writes. Measured costs are below.
 
 If the bucket is ever empty (first start, or a deleted volume), the `celld`
 container creates it and redeploys the router and the example by itself.
+
+**Restore drill.** `tools/restore-drill.sh` proves a bucket volume alone brings
+every site back: it copies the volume into a throwaway one, starts a throwaway
+VersityGW and node on it (default bridge, no ports), checks that every site
+answers below 500 and that sites, objects and versions match the live node, and
+removes everything. `--calls FILE` also compares read-only object methods
+between live and drill (e.g. `[{"host": "...", "class": "Notes", "name":
+"main", "method": "export"}]`). To drill a VM backup, restore the volume under
+another name and pass it. Copying the live volume isn't an atomic snapshot;
+`--pause` pauses the live `s3` container during the copy (writes stall for
+those seconds). Last run (2026-10-26, live volume): 202 MB, 4 sites, 12
+objects, all served; one compared export identical; 14 s.
 
 ### What grows
 
