@@ -35,6 +35,7 @@ relative to the site directory):
 | `immutable` | Path prefixes of content-hashed files (1-year cache). Default: whichever of `_app/immutable/` and `_nuxt/` exist, plus `assets/` if every file in it has a hash in its name. |
 | `mutable` | Exact paths under those prefixes that change between builds (served `no-cache`). `_nuxt/builds/latest.json` is always included. |
 | `compatibilityDate` | workerd compatibility date, `YYYY-MM-DD`. Default `2026-10-01`. |
+| `check` | Path a deploy requests on the new version before activating it (Durable Objects in an empty scratch namespace) and probes on the live site after; a 5xx stops or rolls back the deploy. Default `"/"`; `false` turns it off. |
 | `notFound` | `"spa"`: a static-only site answers page navigations to unknown paths with `index.html`. Default `"none"`. |
 | `exclude` | Asset paths never to serve (adapters' `_worker.js`, `_routes.json`, `_headers`, `_redirects`, `.assetsignore` are always excluded). |
 

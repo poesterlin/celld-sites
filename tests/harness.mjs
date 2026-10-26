@@ -1,7 +1,7 @@
 // Test harness: runs the production router under `celld dev` on a local port,
 // with separate admin and read tokens, and deploys fixture sites through the
 // real tools (pack.mjs + node/push.sh). Never touches the production node.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -149,17 +149,37 @@ export class Node {
 		}
 	}
 
-	/** Pack a site directory and deploy it with the real push.sh; returns the activation result. */
+	/** Pack a site directory and deploy it with the real push.sh; returns the activation
+	 *  result. Without a --watch argument the post-activation watch is off (it takes seconds). */
 	deploy(siteDir, host, ...pushArgs) {
 		const bundle = mkdtempSync(join(tmpdir(), "celld-api-bundle-"));
 		try {
 			execFileSync("node", [join(project, "tools/pack.mjs"), siteDir, bundle], { env: this.env, stdio: ["ignore", "ignore", "pipe"] });
 			const tar = execFileSync("tar", ["-C", bundle, "-cf", "-", "."]);
-			const out = execFileSync("sh", [join(project, "node/push.sh"), host, ...pushArgs], {
-				input: tar,
-				env: { ...this.env, ADMIN_TOKEN: this.adminToken, ADMIN_HOST, CELLD_ADMIN_API: `http://127.0.0.1:${this.port}` },
-			});
-			return JSON.parse(out.toString());
+			const r = this.push(tar, host, pushArgs);
+			if (r.status !== 0) throw new Error(`push.sh failed (${r.status}): ${r.stderr}`);
+			return JSON.parse(r.stdout);
+		} finally {
+			rmSync(bundle, { recursive: true, force: true });
+		}
+	}
+
+	/** Run the real push.sh with a tar'ed bundle; returns { status, stdout, stderr }. */
+	push(tar, host, pushArgs = []) {
+		const args = pushArgs.includes("--watch") ? pushArgs : [...pushArgs, "--watch", "0"];
+		const r = spawnSync("sh", [join(project, "node/push.sh"), host, ...args], {
+			input: tar,
+			env: { ...this.env, ADMIN_TOKEN: this.adminToken, ADMIN_HOST, CELLD_ADMIN_API: `http://127.0.0.1:${this.port}` },
+		});
+		return { status: r.status, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
+	}
+
+	/** Pack and push a site directory without throwing; returns { status, stdout, stderr }. */
+	tryDeploy(siteDir, host, ...pushArgs) {
+		const bundle = mkdtempSync(join(tmpdir(), "celld-api-bundle-"));
+		try {
+			execFileSync("node", [join(project, "tools/pack.mjs"), siteDir, bundle], { env: this.env, stdio: ["ignore", "ignore", "pipe"] });
+			return this.push(execFileSync("tar", ["-C", bundle, "-cf", "-", "."]), host, pushArgs);
 		} finally {
 			rmSync(bundle, { recursive: true, force: true });
 		}

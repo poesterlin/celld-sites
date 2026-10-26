@@ -22,6 +22,8 @@
 //   mutable    exact paths under those prefixes that do change between builds
 //              (never cached for long). _nuxt/builds/latest.json is always added.
 //   compatibilityDate  workerd compatibility date, YYYY-MM-DD (default 2026-10-01).
+//   check      path a deploy requests before activating, and probes after it
+//              (default "/"); false skips both. See node/push.sh.
 //   notFound   "none" (default) or "spa": a static-only site answers unknown
 //              paths with index.html (client-side routing).
 // Without celld.json, the SvelteKit adapter-cloudflare layout applies:
@@ -49,7 +51,8 @@ const config = existsSync(configFile)
 			assets: ".svelte-kit/cloudflare",
 			objects: existsSync(join(siteDir, "src/objects.ts")) ? "src/objects.ts" : undefined,
 		};
-const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01" } = config;
+const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01", check = "/" } = config;
+if (check !== false && (typeof check !== "string" || !check.startsWith("/"))) fail(`check must be a path starting with "/", or false`);
 if (notFound !== "none" && notFound !== "spa") fail(`notFound must be "none" or "spa"`);
 // celld 0.6.3 accepts any string here (even a non-date), so check it ourselves.
 if (typeof compatibilityDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) fail("compatibilityDate must be YYYY-MM-DD");
@@ -189,7 +192,8 @@ const version = hash.digest("hex").slice(0, 12);
 writeFileSync(join(outDir, "version"), `${version}\n`);
 writeFileSync(
 	join(outDir, "code.json"),
-	JSON.stringify({ compatibilityDate, source, files: fileMap, immutable, mutable: relevantMutable, notFound }),
+	// `check` is how to deploy, not what is served, so it is not part of the version id.
+	JSON.stringify({ compatibilityDate, source, files: fileMap, immutable, mutable: relevantMutable, notFound, check }),
 );
 console.error(
 	`packed ${relative(process.cwd(), siteDir) || "."}: version ${version}, ${assets.length} assets, ` +

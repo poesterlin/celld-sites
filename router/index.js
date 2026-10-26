@@ -81,6 +81,12 @@ export { default } from "./worker.js";
 export * from "./worker.js";
 `;
 
+/** Deploy checks (POST /__admin/check) run a version with its Durable Objects under
+ *  a scratch site id, so they start empty and never touch live data. Such ids can't
+ *  collide with a real site: those are hostnames. */
+const scratchFor = (site, version) => `~check~${site}~${version}`;
+const isScratch = (site) => site.startsWith("~check~");
+
 /** Load (or reuse) the isolate for one version of a site. */
 function loadSite(env, exports, site, version) {
 	return env.LOADER.get(`${site}@${version}`, async () => {
@@ -92,7 +98,8 @@ function loadSite(env, exports, site, version) {
 			modules: { "main.js": MAIN, "prelude.js": PRELUDE, "worker.js": code.source },
 			env: {
 				ASSETS: exports.SiteAssets({ props: { version } }),
-				OBJECTS: exports.SiteObjects({ props: { site } }),
+				// A scratch site has no active version, so its objects run the checked one.
+				OBJECTS: exports.SiteObjects({ props: isScratch(site) ? { site, version } : { site } }),
 			},
 			globalOutbound: null, // fetch() and connect() throw inside sites
 			limits: { cpuMs: 1000 },
@@ -262,10 +269,12 @@ export class SiteObjects extends WorkerEntrypoint {
 			throw new Error("bad object reference");
 		}
 		const key = `${site}|${className}|${name}`;
-		const version = await this.env.CODE.get(`site:${site}`);
+		const version = this.ctx.props.version ?? (await this.env.CODE.get(`site:${site}`));
 		// A site deleted while one of its requests was still running.
 		if (version === null) throw new Error("site not found");
-		if (!indexed.has(key)) {
+		// The check deletes its scratch objects through the index, so record them first.
+		if (isScratch(site)) await indexObject(this.env, key);
+		else if (!indexed.has(key)) {
 			this.ctx.waitUntil(
 				indexObject(this.env, key).then(() => {
 					if (indexed.size >= MAX_INDEXED) indexed.clear();
@@ -414,7 +423,7 @@ async function putCode(request, env, url) {
 	} catch {
 		return fail(400, "body is not JSON");
 	}
-	const { compatibilityDate, source = "", files, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none" } = body;
+	const { compatibilityDate, source = "", files, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none", check = "/" } = body;
 	const strings = (a) => Array.isArray(a) && a.every((x) => typeof x === "string");
 	const entries = files && typeof files === "object" && !Array.isArray(files) ? Object.entries(files) : null;
 	const valid =
@@ -436,12 +445,13 @@ async function putCode(request, env, url) {
 		) &&
 		strings(immutable) &&
 		strings(mutable) &&
-		(notFound === "none" || notFound === "spa");
+		(notFound === "none" || notFound === "spa") &&
+		(check === false || (typeof check === "string" && check.startsWith("/") && check.length <= 400));
 	if (!valid) return fail(400, "bad code record");
 	const stored = await storedBlobs(env);
 	const missing = entries.filter(([, f]) => !stored.has(f[0])).map(([path]) => path);
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
-	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, files, immutable, mutable, notFound }), {
+	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, files, immutable, mutable, notFound, check }), {
 		metadata: { files: entries.length },
 	});
 	metas.delete(version);
@@ -463,10 +473,56 @@ async function activate(env, url) {
 		const current = await env.CODE.get(`site:${site}`);
 		if (current !== null) return json({ host, site, version: current, skipped: true });
 	}
+	const previous = await env.CODE.get(`site:${site}`);
 	await env.CODE.put(`site:${site}`, version); // the switch
 	const summary = { assets: code.files ? Object.keys(code.files).length : (code.assets?.length ?? 0), sourceBytes: code.source?.length ?? 0 };
 	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}`, version, { metadata: summary });
-	return json({ host, site, version, ...summary });
+	return json({ host, site, version, previous, ...summary });
+}
+
+// --- Deploy check ---------------------------------------------------------------
+
+/** POST /__admin/check?host=H&version=V  runs an uploaded version the way it would
+ *  serve H, without activating it, and requests its check path (celld.json "check",
+ *  default "/"; false skips the check). Its Durable Objects live in a scratch
+ *  namespace: they start empty, so the version's migrations run on fresh databases,
+ *  and are deleted afterwards. Answers { ok, status, ms, path[, error] }; ok means a
+ *  response started within the time limit with a status below 500. Problems that
+ *  only appear with real data are for the deploy to catch after activation. */
+async function check(env, ctx, url) {
+	const host = url.searchParams.get("host") ?? "";
+	const version = url.searchParams.get("version") ?? "";
+	if (!HOSTNAME.test(host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	const code = await env.CODE.get(`code:${version}`, "json");
+	if (!code) return fail(404, `version ${version} is not uploaded`);
+	const path = code.check === false ? null : (code.check ?? "/");
+	if (path === null) return json({ ok: true, skipped: true });
+	const scratch = scratchFor(await siteFor(env, host), version);
+	const request = new Request(`https://${host}${path}`, { headers: { accept: "text/html", "user-agent": "celld-sites deploy check" } });
+	const started = Date.now();
+	let status;
+	let error;
+	try {
+		const res = await serve(request, env, ctx, scratch, version);
+		status = res.status;
+		if (status >= 500) error = (await res.text()).slice(0, 500);
+		else await res.body?.cancel();
+	} catch (e) {
+		status = 500;
+		error = String(e?.message ?? e).slice(0, 500);
+	}
+	const ms = Date.now() - started;
+	const cleanup = [];
+	for (const k of await listAll(env.CODE, `obj:${scratch}|`)) {
+		const key = k.name.slice("obj:".length);
+		try {
+			await env.SITE_OBJECTS.getByName(key).destroy(key.split("|")[1]);
+			await env.CODE.delete(k.name);
+		} catch (e) {
+			cleanup.push(`${key}: ${String(e?.message ?? e).slice(0, 200)}`);
+		}
+	}
+	return json({ ok: status < 500, status, ms, path, ...(error !== undefined && { error }), ...(cleanup.length && { cleanup }) });
 }
 
 // --- Aliases -----------------------------------------------------------------
@@ -747,7 +803,7 @@ async function nodeState(env) {
 }
 
 /** The admin API. Writes need the deploy token; the read-only GETs also accept the read token. */
-async function admin(request, env, url) {
+async function admin(request, env, ctx, url) {
 	const { pathname } = url;
 	const method = request.method;
 	const isAdmin = await bearerMatches(request, env.ADMIN_TOKEN_SHA256);
@@ -760,6 +816,7 @@ async function admin(request, env, url) {
 	if (method === "POST" && pathname === "/__admin/blobs/missing") return missingBlobs(request, env);
 	if (method === "PUT" && pathname === "/__admin/code") return putCode(request, env, url);
 	if (method === "POST" && pathname === "/__admin/activate") return activate(env, url);
+	if (method === "POST" && pathname === "/__admin/check") return check(env, ctx, url);
 	if ((method === "PUT" || method === "DELETE") && pathname === "/__admin/alias") return alias(request, env, url);
 	if (method === "POST" && pathname === "/__admin/prune") return prune(env, url);
 	if (method === "DELETE" && pathname === "/__admin/site") return deleteSite(env, url);
@@ -773,7 +830,7 @@ export default {
 		const host = url.hostname;
 		// The admin API answers only on an internal hostname that Traefik never
 		// routes, so only the project's containers reach it, and every call needs a token.
-		if (host === env.ADMIN_HOST) return admin(request, env, url);
+		if (host === env.ADMIN_HOST) return admin(request, env, ctx, url);
 
 		let site = await siteFor(env, host);
 		let version = await env.CODE.get(`site:${site}`);
@@ -784,39 +841,44 @@ export default {
 			version = await env.CODE.get(`site:${site}`);
 		}
 		if (!version) return new Response(`No site for ${host}`, { status: 404 });
-
-		const meta = await siteMeta(env, version);
-		const head = request.method === "HEAD";
-		if (!meta.legacy && (request.method === "GET" || head)) {
-			const path = assetFor(meta, url.pathname);
-			const res = path && (await assetResponse(env, version, path, meta, { head, request, known: true }));
-			if (res) return res;
-		}
-		if (!meta.legacy && !meta.worker) {
-			// Static-only site: optional SPA fallback for page navigations (not for
-			// missing scripts or images), then 404.html, then a bare 404.
-			const navigation = (request.headers.get("accept") ?? "").includes("text/html");
-			if ((request.method === "GET" || head) && navigation && meta.notFound === "spa" && meta.assets.has("index.html")) {
-				return assetResponse(env, version, "index.html", meta, { head, request, known: true });
-			}
-			const notFound = meta.assets.has("404.html") && (await assetResponse(env, version, "404.html", meta, { head, status: 404 }));
-			return notFound || new Response("Not found", { status: 404 });
-		}
-
-		// Traefik terminates TLS and forwards plain HTTP. Hand sites the URL the
-		// browser used, so origins match (SvelteKit's CSRF check, redirects, cookies).
-		let siteRequest = request;
-		if (url.protocol === "http:" && request.headers.get("x-forwarded-proto") === "https") {
-			url.protocol = "https:";
-			siteRequest = new Request(url, request);
-		}
-
-		// Compiled once per version; later requests reuse the warm isolate.
-		try {
-			return await withTimeout(loadSite(env, ctx.exports, site, version).getEntrypoint().fetch(siteRequest), timeoutMs(env), "the site");
-		} catch (e) {
-			if (e instanceof Timeout) return new Response(`${e.message}\n`, { status: 504 });
-			throw e;
-		}
+		return serve(request, env, ctx, site, version);
 	},
 };
+
+/** Answer a request with one version of a site: static files first, then its worker. */
+async function serve(request, env, ctx, site, version) {
+	const url = new URL(request.url);
+	const meta = await siteMeta(env, version);
+	const head = request.method === "HEAD";
+	if (!meta.legacy && (request.method === "GET" || head)) {
+		const path = assetFor(meta, url.pathname);
+		const res = path && (await assetResponse(env, version, path, meta, { head, request, known: true }));
+		if (res) return res;
+	}
+	if (!meta.legacy && !meta.worker) {
+		// Static-only site: optional SPA fallback for page navigations (not for
+		// missing scripts or images), then 404.html, then a bare 404.
+		const navigation = (request.headers.get("accept") ?? "").includes("text/html");
+		if ((request.method === "GET" || head) && navigation && meta.notFound === "spa" && meta.assets.has("index.html")) {
+			return assetResponse(env, version, "index.html", meta, { head, request, known: true });
+		}
+		const notFound = meta.assets.has("404.html") && (await assetResponse(env, version, "404.html", meta, { head, status: 404 }));
+		return notFound || new Response("Not found", { status: 404 });
+	}
+
+	// Traefik terminates TLS and forwards plain HTTP. Hand sites the URL the
+	// browser used, so origins match (SvelteKit's CSRF check, redirects, cookies).
+	let siteRequest = request;
+	if (url.protocol === "http:" && request.headers.get("x-forwarded-proto") === "https") {
+		url.protocol = "https:";
+		siteRequest = new Request(url, request);
+	}
+
+	// Compiled once per version; later requests reuse the warm isolate.
+	try {
+		return await withTimeout(loadSite(env, ctx.exports, site, version).getEntrypoint().fetch(siteRequest), timeoutMs(env), "the site");
+	} catch (e) {
+		if (e instanceof Timeout) return new Response(`${e.message}\n`, { status: 504 });
+		throw e;
+	}
+}

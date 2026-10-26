@@ -461,6 +461,88 @@ describe("static files: validators, HEAD, cache", () => {
 	});
 });
 
+describe("deploy check and watch", () => {
+	// A copy of the worker fixture with its own worker.js and celld.json "check" path.
+	const variant = (worker, extra = {}) => {
+		const dir = mkdtempSync(join(tmpdir(), "celld-api-check-"));
+		cpSync(join(fixtures, "worker"), dir, { recursive: true });
+		writeFileSync(join(dir, "worker.js"), worker);
+		writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", assets: "public", objects: "objects.js", check: "/check", ...extra }));
+		return dir;
+	};
+	const dirs = [];
+	after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+	const make = (worker, extra) => {
+		const d = variant(worker, extra);
+		dirs.push(d);
+		return d;
+	};
+	const active = async (host) => (await node.admin("GET", "/overview")).json().sites.find((x) => x.id === host)?.version;
+	// Fails only when live data has a "bad" flag; a scratch namespace is empty.
+	const pickyOnData = `import { env } from "cloudflare:workers";
+export default { async fetch(req) {
+	if (new URL(req.url).pathname !== "/check") return new Response("nope", { status: 404 });
+	await env.OBJECTS.call("Kv", "probe", "put", "seen", true);
+	const bad = await env.OBJECTS.call("Kv", "flag", "get", "bad");
+	return bad ? new Response("bad data", { status: 500 }) : new Response("ok");
+} };`;
+
+	it("refuses to activate a version whose check fails", async () => {
+		const good = node.deploy(join(fixtures, "worker"), "check.test");
+		for (const [worker, why] of [
+			['throw new Error("broken at load");\nexport default { fetch() {} };', /broken at load/],
+			['export default { fetch() { return new Response("down", { status: 503 }); } };', /"status":503/],
+			['export default { fetch() { return new Promise((r) => setTimeout(r, 10_000)); } };', /"status":504/],
+		]) {
+			const r = node.tryDeploy(make(worker), "check.test");
+			assert.equal(r.status, 1, r.stderr);
+			assert.match(r.stderr, /check failed, not activated/);
+			assert.match(r.stderr, why);
+			assert.equal(await active("check.test"), good.version, "the old version stays active");
+		}
+	});
+	it("checks with empty scratch objects and deletes them afterwards", async () => {
+		node.deploy(join(fixtures, "worker"), "scratch.test");
+		assert.equal((await obj("Kv", "flag", "put", ["bad", true], "scratch.test")).ok, true);
+		const r = node.tryDeploy(make(pickyOnData), "scratch.test", "--watch", "0");
+		assert.equal(r.status, 0, r.stderr);
+		assert.match(r.stderr, /check passed: \/check answered 200/);
+		const o = (await node.admin("GET", "/overview")).json();
+		assert.ok(!o.objects.some((x) => x.site.startsWith("~check~")), "scratch objects are gone");
+		assert.ok(!o.sites.some((x) => x.id.startsWith("~check~")));
+		const seen = await node.admin("POST", "/call?host=scratch.test&class=Kv&name=probe&method=get", { body: '["seen"]' });
+		assert.equal(seen.json().result, null, "the check never wrote live data");
+	});
+	it("rolls back when the live site fails after activation", async () => {
+		const good = node.deploy(join(fixtures, "worker"), "watch.test");
+		assert.equal((await obj("Kv", "flag", "put", ["bad", true], "watch.test")).ok, true);
+		const r = node.tryDeploy(make(pickyOnData), "watch.test", "--watch", "4");
+		assert.equal(r.status, 1, r.stderr);
+		assert.match(r.stderr, /live probe of \/check answered 500: bad data/);
+		assert.match(r.stderr, new RegExp(`rolled back to ${good.version}`));
+		assert.equal(await active("watch.test"), good.version);
+	});
+	it("keeps a version whose live probes pass", async () => {
+		const r = node.tryDeploy(make(pickyOnData), "watchok.test", "--watch", "4");
+		assert.equal(r.status, 0, r.stderr);
+		assert.match(r.stderr, /live probes of \/check passed for 4 s/);
+		assert.equal(JSON.parse(r.stdout).previous, null);
+	});
+	it('skips both with "check": false or --no-check', async () => {
+		const down = 'export default { fetch() { return new Response("down", { status: 503 }); } };';
+		const off = node.tryDeploy(make(down, { check: false }), "nocheck.test", "--watch", "4");
+		assert.equal(off.status, 0, off.stderr);
+		assert.match(off.stderr, /check skipped/);
+		const flag = node.tryDeploy(make(down + "\n// v2"), "nocheck2.test", "--no-check");
+		assert.equal(flag.status, 0, flag.stderr);
+	});
+	it("validates the check request", async () => {
+		assert.equal((await node.admin("POST", "/check?host=Bad_Host&version=aaaaaaaaaaaa")).status, 400);
+		assert.equal((await node.admin("POST", "/check?host=x.test&version=cccccccccccc")).status, 404);
+		assert.equal((await node.admin("POST", "/check?host=x.test&version=aaaaaaaaaaaa", { token: "read" })).status, 403);
+	});
+});
+
 describe("pruning leftovers", () => {
 	it("deletes files no version uses, once old enough", async () => {
 		const lost = await node.putBlob("lost upload");
@@ -621,6 +703,14 @@ describe("packer", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+	it("refuses an invalid check option", () => {
+		const dir = copy();
+		writeFileSync(join(dir, "celld.json"), JSON.stringify({ assets: "public", check: "health" }));
+		const r = pack(dir);
+		rmSync(dir, { recursive: true, force: true });
+		assert.equal(r.ok, false);
+		assert.match(r.error, /check must be a path/);
 	});
 	it("refuses an invalid notFound option", () => {
 		const dir = copy();

@@ -85,5 +85,5 @@ if [ -f "$site/package.json" ] && grep -q '"build"[[:space:]]*:' "$site/package.
 fi
 node "$project/tools/pack.mjs" "$site" "$bundle"
 tar -C "$bundle" -cf - . |
-	ADMIN_TOKEN="$token" ADMIN_HOST=admin.internal CELLD_ADMIN_API="http://127.0.0.1:$port" sh "$project/node/push.sh" preview >/dev/null
+	ADMIN_TOKEN="$token" ADMIN_HOST=admin.internal CELLD_ADMIN_API="http://127.0.0.1:$port" sh "$project/node/push.sh" preview --watch 0 >/dev/null
 echo "preview: http://localhost:$port/"

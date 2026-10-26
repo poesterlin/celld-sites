@@ -103,6 +103,17 @@ tools/preview.sh sites/blog --stop     # or --reset to delete the local data
 tools/deploy.sh sites/blog blog.example.com
 ```
 
+Before activating, the deploy **checks** the new version: the router runs it
+without activating it, with its Durable Objects in an empty scratch namespace
+(so its migrations run on fresh databases; deleted afterwards), and requests
+its check path (`"check"` in `celld.json`, default `/`). A 5xx, an error at
+load or a timeout stops the deploy and the old version stays live. After
+activating, it **watches** the live site for 10 s, probing the check path every
+2 s; a 5xx there (e.g. a migration that fails on real data) activates the
+previous version again and fails the deploy. Code is rolled back, data is not:
+whatever the new version already changed stays changed. `--watch SECS` changes
+the window, `--no-check` skips both, `"check": false` turns them off for a site.
+
 The site is live as soon as the deploy returns, provided Traefik routes its
 hostname to celld. `SITES_RULE` in `.env` is a pattern for all site hostnames
 (e.g. ``'HostRegexp(`^celld-[a-z0-9-]+\.example\.com$`)'``, single-quoted so
@@ -225,13 +236,14 @@ container creates it and redeploys the router and the example by itself.
 `npm test --prefix tools` (after `npm ci --prefix tools` once) validates the
 APIs against a throwaway local `celld dev` node, never production: the admin
 API (auth and the read/write split, upload limits and hash checks, code checks,
-activation and rollback, aliases, object calls, overview, pruning, deleting
-sites), routing (static-first, clean URLs, HEAD, SPA and 404.html fallbacks,
-forwarded scheme), the site bindings (`OBJECTS` validation, plain-data rule,
-errors, CPU and wall-clock limits; `ASSETS`; blocked network), static-file
-validators and caching, and the packer's refusals and defaults, and upgrading
-from per-version files. 62 tests, about 20 s. Run it after changing the router,
-the tools or the push/admin scripts.
+activation and rollback, deploy checks and post-activation rollback, aliases,
+object calls, overview, pruning, deleting sites), routing (static-first, clean
+URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site bindings
+(`OBJECTS` validation, plain-data rule, errors, CPU and wall-clock limits;
+`ASSETS`; blocked network), static-file validators and caching, and the
+packer's refusals and defaults, and upgrading from per-version files. 69 tests,
+about 30 s. Run it after changing the router, the tools or the push/admin
+scripts.
 
 ## Security
 
