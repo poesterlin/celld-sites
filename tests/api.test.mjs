@@ -44,6 +44,7 @@ describe("admin API: authentication", () => {
 			["PUT", "/alias?host=a.test&site=worker.test"],
 			["PUT", "/asset?version=aaaaaaaaaaaa&path=x"],
 			["PUT", "/code?version=aaaaaaaaaaaa"],
+			["DELETE", "/site?id=worker.test&confirm=worker.test"],
 		]) {
 			assert.equal((await node.admin(method, path, { token: "read", body: "[]" })).status, 403, `${method} ${path}`);
 		}
@@ -359,6 +360,67 @@ describe("overview and pruning", () => {
 			404,
 			"pruned staged version is gone",
 		);
+	});
+});
+
+describe("pruning leftovers", () => {
+	it("deletes files of uploads that never got a code record, once old enough", async () => {
+		assert.equal((await node.admin("PUT", "/asset?version=a0a0a0a0a0a0&path=lost.txt", { body: "x" })).status, 200);
+		assert.equal((await node.admin("POST", "/prune?keep=3")).json().orphanFiles, 0, "a fresh upload may be a deploy in progress");
+		assert.equal((await node.admin("POST", "/prune?keep=3&orphanAge=0")).json().orphanFiles, 1);
+		assert.equal((await site("/hello.txt")).status, 200, "files of stored versions stay");
+	});
+	it("trims deploy history to the last 100 per site", async () => {
+		for (let i = 0; i < 102; i++) {
+			assert.equal((await node.admin("POST", `/activate?host=history.test&version=${worker.version}`)).status, 200);
+		}
+		const r = (await node.admin("POST", "/prune?keep=3")).json();
+		assert.ok(r.historyDeleted >= 2);
+		const history = (await node.admin("GET", "/overview")).json().deploys.filter((d) => d.site === "history.test");
+		assert.equal(history.length, 100);
+	});
+});
+
+describe("deleting a site", () => {
+	const D = "del.test";
+	before(async () => {
+		node.deploy(join(fixtures, "worker"), D);
+		assert.equal((await obj("Kv", "data", "put", ["k", "secret"], D)).ok, true);
+		assert.equal((await node.admin("PUT", `/alias?host=delalias.test&site=${D}`)).status, 200);
+	});
+	it("validates the request", async () => {
+		assert.equal((await node.admin("DELETE", `/site?id=${D}`)).status, 400, "needs confirm");
+		assert.equal((await node.admin("DELETE", `/site?id=${D}&confirm=other.test`)).status, 400);
+		assert.equal((await node.admin("DELETE", "/site?id=nobody.test&confirm=nobody.test")).status, 404);
+		assert.equal((await node.admin("DELETE", "/site?id=delalias.test&confirm=delalias.test")).status, 409, "aliases are not sites");
+		const r = await node.admin("DELETE", `/site?id=${D}&confirm=${D}`);
+		assert.equal(r.status, 409, "refuses while aliases point at it");
+		assert.match(r.json().error, /delalias\.test/);
+		assert.equal((await site("/hello.txt", { host: D })).status, 200, "a refused delete changes nothing");
+	});
+	it("stops serving and deletes data, history and aliases", async () => {
+		const r = await node.admin("DELETE", `/site?id=${D}&confirm=${D}&aliases=delete`);
+		assert.equal(r.status, 200, r.text);
+		const out = r.json();
+		assert.deepEqual(out.aliases, ["delalias.test"]);
+		assert.ok(out.objects >= 1);
+		assert.ok(out.history >= 1);
+		assert.deepEqual(out.errors, []);
+		assert.equal((await site("/hello.txt", { host: D })).status, 404);
+		assert.equal((await site("/hello.txt", { host: "delalias.test" })).status, 404);
+		const o = (await node.admin("GET", "/overview")).json();
+		assert.ok(!o.sites.some((s) => s.id === D));
+		assert.ok(!o.deploys.some((d) => d.site === D));
+		assert.ok(!o.objects.some((x) => x.site === D));
+		assert.ok(!o.aliases.some((a) => a.site === D));
+	});
+	it("leaves a fresh, empty site when the id is deployed again", async () => {
+		node.deploy(join(fixtures, "worker"), D);
+		assert.equal((await obj("Kv", "data", "get", ["k"], D)).result, null);
+	});
+	it("leaves other sites alone", async () => {
+		assert.equal((await obj("Kv", "store", "get", ["a"])).ok, true);
+		assert.equal((await site("/hello.txt")).status, 200);
 	});
 });
 

@@ -8,7 +8,7 @@
 //   site:<site>                 -> current version id
 //   code:<version>              -> { compatibilityDate, source, assets: [paths],
 //                                    immutable: [prefixes], notFound }
-//   asset:<version>:<path>      -> file bytes, metadata { type }
+//   asset:<version>:<path>      -> file bytes, metadata { type, at }
 //   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
 //   staged:<site>:<version>     -> ""  (uploaded for that site, not necessarily active)
 //   obj:<site>|<class>|<name>   -> "", metadata { id, firstSeen }  (object index)
@@ -95,8 +95,10 @@ function loadSite(env, exports, site, version) {
 	});
 }
 
-/** Objects already in the index, so each costs one KV read per router isolate. */
+/** Objects already in the index, so each costs one KV read per router isolate.
+ *  Bounded: site code picks object names, so it could otherwise grow forever. */
 const indexed = new Set();
+const MAX_INDEXED = 10_000;
 
 /** Path prefixes of content-hashed build output: SvelteKit, Nuxt, Vite. */
 const DEFAULT_IMMUTABLE = ["_app/immutable/", "_nuxt/", "assets/"];
@@ -173,11 +175,17 @@ export class SiteObjects extends WorkerEntrypoint {
 			throw new Error("bad object reference");
 		}
 		const key = `${site}|${className}|${name}`;
-		if (!indexed.has(key)) {
-			indexed.add(key);
-			this.ctx.waitUntil(indexObject(this.env, key));
-		}
 		const version = await this.env.CODE.get(`site:${site}`);
+		// A site deleted while one of its requests was still running.
+		if (version === null) throw new Error("site not found");
+		if (!indexed.has(key)) {
+			this.ctx.waitUntil(
+				indexObject(this.env, key).then(() => {
+					if (indexed.size >= MAX_INDEXED) indexed.clear();
+					indexed.add(key);
+				}),
+			);
+		}
 		return this.env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
 	}
 }
@@ -199,6 +207,13 @@ export class SiteObject extends DurableObject {
 		this.version = version;
 		const facet = this.ctx.facets.get(className, () => ({ class: worker.getDurableObjectClass(className) }));
 		return facet[method](...args);
+	}
+
+	/** Delete this object's data: the site class's facet database, then our own. */
+	async destroy(className) {
+		this.ctx.facets.delete(className);
+		this.version = undefined;
+		await this.ctx.storage.deleteAll();
 	}
 }
 
@@ -266,7 +281,7 @@ async function putAsset(request, env, url) {
 	const bytes = await request.arrayBuffer();
 	if (bytes.byteLength > MAX_ASSET_BYTES) return fail(413, "file too large");
 	const type = request.headers.get("content-type") || "application/octet-stream";
-	await env.CODE.put(`asset:${version}:${path}`, bytes, { metadata: { type } });
+	await env.CODE.put(`asset:${version}:${path}`, bytes, { metadata: { type, at: Date.now() } });
 	return json({ version, path, bytes: bytes.byteLength });
 }
 
@@ -349,17 +364,27 @@ async function alias(request, env, url) {
 
 // --- Pruning -------------------------------------------------------------------
 
+/** Files of a version without a code record are a deploy in progress, or one that
+ *  failed; they are deleted once they are this old. */
+const ORPHAN_AGE_MS = 60 * 60 * 1000;
+/** Deploy history entries kept per site. */
+const MAX_HISTORY = 100;
+
 /** POST /__admin/prune?keep=N deletes stored versions except each site's current
  *  version and the N most recent versions in its deploy history (default 3).
- *  Versions that were only staged, never activated, are deleted. */
+ *  It also deletes versions that were only staged (never activated), files of
+ *  uploads that never got a code record (after an hour, or orphanAge seconds), history beyond the last
+ *  100 deploys per site, and index and staging records of things that are gone. */
 async function prune(env, url) {
 	const keep = Math.max(0, Math.min(100, Number(url.searchParams.get("keep") ?? 3) || 0));
-	const [siteKeys, deployKeys, codeKeys, stagedKeys] = await Promise.all(
-		["site:", "deploy:", "code:", "staged:"].map((p) => listAll(env.CODE, p)),
+	const orphanAge = url.searchParams.has("orphanAge") ? Math.max(0, Number(url.searchParams.get("orphanAge")) || 0) * 1000 : ORPHAN_AGE_MS;
+	const [siteKeys, deployKeys, codeKeys, stagedKeys, objKeys] = await Promise.all(
+		["site:", "deploy:", "code:", "staged:", "obj:"].map((p) => listAll(env.CODE, p)),
 	);
+	const sites = new Set(siteKeys.map((k) => k.name.slice("site:".length)));
 	const kept = new Set();
 	for (const k of siteKeys) kept.add(await env.CODE.get(k.name));
-	const history = new Map(); // site -> [{ at, version }]
+	const history = new Map(); // site -> [{ at, key }]
 	for (const k of deployKeys) {
 		const rest = k.name.slice("deploy:".length);
 		const site = rest.slice(0, rest.indexOf(":")); // site ids are hostnames: no ":"
@@ -367,6 +392,7 @@ async function prune(env, url) {
 		list.push({ at: rest.slice(site.length + 1), key: k.name });
 		history.set(site, list);
 	}
+	let historyDeleted = 0;
 	for (const list of history.values()) {
 		list.sort((a, b) => b.at.localeCompare(a.at));
 		const recent = [];
@@ -376,6 +402,10 @@ async function prune(env, url) {
 			if (!recent.includes(version)) recent.push(version);
 		}
 		recent.forEach((v) => kept.add(v));
+		for (const entry of list.slice(MAX_HISTORY)) {
+			await env.CODE.delete(entry.key);
+			historyDeleted++;
+		}
 	}
 	const deleted = [];
 	for (const k of codeKeys) {
@@ -385,10 +415,76 @@ async function prune(env, url) {
 		await env.CODE.delete(k.name);
 		deleted.push(version);
 	}
-	// Staging records of versions that no longer exist (version ids have no ":").
 	const remaining = new Set(codeKeys.map((k) => k.name.slice("code:".length)).filter((v) => !deleted.includes(v)));
+	// Files of versions that never got a code record. Files without an upload time
+	// predate it, so they are old enough.
+	let orphanFiles = 0;
+	const now = Date.now();
+	for (const a of await listAll(env.CODE, "asset:")) {
+		const version = a.name.slice("asset:".length, "asset:".length + 12);
+		if (remaining.has(version) || now - (a.metadata?.at ?? 0) < orphanAge) continue;
+		await env.CODE.delete(a.name);
+		orphanFiles++;
+	}
+	// Staging records of versions that no longer exist (version ids have no ":").
 	for (const k of stagedKeys) if (!remaining.has(k.name.slice(k.name.lastIndexOf(":") + 1))) await env.CODE.delete(k.name);
-	return json({ keep, kept: [...kept].filter(Boolean), deleted });
+	// Index entries of deleted sites.
+	for (const k of objKeys) {
+		const site = k.name.slice("obj:".length, k.name.indexOf("|"));
+		if (!sites.has(site)) await env.CODE.delete(k.name);
+	}
+	return json({ keep, kept: [...kept].filter(Boolean), deleted, orphanFiles, historyDeleted });
+}
+
+// --- Deleting a site ---------------------------------------------------------------
+
+/** DELETE /__admin/site?id=S&confirm=S[&aliases=delete] deletes a site: it stops
+ *  serving at once, then its Durable Objects' data, deploy history, staging records
+ *  and (only with aliases=delete) the aliases pointing at it are deleted. Its
+ *  versions stay until the next prune (identical builds share a version). Objects
+ *  missing from the index (created before it existed) can't be found by name and
+ *  are counted in the dashboard as "not in the index". */
+async function deleteSite(env, url) {
+	const id = url.searchParams.get("id") ?? "";
+	if (!HOSTNAME.test(id)) return fail(400, "bad site id");
+	if (url.searchParams.get("confirm") !== id) return fail(400, "confirm must repeat the site id");
+	if ((await env.CODE.get(`alias:${id}`)) !== null) return fail(409, `${id} is an alias, not a site id; DELETE /alias removes it`);
+	if ((await env.CODE.get(`site:${id}`)) === null) return fail(404, `no site ${id}`);
+	const aliasKeys = [];
+	for (const k of await listAll(env.CODE, "alias:")) if ((await env.CODE.get(k.name)) === id) aliasKeys.push(k.name);
+	if (aliasKeys.length && url.searchParams.get("aliases") !== "delete") {
+		return fail(409, `aliases point at ${id}: ${aliasKeys.map((k) => k.slice(6)).join(", ")} (add aliases=delete)`);
+	}
+	// Stop serving first, so no new request recreates an object while we delete.
+	await env.CODE.delete(`site:${id}`);
+	metas.clear();
+	for (const k of aliasKeys) {
+		await env.CODE.delete(k);
+		aliasCache.delete(k.slice(6));
+	}
+	aliasCache.delete(id);
+	const objects = [];
+	const errors = [];
+	for (const k of await listAll(env.CODE, `obj:${id}|`)) {
+		const key = k.name.slice("obj:".length);
+		const className = key.split("|")[1];
+		try {
+			await env.SITE_OBJECTS.getByName(key).destroy(className);
+			await env.CODE.delete(k.name);
+			indexed.delete(key);
+			objects.push(key.slice(id.length + 1));
+		} catch (e) {
+			errors.push(`${key}: ${String(e?.message ?? e).slice(0, 200)}`);
+		}
+	}
+	let history = 0;
+	for (const k of await listAll(env.CODE, `deploy:${id}:`)) {
+		await env.CODE.delete(k.name);
+		history++;
+	}
+	for (const k of await listAll(env.CODE, `staged:${id}:`)) await env.CODE.delete(k.name);
+	const result = { id, aliases: aliasKeys.map((k) => k.slice(6)), objects: objects.length, history, errors };
+	return errors.length ? json(result, 500) : json(result);
 }
 
 // --- Calling objects (seeding, exporting) ------------------------------------------
@@ -508,6 +604,7 @@ async function admin(request, env, url) {
 	if (method === "POST" && pathname === "/__admin/activate") return activate(env, url);
 	if ((method === "PUT" || method === "DELETE") && pathname === "/__admin/alias") return alias(request, env, url);
 	if (method === "POST" && pathname === "/__admin/prune") return prune(env, url);
+	if (method === "DELETE" && pathname === "/__admin/site") return deleteSite(env, url);
 	if (method === "POST" && pathname === "/__admin/call") return adminCall(request, env, url);
 	return fail(404, "not found");
 }

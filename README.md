@@ -137,9 +137,20 @@ tools/admin.sh POST '/activate?host=blog.example.com&version=<id>'    # roll bac
 tools/admin.sh PUT '/alias?host=new.example.com&site=blog.example.com' # serve a site under another name
 tools/admin.sh DELETE '/alias?host=new.example.com'
 tools/admin.sh POST '/prune?keep=3'   # keep each site's current version and its 3 most recent deploys
+tools/admin.sh DELETE '/site?id=blog.example.com&confirm=blog.example.com'  # delete a site and all its data
 ```
 
-Pruning also deletes versions that were uploaded but never activated.
+Pruning also deletes versions that were uploaded but never activated, files
+of uploads that never got a code record (after an hour), deploy history beyond
+the last 100 entries per site, and index entries of deleted sites.
+
+**Deleting a site** stops it serving at once, then deletes its Durable Objects'
+data, its deploy history and staging records; it refuses while aliases point
+at it unless `&aliases=delete` is added. There is no undo apart from the VM
+backup, so export anything worth keeping first (`tools/seed.mjs --call`). Its
+versions go with the next prune. Deploying to the same id later starts a new,
+empty site. Objects created before the object index existed can't be found by
+name and are not deleted (the dashboard counts them as "not in the index").
 
 **Site ids.** A site's id is the hostname it was first deployed to, and the id
 owns its versions and Durable Objects. To rename a site, alias the new hostname
@@ -203,10 +214,10 @@ container creates it and redeploys the router and the example by itself.
 `npm test --prefix tools` (after `npm ci --prefix tools` once) validates the
 APIs against a throwaway local `celld dev` node, never production: the admin
 API (auth and the read/write split, upload limits, code checks, activation and
-rollback, aliases, object calls, overview, pruning), routing (static-first,
+rollback, aliases, object calls, overview, pruning, deleting sites), routing (static-first,
 clean URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site
 bindings (`OBJECTS` validation, plain-data rule, errors, CPU limit; `ASSETS`;
-blocked network) and the packer's refusals. 43 tests, about 7 s. Run it after
+blocked network) and the packer's refusals. 49 tests, about 8 s. Run it after
 changing the router, the tools or the push/admin scripts.
 
 ## Security

@@ -5,6 +5,7 @@
 #   admin.sh DELETE '/alias?host=new.example.com'
 #   admin.sh POST '/activate?host=site.example.com&version=0123456789ab'   (rollback)
 #   admin.sh GET /overview
+#   admin.sh DELETE '/site?id=site.example.com&confirm=site.example.com[&aliases=delete]'
 #   echo '[["hello"]]' | admin.sh POST '/call?host=h&class=Notes&name=main&method=add' -
 # A trailing "-" sends stdin as the request body. CELLD_ADMIN_API selects the node.
 set -eu
