@@ -4,9 +4,9 @@
 // the site's build first. node/push.sh uploads a bundle (tools/deploy.sh does
 // both). Bundle layout:
 //   version     the version id
-//   code.json   { compatibilityDate, source, assets: [paths], immutable, mutable, notFound }
-//   files.tsv   <n> TAB <content-type> TAB <url-encoded path>, one line per file
-//   files/<n>   the file bytes
+//   code.json   { compatibilityDate, source, files: { path: [sha256, type] }, immutable, mutable, notFound }
+//   blobs/<sha256>  each distinct file's bytes, named by their hash (push.sh
+//               uploads only the ones the router doesn't have yet)
 // Symlinks in the static directory and files over 20 MiB are refused.
 //
 // <site-dir>/celld.json (optional; paths relative to the site directory):
@@ -169,21 +169,22 @@ const relevantMutable = mutable.filter((m) => assets.some((a) => a.path === m) &
 const hash = createHash("sha256")
 	.update(source)
 	.update(JSON.stringify(relevantMutable.length ? { immutable, notFound, mutable: relevantMutable } : { immutable, notFound }));
-for (const a of assets) hash.update(a.path).update(readFileSync(join(assetsDir, a.path)));
-const version = hash.digest("hex").slice(0, 12);
-
 rmSync(outDir, { recursive: true, force: true });
-mkdirSync(join(outDir, "files"), { recursive: true });
+mkdirSync(join(outDir, "blobs"), { recursive: true });
+const fileMap = {};
+for (const a of assets) {
+	const bytes = readFileSync(join(assetsDir, a.path));
+	hash.update(a.path).update(bytes);
+	const sha = createHash("sha256").update(bytes).digest("hex");
+	fileMap[a.path] = [sha, a.type];
+	writeFileSync(join(outDir, "blobs", sha), bytes);
+}
+const version = hash.digest("hex").slice(0, 12);
 writeFileSync(join(outDir, "version"), `${version}\n`);
 writeFileSync(
 	join(outDir, "code.json"),
-	JSON.stringify({ compatibilityDate: "2026-10-01", source, assets: assets.map((a) => a.path), immutable, mutable: relevantMutable, notFound }),
+	JSON.stringify({ compatibilityDate: "2026-10-01", source, files: fileMap, immutable, mutable: relevantMutable, notFound }),
 );
-const lines = assets.map((a, i) => {
-	writeFileSync(join(outDir, "files", String(i)), readFileSync(join(assetsDir, a.path)));
-	return `${i}\t${a.type}\t${encodeURIComponent(a.path)}`;
-});
-writeFileSync(join(outDir, "files.tsv"), lines.length ? `${lines.join("\n")}\n` : "");
 console.error(
 	`packed ${relative(process.cwd(), siteDir) || "."}: version ${version}, ${assets.length} assets, ` +
 		(source ? `${source.length} bytes of server code` : "static only"),

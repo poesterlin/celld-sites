@@ -105,10 +105,16 @@ hostname to celld. `SITES_RULE` in `.env` is a pattern for all site hostnames
 the `$` survives), so names that match need no Traefik change and no restart.
 A hostname outside the pattern has to be added to the rule
 (``... || Host(`blog.other.com`)``), and changing the rule recreates the
-`celld` container, which restarts every site. A deploy uploads each static file in its own
-request (at most 20 MiB per file), then the server code and file list, then
-activates the version; visitors switch only at that last step. Each version is
-keyed by a hash of its content.
+`celld` container, which restarts every site.
+
+Files are stored once by content hash (SHA-256) and shared by every version and
+site that has them. A deploy asks the router which of its files are missing,
+uploads only those (6 at a time, at most 20 MiB per file, each checked against
+its hash), then the server code and file list, then activates the version;
+visitors switch only at that last step. Each version is keyed by a hash of its
+content. Versions uploaded before this (files under `asset:<version>:` keys)
+keep working until pruned; re-deploying the same content moves them to the
+shared store.
 
 **4. Seed or export data.** Site code has no secrets, so it can't guard a seed
 or import route itself. Instead, give the object methods for it (see `seed()`
@@ -207,19 +213,21 @@ container creates it and redeploys the router and the example by itself.
   epochs older than an hour that no restore needs. A new epoch starts when an
   object is restored, e.g. after a celld restart.
 - **Old site versions** stay until pruned (`tools/admin.sh POST '/prune?keep=3'`):
-  roughly the size of the build (~0.5 MB for the example) per deploy.
+  each costs its server code plus the files that changed since earlier
+  versions. Prune deletes the files no remaining version uses.
 
 ## Tests
 
 `npm test --prefix tools` (after `npm ci --prefix tools` once) validates the
 APIs against a throwaway local `celld dev` node, never production: the admin
-API (auth and the read/write split, upload limits, code checks, activation and
-rollback, aliases, object calls, overview, pruning, deleting sites), routing
-(static-first, clean URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme),
-the site bindings (`OBJECTS` validation, plain-data rule, errors, CPU limit;
-`ASSETS`; blocked network), static-file validators and caching, and the
-packer's refusals and defaults. 54 tests, about 8 s. Run it after changing the
-router, the tools or the push/admin scripts.
+API (auth and the read/write split, upload limits and hash checks, code checks,
+activation and rollback, aliases, object calls, overview, pruning, deleting
+sites), routing (static-first, clean URLs, HEAD, SPA and 404.html fallbacks,
+forwarded scheme), the site bindings (`OBJECTS` validation, plain-data rule,
+errors, CPU limit; `ASSETS`; blocked network), static-file validators and
+caching, and the packer's refusals and defaults, and upgrading from per-version
+files. 58 tests, about 12 s. Run it after changing the router, the tools or the
+push/admin scripts.
 
 ## Security
 
@@ -232,7 +240,9 @@ router, the tools or the push/admin scripts.
   read) never holds a usable token. `tools/deploy.sh` and `tools/admin.sh`
   reach the API with `docker compose exec`.
 - Uploads are size-checked before they are read (413 above 20 MiB per file,
-  16 MiB for code), so a big deploy cannot exhaust the router's memory.
+  16 MiB for code), so a big deploy cannot exhaust the router's memory. A file
+  is stored only if its bytes match the hash it is uploaded under, so no upload
+  can change a file that other versions use.
 - `tools/pack.mjs` refuses symlinks in a site's static directory, so a link in
   a build folder cannot publish files from elsewhere on the machine.
 - Sites are isolated from each other and from the router (separate isolates,

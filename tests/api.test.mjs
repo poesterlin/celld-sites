@@ -2,11 +2,11 @@
 // Run: npm test --prefix tools   (needs celld in ~/.local/bin and npm ci --prefix tools)
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { Node, project } from "./harness.mjs";
+import { Node, project, sha256 } from "./harness.mjs";
 
 const fixtures = join(project, "tests/fixtures");
 const node = new Node();
@@ -42,7 +42,8 @@ describe("admin API: authentication", () => {
 			["POST", "/prune?keep=1"],
 			["POST", "/call?host=worker.test&class=Kv&name=x&method=get"],
 			["PUT", "/alias?host=a.test&site=worker.test"],
-			["PUT", "/asset?version=aaaaaaaaaaaa&path=x"],
+			["PUT", `/blob?hash=${sha256("x")}`],
+			["POST", "/blobs/missing"],
 			["PUT", "/code?version=aaaaaaaaaaaa"],
 			["DELETE", "/site?id=worker.test&confirm=worker.test"],
 		]) {
@@ -72,26 +73,54 @@ describe("deploy: upload, code, activate", () => {
 	it("gives an unchanged site the same version", () => {
 		assert.equal(node.deploy(join(fixtures, "worker"), W).version, worker.version);
 	});
-	it("validates asset uploads", async () => {
-		const put = (q, opts) => node.admin("PUT", `/asset?${q}`, { body: "x", ...opts });
-		assert.equal((await put("version=nothex&path=a")).status, 400);
-		assert.equal((await put("version=aaaaaaaaaaaa&path=")).status, 400);
-		assert.equal((await put("version=aaaaaaaaaaaa&path=/abs")).status, 400);
-		assert.equal((await put(`version=aaaaaaaaaaaa&path=${"a".repeat(401)}`)).status, 400);
-		assert.equal((await put("version=aaaaaaaaaaaa&path=a", { chunked: true })).status, 411);
-		assert.equal(node.adminUpload("PUT", "/asset?version=aaaaaaaaaaaa&path=big.bin", 20 * 1024 * 1024 + 1), 413);
-		assert.equal((await put("version=aaaaaaaaaaaa&path=ok.txt")).status, 200);
+	it("validates file uploads and checks their hash", async () => {
+		const put = (hash, opts) => node.admin("PUT", `/blob?hash=${hash}`, { body: "x", ...opts });
+		assert.equal((await put("nothex")).status, 400);
+		assert.equal((await put(sha256("y"))).status, 400, "body must match the hash");
+		assert.equal((await put(sha256("x"), { chunked: true })).status, 411);
+		assert.equal(node.adminUpload("PUT", `/blob?hash=${"0".repeat(64)}`, 20 * 1024 * 1024 + 1), 413);
+		assert.equal((await put(sha256("x"))).status, 200);
+	});
+	it("reports which files are missing", async () => {
+		const missing = (body) => node.admin("POST", "/blobs/missing", { body, headers: { "content-type": "application/json" } });
+		assert.equal((await missing("{not json")).status, 400);
+		assert.equal((await missing(["nothex"])).status, 400);
+		const r = await missing([sha256("x"), sha256("never uploaded"), sha256("never uploaded")]);
+		assert.equal(r.status, 200);
+		assert.deepEqual(r.json().missing, [sha256("never uploaded")]);
 	});
 	it("validates code uploads and requires every listed file", async () => {
 		const put = (body) => node.admin("PUT", "/code?version=aaaaaaaaaaaa", { body, headers: { "content-type": "application/json" } });
+		const ok = { "ok.txt": [sha256("x"), "text/plain"] };
 		assert.equal((await put("{not json")).status, 400);
-		assert.equal((await put({ compatibilityDate: "2026-10-01", assets: "nope" })).status, 400);
-		assert.equal((await put({ compatibilityDate: "2026-10-01", assets: [], notFound: "maybe" })).status, 400);
-		const missing = await put({ compatibilityDate: "2026-10-01", assets: ["ok.txt", "missing.txt"] });
+		assert.equal((await put({ compatibilityDate: "2026-10-01", files: ["ok.txt"] })).status, 400);
+		assert.equal((await put({ compatibilityDate: "2026-10-01", files: { "ok.txt": ["nothex", "text/plain"] } })).status, 400);
+		assert.equal((await put({ compatibilityDate: "2026-10-01", files: { "/abs": ok["ok.txt"] } })).status, 400);
+		assert.equal((await put({ compatibilityDate: "2026-10-01", files: { ["a".repeat(401)]: ok["ok.txt"] } })).status, 400);
+		assert.equal((await put({ compatibilityDate: "2026-10-01", files: ok, notFound: "maybe" })).status, 400);
+		const missing = await put({ compatibilityDate: "2026-10-01", files: { ...ok, "missing.txt": [sha256("nope"), "text/plain"] } });
 		assert.equal(missing.status, 409);
-		assert.match(missing.json().error, /missing 1 files/);
-		assert.equal((await put({ compatibilityDate: "2026-10-01", assets: ["ok.txt"] })).status, 200);
+		assert.match(missing.json().error, /missing 1 files, e\.g\. missing\.txt/);
+		assert.equal((await put({ compatibilityDate: "2026-10-01", files: ok })).status, 200);
 		assert.equal(node.adminUpload("PUT", "/code?version=bbbbbbbbbbbb", 16 * 1024 * 1024 + 1), 413);
+	});
+	it("uploads only the files the router doesn't have yet", async () => {
+		const copy = mkdtempSync(join(tmpdir(), "celld-api-dedupe-"));
+		try {
+			cpSync(join(fixtures, "worker"), copy, { recursive: true });
+			writeFileSync(join(copy, "public/hello.txt"), "changed for dedupe\n");
+			const bundle = node.pack(copy);
+			const hashes = readdirSync(join(bundle, "blobs"));
+			rmSync(bundle, { recursive: true, force: true });
+			const r = await node.admin("POST", "/blobs/missing", { body: hashes, headers: { "content-type": "application/json" } });
+			assert.deepEqual(r.json().missing, [sha256("changed for dedupe\n")], "only the changed file");
+			const out = node.deploy(copy, "dedupe.test");
+			assert.equal(out.assets, 5);
+			assert.equal((await site("/hello.txt", { host: "dedupe.test" })).text, "changed for dedupe\n");
+			assert.equal((await site("/about", { host: "dedupe.test" })).status, 200);
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
 	});
 	it("--if-new deploys a new site but leaves an existing one alone", async () => {
 		const other = mkdtempSync(join(tmpdir(), "celld-api-ifnew-"));
@@ -328,9 +357,7 @@ describe("overview and pruning", () => {
 		assert.ok(o.versions.some((v) => v.version === worker.version && v.assets === 5));
 	});
 	it("prunes unreferenced versions and keeps every current one", async () => {
-		assert.equal((await node.admin("PUT", "/asset?version=eeeeeeeeeeee&path=x.txt", { body: "x" })).status, 200);
-		const code = { compatibilityDate: "2026-10-01", assets: ["x.txt"] };
-		assert.equal((await node.admin("PUT", "/code?version=eeeeeeeeeeee", { body: code, headers: { "content-type": "application/json" } })).status, 200);
+		assert.equal((await node.putVersion("eeeeeeeeeeee", { "x.txt": "x" })).status, 200);
 		const r = (await node.admin("POST", "/prune?keep=0")).json();
 		assert.ok(r.deleted.includes("eeeeeeeeeeee"));
 		assert.ok(!r.deleted.includes(worker.version));
@@ -339,14 +366,10 @@ describe("overview and pruning", () => {
 	});
 	it("keep=0 keeps only current versions and drops staged ones", async () => {
 		for (const v of ["f1f1f1f1f1f1", "f2f2f2f2f2f2"]) {
-			assert.equal((await node.admin("PUT", `/asset?version=${v}&path=v.txt`, { body: v })).status, 200);
-			const code = { compatibilityDate: "2026-10-01", assets: ["v.txt"] };
-			assert.equal((await node.admin("PUT", `/code?version=${v}&host=keep.test`, { body: code, headers: { "content-type": "application/json" } })).status, 200);
+			assert.equal((await node.putVersion(v, { "v.txt": v }, { host: "keep.test" })).status, 200);
 		}
 		assert.equal((await node.admin("POST", "/activate?host=keep.test&version=f1f1f1f1f1f1")).status, 200);
-		assert.equal((await node.admin("PUT", "/asset?version=f3f3f3f3f3f3&path=v.txt", { body: "3" })).status, 200);
-		const code = { compatibilityDate: "2026-10-01", assets: ["v.txt"] };
-		assert.equal((await node.admin("PUT", "/code?version=f3f3f3f3f3f3&host=keep.test", { body: code, headers: { "content-type": "application/json" } })).status, 200);
+		assert.equal((await node.putVersion("f3f3f3f3f3f3", { "v.txt": "3" }, { host: "keep.test" })).status, 200);
 		assert.equal((await node.admin("POST", "/activate?host=keep.test&version=f3f3f3f3f3f3")).status, 200);
 		const two = (await node.admin("POST", "/prune?keep=2")).json();
 		assert.ok(two.deleted.includes("f2f2f2f2f2f2"), "staged-only version is deleted");
@@ -367,7 +390,7 @@ describe("static files: validators, HEAD, cache", () => {
 	it("sends an ETag and answers a matching If-None-Match with 304", async () => {
 		const first = await site("/hello.txt");
 		const etag = first.headers.etag;
-		assert.match(etag, /^"[a-f0-9]{12}:hello\.txt"$/);
+		assert.equal(etag, `"${sha256("hello from assets\n").slice(0, 32)}"`, "the content hash");
 		const again = await site("/hello.txt", { headers: { "if-none-match": etag } });
 		assert.equal(again.status, 304);
 		assert.equal(again.text, "");
@@ -375,7 +398,9 @@ describe("static files: validators, HEAD, cache", () => {
 		assert.equal((await site("/hello.txt", { headers: { "if-none-match": `W/${etag}, "other"` } })).status, 304);
 		assert.equal((await site("/hello.txt", { headers: { "if-none-match": '"other"' } })).status, 200);
 	});
-	it("changes the ETag with the version", async () => {
+	it("keeps an unchanged file's ETag across versions, and changes it with the content", async () => {
+		assert.equal((await site("/about")).headers.etag, (await site("/about", { host: "dedupe.test" })).headers.etag);
+		assert.notEqual((await site("/hello.txt")).headers.etag, (await site("/hello.txt", { host: "dedupe.test" })).headers.etag);
 		const a = (await site("/", { host: "static.test" })).headers.etag;
 		const b = (await site("/", { host: "spa.test" })).headers.etag;
 		assert.notEqual(a, b);
@@ -416,11 +441,18 @@ describe("static files: validators, HEAD, cache", () => {
 });
 
 describe("pruning leftovers", () => {
-	it("deletes files of uploads that never got a code record, once old enough", async () => {
-		assert.equal((await node.admin("PUT", "/asset?version=a0a0a0a0a0a0&path=lost.txt", { body: "x" })).status, 200);
-		assert.equal((await node.admin("POST", "/prune?keep=3")).json().orphanFiles, 0, "a fresh upload may be a deploy in progress");
-		assert.equal((await node.admin("POST", "/prune?keep=3&orphanAge=0")).json().orphanFiles, 1);
-		assert.equal((await site("/hello.txt")).status, 200, "files of stored versions stay");
+	it("deletes files no version uses, once old enough", async () => {
+		const lost = await node.putBlob("lost upload");
+		const isStored = async (h) => (await node.admin("POST", "/blobs/missing", { body: [h], headers: { "content-type": "application/json" } })).json().missing.length === 0;
+		await node.admin("POST", "/prune?keep=3");
+		assert.ok(await isStored(lost), "a fresh upload may be a deploy in progress");
+		assert.ok((await node.admin("POST", "/prune?keep=3&orphanAge=0")).json().blobsDeleted >= 1);
+		assert.ok(!(await isStored(lost)));
+		assert.ok(await isStored(sha256("hello from assets\n")), "files of stored versions stay");
+		for (const host of [W, "spa.test", "static.test", "dedupe.test", "cache.test"]) {
+			assert.equal((await site("/", { host })).status < 500, true);
+		}
+		assert.equal((await site("/hello.txt")).text, "hello from assets\n");
 	});
 	it("trims deploy history to the last 100 per site", async () => {
 		for (let i = 0; i < 102; i++) {
@@ -473,6 +505,46 @@ describe("deleting a site", () => {
 	it("leaves other sites alone", async () => {
 		assert.equal((await obj("Kv", "store", "get", ["a"])).ok, true);
 		assert.equal((await site("/hello.txt")).status, 200);
+	});
+});
+
+describe("upgrade from per-version files (asset: keys)", () => {
+	// The release before content-addressed files; its versions must keep working.
+	const OLD_ROUTER = "dc2c5b9";
+	let old;
+	let oldSource;
+	try {
+		oldSource = execFileSync("git", ["-C", project, "show", `${OLD_ROUTER}:router/index.js`]).toString();
+	} catch {}
+	const legacy = { "index.html": "old home", "kept.txt": "same bytes" };
+	before(async () => {
+		if (!oldSource) return;
+		old = await new Node(Number(process.env.TEST_PORT ?? 8799) + 1).start({ routerSource: oldSource });
+		for (const [path, body] of Object.entries(legacy)) {
+			assert.equal((await old.admin("PUT", `/asset?version=0dd0dd0dd0dd&path=${path}`, { body, headers: { "content-type": "text/plain" } })).status, 200);
+		}
+		const code = { compatibilityDate: "2026-10-01", assets: Object.keys(legacy), immutable: [] };
+		assert.equal((await old.admin("PUT", "/code?version=0dd0dd0dd0dd", { body: code, headers: { "content-type": "application/json" } })).status, 200);
+		assert.equal((await old.admin("POST", "/activate?host=legacy.test&version=0dd0dd0dd0dd")).status, 200);
+		await old.restart();
+	});
+	after(async () => old?.stop());
+	const get = (path) => old.request("GET", path, { host: "legacy.test" });
+
+	it("still serves old-format versions", { skip: !oldSource && "old router not in git history" }, async () => {
+		const r = await get("/kept.txt");
+		assert.equal(r.status, 200);
+		assert.equal(r.text, "same bytes");
+		assert.equal(r.headers.etag, '"0dd0dd0dd0dd:kept.txt"');
+		assert.equal((await get("/kept.txt")).text, "same bytes", "from the cache too");
+		assert.equal((await old.admin("GET", "/overview")).json().versions.find((v) => v.version === "0dd0dd0dd0dd").assets, 2);
+	});
+	it("switches a version to blobs when re-uploaded, and prune drops its old files", { skip: !oldSource && "old router not in git history" }, async () => {
+		assert.equal((await old.putVersion("0dd0dd0dd0dd", { "index.html": "old home", "kept.txt": "same bytes" })).status, 200);
+		const r = (await old.admin("POST", "/prune?keep=3")).json();
+		assert.equal(r.oldFilesDeleted, 2);
+		assert.equal((await get("/kept.txt")).text, "same bytes");
+		assert.equal((await get("/kept.txt")).headers.etag, `"${sha256("same bytes").slice(0, 32)}"`);
 	});
 });
 

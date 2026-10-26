@@ -6,15 +6,20 @@
 // site's versions and Durable Objects, so a site keeps its data under new names.
 //   alias:<hostname>            -> site id
 //   site:<site>                 -> current version id
-//   code:<version>              -> { compatibilityDate, source, assets: [paths],
-//                                    immutable: [prefixes], mutable: [paths], notFound }
-//   asset:<version>:<path>      -> file bytes, metadata { type, at }
+//   code:<version>              -> { compatibilityDate, source, files: { path: [sha256, type] },
+//                                    immutable: [prefixes], mutable: [paths], notFound },
+//                                  metadata { files }  (the file count)
+//   blob:<sha256>               -> file bytes, metadata { at }  (shared by every
+//                                  version, of any site, that has the file)
+//   asset:<version>:<path>      -> file bytes, metadata { type }  (versions uploaded
+//                                  before blobs: code has assets: [paths], no files)
 //   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
 //   staged:<site>:<version>     -> ""  (uploaded for that site, not necessarily active)
 //   obj:<site>|<class>|<name>   -> "", metadata { id, firstSeen }  (object index)
-// Deploying uploads a version piece by piece (each file, then the code and file
-// list), then activates it by flipping site:<site>, so visitors never see a
-// half-written version. Activating an older version is a rollback.
+// Deploying uploads a version piece by piece (the files the router doesn't have
+// yet, then the code and file list), then activates it by flipping site:<site>,
+// so visitors never see a half-written version. Activating an older version is a
+// rollback.
 //
 // Requests: static files are served first, like Cloudflare's static assets
 // (exact path, then <path>/index.html, then <path>.html), straight from KV
@@ -103,49 +108,48 @@ const MAX_INDEXED = 10_000;
 /** Path prefixes of content-hashed build output: SvelteKit, Nuxt, Vite. */
 const DEFAULT_IMMUTABLE = ["_app/immutable/", "_nuxt/", "assets/"];
 
-/** File bytes by version and path. A version's files never change, so any file
- *  can be cached; small ones are kept in memory (LRU, bounded) per router isolate. */
+/** File bytes. Blobs never change and an old-format version's files don't either,
+ *  so any file can be cached; small ones are kept in memory (LRU, bounded) per
+ *  router isolate, keyed by storage key (so files shared by versions are cached once). */
 const ASSET_CACHE_BYTES = 32 * 1024 * 1024;
 const ASSET_CACHE_MAX_ENTRY = 1024 * 1024;
-const assetCache = new Map(); // "<version>:<path>" -> { value, type }
+const assetCache = new Map(); // storage key -> { value, type }
 let assetCacheBytes = 0;
 
-async function readAsset(env, version, path) {
-	const key = `${version}:${path}`;
-	const hit = assetCache.get(key);
+async function readAsset(env, meta, version, path) {
+	const blob = meta.files?.[path];
+	const key = blob ? `blob:${blob[0]}` : `asset:${version}:${path}`;
+	let hit = assetCache.get(key);
 	if (hit) {
 		assetCache.delete(key); // most recently used goes last
 		assetCache.set(key, hit);
-		return hit;
-	}
-	const { value, metadata } = await env.CODE.getWithMetadata(`asset:${key}`, "arrayBuffer");
-	if (value === null) return null;
-	const entry = { value, type: metadata?.type ?? "application/octet-stream" };
-	if (value.byteLength <= ASSET_CACHE_MAX_ENTRY) {
-		assetCache.set(key, entry);
-		assetCacheBytes += value.byteLength;
-		for (const [k, e] of assetCache) {
-			if (assetCacheBytes <= ASSET_CACHE_BYTES) break;
-			assetCache.delete(k);
-			assetCacheBytes -= e.value.byteLength;
+	} else {
+		const { value, metadata } = await env.CODE.getWithMetadata(key, "arrayBuffer");
+		if (value === null) return null;
+		hit = { value, type: metadata?.type };
+		if (value.byteLength <= ASSET_CACHE_MAX_ENTRY) {
+			assetCache.set(key, hit);
+			assetCacheBytes += value.byteLength;
+			for (const [k, e] of assetCache) {
+				if (assetCacheBytes <= ASSET_CACHE_BYTES) break;
+				assetCache.delete(k);
+				assetCacheBytes -= e.value.byteLength;
+			}
 		}
 	}
-	return entry;
-}
-
-function forgetAsset(version, path) {
-	const e = assetCache.get(`${version}:${path}`);
-	if (!e) return;
-	assetCache.delete(`${version}:${path}`);
-	assetCacheBytes -= e.value.byteLength;
+	return { value: hit.value, type: (blob ? blob[1] : hit.type) ?? "application/octet-stream" };
 }
 
 /** Whether a path gets the 1-year immutable cache: under an immutable prefix and
  *  not one of the exact paths that change between builds. */
 const isImmutable = (cache, path) => cache.immutable.some((p) => path.startsWith(p)) && !cache.mutable.includes(path);
 
-/** Strong validator: a version's file never changes. */
-const etagFor = (version, path) => `"${version}:${encodeURIComponent(path)}"`;
+/** Strong validator: the content hash, so a file that didn't change between
+ *  versions keeps its ETag across deploys. Old-format versions use version:path. */
+const etagFor = (meta, version, path) => {
+	const blob = meta.files?.[path];
+	return blob ? `"${blob[0].slice(0, 32)}"` : `"${version}:${encodeURIComponent(path)}"`;
+};
 
 function notModified(request, etag) {
 	const header = request?.headers.get("if-none-match");
@@ -159,13 +163,13 @@ function notModified(request, etag) {
 /** One static file of a version, or null if it does not exist. `known` means the
  *  caller checked the version's file list, so a matching If-None-Match can be
  *  answered with 304 without reading the file. */
-async function assetResponse(env, version, path, cache, { head = false, status = 200, request, known = false } = {}) {
-	const headers = { "cache-control": isImmutable(cache, path) ? "public, immutable, max-age=31536000" : "no-cache" };
+async function assetResponse(env, version, path, meta, { head = false, status = 200, request, known = false } = {}) {
+	const headers = { "cache-control": isImmutable(meta, path) ? "public, immutable, max-age=31536000" : "no-cache" };
 	if (status === 200) {
-		headers.etag = etagFor(version, path);
+		headers.etag = etagFor(meta, version, path);
 		if (known && notModified(request, headers.etag)) return new Response(null, { status: 304, headers });
 	}
-	const file = await readAsset(env, version, path);
+	const file = await readAsset(env, meta, version, path);
 	if (file === null) return null;
 	if (status === 200 && notModified(request, headers.etag)) return new Response(null, { status: 304, headers });
 	headers["content-type"] = file.type;
@@ -190,15 +194,21 @@ export class SiteAssets extends WorkerEntrypoint {
 	}
 }
 
-/** Routing facts per version (file list and options); the code record is read once. */
+/** Routing facts per version (file list and options). The code record is read at
+ *  most once a minute: re-uploading a version (same content, new storage format)
+ *  replaces it, and other router isolates must notice. */
 const metas = new Map();
+const META_TTL_MS = 60_000;
 async function siteMeta(env, version) {
 	let meta = metas.get(version);
-	if (!meta) {
+	if (!meta || meta.until < Date.now()) {
 		const code = await env.CODE.get(`code:${version}`, "json");
+		const files = code.files ?? null;
 		meta = {
-			legacy: !Array.isArray(code.assets), // deployed before file lists existed
-			assets: new Set(code.assets ?? []),
+			until: Date.now() + META_TTL_MS,
+			legacy: !files && !Array.isArray(code.assets), // deployed before file lists existed
+			files,
+			assets: new Set(files ? Object.keys(files) : (code.assets ?? [])),
 			worker: Boolean(code.source),
 			immutable: code.immutable ?? DEFAULT_IMMUTABLE,
 			mutable: code.mutable ?? [],
@@ -280,6 +290,9 @@ const MAX_ASSET_BYTES = 20 * 1024 * 1024;
 /** Largest code upload (bundled server code plus the file list). */
 const MAX_CODE_BYTES = 16 * 1024 * 1024;
 const VERSION = /^[a-f0-9]{12}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
+/** Most files in one version. */
+const MAX_FILES = 20_000;
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 const json = (body, status = 200) => Response.json(body, { status });
@@ -328,24 +341,45 @@ async function siteFor(env, host) {
 
 // --- Deploy: upload files, upload code, activate -------------------------------
 
-/** PUT /__admin/asset?version=V&path=P  body: the file bytes, Content-Type: its type. */
-async function putAsset(request, env, url) {
-	const version = url.searchParams.get("version") ?? "";
-	const path = url.searchParams.get("path") ?? "";
-	if (!VERSION.test(version)) return fail(400, "bad version");
-	if (!path || path.startsWith("/") || path.includes("\0") || new TextEncoder().encode(path).length > 400) return fail(400, "bad path");
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+/** PUT /__admin/blob?hash=H  body: the file bytes; H must be their SHA-256. */
+async function putBlob(request, env, url) {
+	const hash = url.searchParams.get("hash") ?? "";
+	if (!SHA256.test(hash)) return fail(400, "bad hash");
 	const big = tooLarge(request, MAX_ASSET_BYTES);
 	if (big) return big;
 	const bytes = await request.arrayBuffer();
 	if (bytes.byteLength > MAX_ASSET_BYTES) return fail(413, "file too large");
-	const type = request.headers.get("content-type") || "application/octet-stream";
-	await env.CODE.put(`asset:${version}:${path}`, bytes, { metadata: { type, at: Date.now() } });
-	forgetAsset(version, path);
-	return json({ version, path, bytes: bytes.byteLength });
+	if (hex(await crypto.subtle.digest("SHA-256", bytes)) !== hash) return fail(400, "body does not match hash");
+	await env.CODE.put(`blob:${hash}`, bytes, { metadata: { at: Date.now() } });
+	return json({ hash, bytes: bytes.byteLength });
 }
 
-/** PUT /__admin/code?version=V[&host=H]  body: { compatibilityDate, source, assets: [paths], immutable, mutable, notFound }.
- *  Refused unless every listed file was uploaded first. `host` records the version
+/** Hashes of every stored blob. */
+const storedBlobs = async (env) => new Set((await listAll(env.CODE, "blob:")).map((k) => k.name.slice("blob:".length)));
+
+/** POST /__admin/blobs/missing  body: JSON array of SHA-256 hashes. Answers { missing }:
+ *  the ones a deploy has to upload. */
+async function missingBlobs(request, env) {
+	const big = tooLarge(request, MAX_CODE_BYTES);
+	if (big) return big;
+	let hashes;
+	try {
+		hashes = await request.json();
+	} catch {
+		return fail(400, "body is not JSON");
+	}
+	if (!Array.isArray(hashes) || !hashes.every((h) => typeof h === "string" && SHA256.test(h))) {
+		return fail(400, "body must be a JSON array of SHA-256 hashes");
+	}
+	const stored = await storedBlobs(env);
+	return json({ missing: [...new Set(hashes)].filter((h) => !stored.has(h)) });
+}
+
+/** PUT /__admin/code?version=V[&host=H]
+ *  body: { compatibilityDate, source, files: { path: [sha256, type] }, immutable, mutable, notFound }.
+ *  Refused unless every file's blob was uploaded first. `host` records the version
  *  as staged for H's site, so admin object calls may target it before activation. */
 async function putCode(request, env, url) {
 	const version = url.searchParams.get("version") ?? "";
@@ -360,24 +394,38 @@ async function putCode(request, env, url) {
 	} catch {
 		return fail(400, "body is not JSON");
 	}
-	const { compatibilityDate, source = "", assets, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none" } = body;
+	const { compatibilityDate, source = "", files, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none" } = body;
+	const strings = (a) => Array.isArray(a) && a.every((x) => typeof x === "string");
+	const entries = files && typeof files === "object" && !Array.isArray(files) ? Object.entries(files) : null;
 	const valid =
 		typeof compatibilityDate === "string" &&
 		typeof source === "string" &&
-		Array.isArray(assets) &&
-		assets.every((a) => typeof a === "string") &&
-		Array.isArray(immutable) &&
-		immutable.every((p) => typeof p === "string") &&
-		Array.isArray(mutable) &&
-		mutable.every((p) => typeof p === "string") &&
+		entries !== null &&
+		entries.length <= MAX_FILES &&
+		entries.every(
+			([path, f]) =>
+				path &&
+				!path.startsWith("/") &&
+				!path.includes("\0") &&
+				new TextEncoder().encode(path).length <= 400 &&
+				Array.isArray(f) &&
+				f.length === 2 &&
+				SHA256.test(f[0]) &&
+				typeof f[1] === "string",
+		) &&
+		strings(immutable) &&
+		strings(mutable) &&
 		(notFound === "none" || notFound === "spa");
 	if (!valid) return fail(400, "bad code record");
-	const stored = new Set((await listAll(env.CODE, `asset:${version}:`)).map((k) => k.name.slice(`asset:${version}:`.length)));
-	const missing = assets.filter((a) => !stored.has(a));
+	const stored = await storedBlobs(env);
+	const missing = entries.filter(([, f]) => !stored.has(f[0])).map(([path]) => path);
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
-	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, assets, immutable, mutable, notFound }));
+	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, files, immutable, mutable, notFound }), {
+		metadata: { files: entries.length },
+	});
+	metas.delete(version);
 	if (host !== null) await env.CODE.put(`staged:${await siteFor(env, host)}:${version}`, "");
-	return json({ version, assets: assets.length, sourceBytes: source.length });
+	return json({ version, files: entries.length, sourceBytes: source.length });
 }
 
 /** POST /__admin/activate?host=H&version=V[&ifNew=1]  points H's site at an uploaded
@@ -395,7 +443,7 @@ async function activate(env, url) {
 		if (current !== null) return json({ host, site, version: current, skipped: true });
 	}
 	await env.CODE.put(`site:${site}`, version); // the switch
-	const summary = { assets: code.assets?.length ?? 0, sourceBytes: code.source?.length ?? 0 };
+	const summary = { assets: code.files ? Object.keys(code.files).length : (code.assets?.length ?? 0), sourceBytes: code.source?.length ?? 0 };
 	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}`, version, { metadata: summary });
 	return json({ host, site, version, ...summary });
 }
@@ -425,17 +473,18 @@ async function alias(request, env, url) {
 
 // --- Pruning -------------------------------------------------------------------
 
-/** Files of a version without a code record are a deploy in progress, or one that
- *  failed; they are deleted once they are this old. */
+/** Blobs no version uses may belong to a deploy in progress (uploaded, code not
+ *  yet), or one that failed; they are deleted once they are this old. */
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 /** Deploy history entries kept per site. */
 const MAX_HISTORY = 100;
 
 /** POST /__admin/prune?keep=N deletes stored versions except each site's current
  *  version and the N most recent versions in its deploy history (default 3).
- *  It also deletes versions that were only staged (never activated), files of
- *  uploads that never got a code record (after an hour, or orphanAge seconds), history beyond the last
- *  100 deploys per site, and index and staging records of things that are gone. */
+ *  Then it deletes the files no remaining version uses (blobs after an hour, or
+ *  orphanAge seconds), versions that were only staged (never activated), history
+ *  beyond the last 100 deploys per site, and index and staging records of things
+ *  that are gone. */
 async function prune(env, url) {
 	const keep = Math.max(0, Math.min(100, Number(url.searchParams.get("keep") ?? 3) || 0));
 	const orphanAge = url.searchParams.has("orphanAge") ? Math.max(0, Number(url.searchParams.get("orphanAge")) || 0) * 1000 : ORPHAN_AGE_MS;
@@ -469,23 +518,38 @@ async function prune(env, url) {
 		}
 	}
 	const deleted = [];
+	const remaining = new Set();
+	const used = new Set(); // blob hashes of remaining versions
+	const oldFormat = new Set(); // remaining versions whose files are asset: keys
 	for (const k of codeKeys) {
 		const version = k.name.slice("code:".length);
-		if (kept.has(version)) continue;
-		for (const a of await listAll(env.CODE, `asset:${version}:`)) await env.CODE.delete(a.name);
+		if (kept.has(version)) {
+			remaining.add(version);
+			const code = await env.CODE.get(k.name, "json");
+			if (code?.files) for (const [hash] of Object.values(code.files)) used.add(hash);
+			else oldFormat.add(version);
+			continue;
+		}
 		await env.CODE.delete(k.name);
+		metas.delete(version);
 		deleted.push(version);
 	}
-	const remaining = new Set(codeKeys.map((k) => k.name.slice("code:".length)).filter((v) => !deleted.includes(v)));
-	// Files of versions that never got a code record. Files without an upload time
-	// predate it, so they are old enough.
-	let orphanFiles = 0;
+	// Mark and sweep: blobs no remaining version uses (once old enough, see above).
+	let blobsDeleted = 0;
 	const now = Date.now();
+	for (const b of await listAll(env.CODE, "blob:")) {
+		if (used.has(b.name.slice("blob:".length)) || now - (b.metadata?.at ?? 0) < orphanAge) continue;
+		await env.CODE.delete(b.name);
+		blobsDeleted++;
+	}
+	// Old-format files, unless their version is still stored in that format. (A
+	// version re-uploaded with the same content now uses blobs.) Nothing writes
+	// asset: keys any more, so no deploy can be in progress for them.
+	let oldFilesDeleted = 0;
 	for (const a of await listAll(env.CODE, "asset:")) {
-		const version = a.name.slice("asset:".length, "asset:".length + 12);
-		if (remaining.has(version) || now - (a.metadata?.at ?? 0) < orphanAge) continue;
+		if (oldFormat.has(a.name.slice("asset:".length, "asset:".length + 12))) continue;
 		await env.CODE.delete(a.name);
-		orphanFiles++;
+		oldFilesDeleted++;
 	}
 	// Staging records of versions that no longer exist (version ids have no ":").
 	for (const k of stagedKeys) if (!remaining.has(k.name.slice(k.name.lastIndexOf(":") + 1))) await env.CODE.delete(k.name);
@@ -494,7 +558,7 @@ async function prune(env, url) {
 		const site = k.name.slice("obj:".length, k.name.indexOf("|"));
 		if (!sites.has(site)) await env.CODE.delete(k.name);
 	}
-	return json({ keep, kept: [...kept].filter(Boolean), deleted, orphanFiles, historyDeleted });
+	return json({ keep, kept: [...kept].filter(Boolean), deleted, blobsDeleted, oldFilesDeleted, historyDeleted });
 }
 
 // --- Deleting a site ---------------------------------------------------------------
@@ -631,7 +695,8 @@ async function overview(env) {
 	const versions = await Promise.all(
 		codeKeys.map(async (k) => {
 			const version = k.name.slice(5);
-			return { version, assets: (await listAll(env.CODE, `asset:${version}:`)).length };
+			const assets = k.metadata?.files ?? (await listAll(env.CODE, `asset:${version}:`)).length;
+			return { version, assets };
 		}),
 	);
 	return json({ sites, aliases, deploys, objects, versions });
@@ -660,7 +725,8 @@ async function admin(request, env, url) {
 		return pathname === "/__admin/overview" ? overview(env) : nodeState(env);
 	}
 	if (!isAdmin) return fail(403, "forbidden");
-	if (method === "PUT" && pathname === "/__admin/asset") return putAsset(request, env, url);
+	if (method === "PUT" && pathname === "/__admin/blob") return putBlob(request, env, url);
+	if (method === "POST" && pathname === "/__admin/blobs/missing") return missingBlobs(request, env);
 	if (method === "PUT" && pathname === "/__admin/code") return putCode(request, env, url);
 	if (method === "POST" && pathname === "/__admin/activate") return activate(env, url);
 	if ((method === "PUT" || method === "DELETE") && pathname === "/__admin/alias") return alias(request, env, url);

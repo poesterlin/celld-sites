@@ -3,14 +3,14 @@
 // real tools (pack.mjs + node/push.sh). Never touches the production node.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir, homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 export const project = resolve(new URL("..", import.meta.url).pathname);
 export const ADMIN_HOST = "admin.internal";
-const sha256 = (s) => createHash("sha256").update(s).digest("hex");
+export const sha256 = (s) => createHash("sha256").update(s).digest("hex");
 const token = () => randomBytes(24).toString("base64url");
 
 export class Node {
@@ -25,9 +25,12 @@ export class Node {
 		};
 	}
 
-	async start() {
+	/** routerSource: router code to run instead of router/index.js (e.g. an older
+	 *  release, to test upgrades). */
+	async start({ routerSource } = {}) {
 		const router = join(this.dir, "router");
 		cpSync(join(project, "router"), router, { recursive: true });
+		if (routerSource !== undefined) writeFileSync(join(router, "index.js"), routerSource);
 		const template = readFileSync(join(router, "wrangler.template.json"), "utf8")
 			.replace("@ADMIN_TOKEN_SHA256@", sha256(this.adminToken))
 			.replace("@READ_TOKEN_SHA256@", sha256(this.readToken))
@@ -35,6 +38,19 @@ export class Node {
 			.replace("@DEFAULT_SITE@", "")
 			.replace("@OPERATOR_URL@", "");
 		writeFileSync(join(router, "wrangler.json"), template);
+		return this.#launch();
+	}
+
+	/** Restart the node on the same data with other router code (default: router/index.js). */
+	async restart(routerSource) {
+		await this.#kill();
+		const router = join(this.dir, "router");
+		writeFileSync(join(router, "index.js"), routerSource ?? readFileSync(join(project, "router/index.js")));
+		return this.#launch();
+	}
+
+	async #launch() {
+		const router = join(this.dir, "router");
 		// Own process group, so stop() can end celld dev and its node process together.
 		this.proc = spawn("celld", ["dev", "--port", String(this.port), "--no-watch", "--logs"], {
 			cwd: router,
@@ -56,6 +72,11 @@ export class Node {
 	}
 
 	async stop() {
+		await this.#kill();
+		rmSync(this.dir, { recursive: true, force: true });
+	}
+
+	async #kill() {
 		if (this.proc?.pid) {
 			try {
 				process.kill(-this.proc.pid, "SIGTERM");
@@ -65,7 +86,6 @@ export class Node {
 				process.kill(-this.proc.pid, "SIGKILL");
 			} catch {}
 		}
-		rmSync(this.dir, { recursive: true, force: true });
 	}
 
 	/** HTTP request with an explicit Host header (fetch() drops it). */
@@ -147,14 +167,9 @@ export class Node {
 	/** Upload a packed bundle's files and code without activating it; returns the version. */
 	async stage(bundle, host) {
 		const version = readFileSync(join(bundle, "version"), "utf8").trim();
-		const lines = readFileSync(join(bundle, "files.tsv"), "utf8").split("\n").filter(Boolean);
-		for (const line of lines) {
-			const [n, type, path] = line.split("\t");
-			const r = await this.admin("PUT", `/asset?version=${version}&path=${path}`, {
-				body: readFileSync(join(bundle, "files", n)),
-				headers: { "content-type": type },
-			});
-			if (r.status !== 200) throw new Error(`stage ${path}: ${r.status} ${r.text}`);
+		for (const hash of readdirSync(join(bundle, "blobs"))) {
+			const r = await this.admin("PUT", `/blob?hash=${hash}`, { body: readFileSync(join(bundle, "blobs", hash)) });
+			if (r.status !== 200) throw new Error(`stage ${hash}: ${r.status} ${r.text}`);
 		}
 		const q = host ? `&host=${host}` : "";
 		const r = await this.admin("PUT", `/code?version=${version}${q}`, {
@@ -163,6 +178,25 @@ export class Node {
 		});
 		if (r.status !== 200) throw new Error(`stage code: ${r.status} ${r.text}`);
 		return version;
+	}
+
+	/** Upload one file as a blob; returns its hash. */
+	async putBlob(content) {
+		const hash = sha256(content);
+		const r = await this.admin("PUT", `/blob?hash=${hash}`, { body: content });
+		if (r.status !== 200) throw new Error(`blob: ${r.status} ${r.text}`);
+		return hash;
+	}
+
+	/** Upload a static-only version by hand: files is { path: text }. */
+	async putVersion(version, files, { host } = {}) {
+		const map = {};
+		for (const [path, content] of Object.entries(files)) map[path] = [await this.putBlob(content), "text/plain; charset=utf-8"];
+		const q = host ? `&host=${host}` : "";
+		return this.admin("PUT", `/code?version=${version}${q}`, {
+			body: { compatibilityDate: "2026-10-01", files: map },
+			headers: { "content-type": "application/json" },
+		});
 	}
 
 	/** Pack only (for upload tests that drive the API directly). */
