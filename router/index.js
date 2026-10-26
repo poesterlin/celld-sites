@@ -10,6 +10,7 @@
 //                                    immutable: [prefixes], notFound }
 //   asset:<version>:<path>      -> file bytes, metadata { type }
 //   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
+//   staged:<site>:<version>     -> ""  (uploaded for that site, not necessarily active)
 //   obj:<site>|<class>|<name>   -> "", metadata { id, firstSeen }  (object index)
 // Deploying uploads a version piece by piece (each file, then the code and file
 // list), then activates it by flipping site:<site>, so visitors never see a
@@ -269,11 +270,14 @@ async function putAsset(request, env, url) {
 	return json({ version, path, bytes: bytes.byteLength });
 }
 
-/** PUT /__admin/code?version=V  body: { compatibilityDate, source, assets: [paths], immutable, notFound }.
- *  Refused unless every listed file was uploaded first. */
+/** PUT /__admin/code?version=V[&host=H]  body: { compatibilityDate, source, assets: [paths], immutable, notFound }.
+ *  Refused unless every listed file was uploaded first. `host` records the version
+ *  as staged for H's site, so admin object calls may target it before activation. */
 async function putCode(request, env, url) {
 	const version = url.searchParams.get("version") ?? "";
+	const host = url.searchParams.get("host");
 	if (!VERSION.test(version)) return fail(400, "bad version");
+	if (host !== null && !HOSTNAME.test(host)) return fail(400, "bad host");
 	const big = tooLarge(request, MAX_CODE_BYTES);
 	if (big) return big;
 	let body;
@@ -296,11 +300,13 @@ async function putCode(request, env, url) {
 	const missing = assets.filter((a) => !stored.has(a));
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
 	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, assets, immutable, notFound }));
+	if (host !== null) await env.CODE.put(`staged:${await siteFor(env, host)}:${version}`, "");
 	return json({ version, assets: assets.length, sourceBytes: source.length });
 }
 
-/** POST /__admin/activate?host=H&version=V  points H's site at an uploaded version
- *  (a new deploy, or a rollback to an older one). */
+/** POST /__admin/activate?host=H&version=V[&ifNew=1]  points H's site at an uploaded
+ *  version (a new deploy, or a rollback to an older one). With ifNew, a site that
+ *  already has an active version is left alone (bundled sites on node start). */
 async function activate(env, url) {
 	const host = url.searchParams.get("host") ?? "";
 	const version = url.searchParams.get("version") ?? "";
@@ -308,6 +314,10 @@ async function activate(env, url) {
 	const code = await env.CODE.get(`code:${version}`, "json");
 	if (!code) return fail(404, `version ${version} is not uploaded (or was pruned)`);
 	const site = await siteFor(env, host);
+	if (url.searchParams.get("ifNew") === "1") {
+		const current = await env.CODE.get(`site:${site}`);
+		if (current !== null) return json({ host, site, version: current, skipped: true });
+	}
 	await env.CODE.put(`site:${site}`, version); // the switch
 	const summary = { assets: code.assets?.length ?? 0, sourceBytes: code.source?.length ?? 0 };
 	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}`, version, { metadata: summary });
@@ -340,10 +350,13 @@ async function alias(request, env, url) {
 // --- Pruning -------------------------------------------------------------------
 
 /** POST /__admin/prune?keep=N deletes stored versions except each site's current
- *  version and the N most recent versions in its deploy history (default 3). */
+ *  version and the N most recent versions in its deploy history (default 3).
+ *  Versions that were only staged, never activated, are deleted. */
 async function prune(env, url) {
 	const keep = Math.max(0, Math.min(100, Number(url.searchParams.get("keep") ?? 3) || 0));
-	const [siteKeys, deployKeys, codeKeys] = await Promise.all(["site:", "deploy:", "code:"].map((p) => listAll(env.CODE, p)));
+	const [siteKeys, deployKeys, codeKeys, stagedKeys] = await Promise.all(
+		["site:", "deploy:", "code:", "staged:"].map((p) => listAll(env.CODE, p)),
+	);
 	const kept = new Set();
 	for (const k of siteKeys) kept.add(await env.CODE.get(k.name));
 	const history = new Map(); // site -> [{ at, version }]
@@ -358,9 +371,9 @@ async function prune(env, url) {
 		list.sort((a, b) => b.at.localeCompare(a.at));
 		const recent = [];
 		for (const entry of list) {
+			if (recent.length >= keep) break;
 			const version = await env.CODE.get(entry.key);
 			if (!recent.includes(version)) recent.push(version);
-			if (recent.length >= keep) break;
 		}
 		recent.forEach((v) => kept.add(v));
 	}
@@ -372,6 +385,9 @@ async function prune(env, url) {
 		await env.CODE.delete(k.name);
 		deleted.push(version);
 	}
+	// Staging records of versions that no longer exist (version ids have no ":").
+	const remaining = new Set(codeKeys.map((k) => k.name.slice("code:".length)).filter((v) => !deleted.includes(v)));
+	for (const k of stagedKeys) if (!remaining.has(k.name.slice(k.name.lastIndexOf(":") + 1))) await env.CODE.delete(k.name);
 	return json({ keep, kept: [...kept].filter(Boolean), deleted });
 }
 
@@ -380,11 +396,20 @@ async function prune(env, url) {
 /** Largest argument payload for an admin object call. */
 const MAX_CALL_BYTES = 8 * 1024 * 1024;
 
+/** True if `version` is (or was) H's site's code: active, in its deploy history, or
+ *  staged for it at upload. Other sites' versions would run foreign code on its data. */
+async function versionOfSite(env, site, version) {
+	if ((await env.CODE.get(`site:${site}`)) === version) return true;
+	if ((await env.CODE.get(`staged:${site}:${version}`)) !== null) return true;
+	for (const k of await listAll(env.CODE, `deploy:${site}:`)) if ((await env.CODE.get(k.name)) === version) return true;
+	return false;
+}
+
 /** POST /__admin/call?host=H&class=C&name=N&method=M[&version=V]  body: JSON array of args.
  *  Runs a method on one of H's site's Durable Objects and returns { result }. This is
  *  how data is seeded or exported: site code has no secrets, so it cannot guard such
- *  routes itself. `version` targets an uploaded but not yet active version, to seed a
- *  site before it goes live. */
+ *  routes itself. `version` targets another version of the same site, e.g. one
+ *  uploaded but not yet active, to seed a site before it goes live. */
 async function adminCall(request, env, url) {
 	const host = url.searchParams.get("host") ?? "";
 	const className = url.searchParams.get("class") ?? "";
@@ -408,6 +433,7 @@ async function adminCall(request, env, url) {
 	const version = url.searchParams.get("version") ?? (await env.CODE.get(`site:${site}`));
 	if (!version || !VERSION.test(version)) return fail(404, `no site for ${host}`);
 	if ((await env.CODE.get(`code:${version}`)) === null) return fail(404, `version ${version} is not uploaded`);
+	if (!(await versionOfSite(env, site, version))) return fail(409, `version ${version} was not uploaded for ${site}`);
 	const key = `${site}|${className}|${name}`;
 	await indexObject(env, key);
 	try {

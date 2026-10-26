@@ -28,7 +28,12 @@ Bun.serve({
 		}
 		const match = pathname.match(/^\/site\/([^/]+)$/);
 		if (match) {
-			const host = decodeURIComponent(match[1]!);
+			let host: string;
+			try {
+				host = decodeURIComponent(match[1]!);
+			} catch {
+				return html(notFoundPage(model, "Bad site name."), 400);
+			}
 			const site = model.sites.find((s) => s.id === host);
 			return site ? html(sitePage(model, site)) : html(notFoundPage(model, `No site ${host}.`), 404);
 		}

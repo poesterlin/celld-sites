@@ -129,12 +129,12 @@ export class Node {
 	}
 
 	/** Pack a site directory and deploy it with the real push.sh; returns the activation result. */
-	deploy(siteDir, host) {
+	deploy(siteDir, host, ...pushArgs) {
 		const bundle = mkdtempSync(join(tmpdir(), "celld-api-bundle-"));
 		try {
 			execFileSync("node", [join(project, "tools/pack.mjs"), siteDir, bundle], { env: this.env, stdio: ["ignore", "ignore", "pipe"] });
 			const tar = execFileSync("tar", ["-C", bundle, "-cf", "-", "."]);
-			const out = execFileSync("sh", [join(project, "node/push.sh"), host], {
+			const out = execFileSync("sh", [join(project, "node/push.sh"), host, ...pushArgs], {
 				input: tar,
 				env: { ...this.env, ADMIN_TOKEN: this.adminToken, ADMIN_HOST, CELLD_ADMIN_API: `http://127.0.0.1:${this.port}` },
 			});
@@ -142,6 +142,27 @@ export class Node {
 		} finally {
 			rmSync(bundle, { recursive: true, force: true });
 		}
+	}
+
+	/** Upload a packed bundle's files and code without activating it; returns the version. */
+	async stage(bundle, host) {
+		const version = readFileSync(join(bundle, "version"), "utf8").trim();
+		const lines = readFileSync(join(bundle, "files.tsv"), "utf8").split("\n").filter(Boolean);
+		for (const line of lines) {
+			const [n, type, path] = line.split("\t");
+			const r = await this.admin("PUT", `/asset?version=${version}&path=${path}`, {
+				body: readFileSync(join(bundle, "files", n)),
+				headers: { "content-type": type },
+			});
+			if (r.status !== 200) throw new Error(`stage ${path}: ${r.status} ${r.text}`);
+		}
+		const q = host ? `&host=${host}` : "";
+		const r = await this.admin("PUT", `/code?version=${version}${q}`, {
+			body: readFileSync(join(bundle, "code.json")),
+			headers: { "content-type": "application/json" },
+		});
+		if (r.status !== 200) throw new Error(`stage code: ${r.status} ${r.text}`);
+		return version;
 	}
 
 	/** Pack only (for upload tests that drive the API directly). */

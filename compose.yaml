@@ -1,5 +1,6 @@
-# celld-sites: SvelteKit sites (adapter-cloudflare builds) served by one celld
-# node, each in its own Dynamic Worker isolate, picked by the Host header.
+# celld-sites: Workers-style sites (SvelteKit, Nuxt, TanStack Start, static)
+# served by one celld node, each in its own Dynamic Worker isolate, picked by
+# the Host header.
 # Site code, assets and Durable Object data live in the S3 bucket below.
 
 x-logging: &logging
@@ -42,8 +43,9 @@ services:
       - default
 
   # One celld node running the host-header router (router/index.js). On every
-  # start it creates the bucket if needed, deploys the router, starts the node
-  # and deploys the bundled example site to ${HOST_DOMAIN}.
+  # start it creates the bucket if needed, deploys the router and starts the
+  # node; the bundled example is deployed to ${HOST_DOMAIN} only if that site
+  # has no active version yet.
   celld:
     build:
       context: .
@@ -100,9 +102,18 @@ services:
     labels:
       - 'traefik.enable=true'
       - 'traefik.docker.network=traefik_web'
-      # LAN only: the hostname is not in the Cloudflare tunnel. Add more sites
-      # with SITES_RULE in .env, e.g. Host(`a.example.com`) || Host(`b.example.com`)
+      # LAN only: the hostnames are not in the Cloudflare tunnel. SITES_RULE in
+      # .env should match every site hostname (a HostRegexp, see .env.example),
+      # so new sites and aliases need no container restart; the router answers
+      # 404 for names without a site.
       - 'traefik.http.routers.celld-sites.rule=${SITES_RULE:-Host(`${HOST_DOMAIN}`)}'
+      # This Traefik defaults to v2 rule syntax, where HostRegexp takes {name:re}
+      # patterns and an anchored regexp silently matches nothing.
+      - 'traefik.http.routers.celld-sites.ruleSyntax=v3'
+      # Below every ordinary Host() router (Traefik defaults to the rule length),
+      # so a wide pattern never takes over another service's hostname (e.g. the
+      # dashboard); above static-host's priority-1 catch-all.
+      - 'traefik.http.routers.celld-sites.priority=10'
       - 'traefik.http.services.celld-sites.loadbalancer.server.port=8080'
 
   # Read-only dashboard, no authentication: LAN-only (not in the Cloudflare

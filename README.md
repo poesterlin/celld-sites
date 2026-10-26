@@ -1,7 +1,8 @@
 # celld-sites
 
-SvelteKit sites served by one [celld](https://github.com/denoland/celld) node
-(self-hosted Cloudflare Workers + Durable Objects). Each site runs in its own
+Workers-style sites (SvelteKit, Nuxt, TanStack Start, plain static) served by
+one [celld](https://github.com/denoland/celld) node (self-hosted Cloudflare
+Workers + Durable Objects). Each site runs in its own
 Dynamic Worker isolate, picked by the `Host` header, and can keep state in its
 own Durable Objects (SQLite). Deploying a site is one command, with no restart.
 
@@ -16,7 +17,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | Path | What |
 | --- | --- |
 | `compose.yaml` | `s3` (VersityGW, files in a Docker volume), `celld` (the node) and `dashboard` |
-| `node/` | celld node image: entrypoint (bucket setup, router deploy, node, bundled sites) and `push.sh` |
+| `node/` | celld node image: entrypoint (bucket setup, router deploy, node, bundled sites), `push.sh` and `admin.sh` |
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
@@ -25,9 +26,11 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) |
+| `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
-| `sites/static/` | A plain static site (no build, no server code), with a `RECIPE.md` |
 | `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the image |
+| `sites/sveltekit/`, `sites/nuxt/`, `sites/tanstack/` | Framework examples with Durable Objects, each with a `RECIPE.md` |
+| `sites/static/` | A plain static site (no build, no server code), with a `RECIPE.md` |
 
 ## Run
 
@@ -38,8 +41,10 @@ docker compose up -d --build
 
 The test app is served at `https://$HOST_DOMAIN` (set in `.env`). On every
 start the `celld` container creates the bucket if it is missing, deploys the
-router, starts the node and deploys the bundled example, so a fresh or wiped
-bucket needs no manual steps.
+router and starts the node, so a fresh or wiped bucket needs no manual steps.
+The bundled example is deployed only if its site has no active version yet: a
+restart never undoes a deploy or a rollback. To update the example after
+changing it, deploy it like any site (`tools/deploy.sh sites/example $HOST_DOMAIN`).
 
 ## Dashboard
 
@@ -94,9 +99,13 @@ tools/preview.sh sites/blog --stop     # or --reset to delete the local data
 tools/deploy.sh sites/blog blog.example.com
 ```
 
-Then add the hostname to Traefik with `SITES_RULE` in `.env`, e.g.
-``SITES_RULE=Host(`celld-test.example.com`) || Host(`blog.example.com`)``,
-and run `docker compose up -d`. A deploy uploads each static file in its own
+The site is live as soon as the deploy returns, provided Traefik routes its
+hostname to celld. `SITES_RULE` in `.env` is a pattern for all site hostnames
+(e.g. ``'HostRegexp(`^celld-[a-z0-9-]+\.example\.com$`)'``, single-quoted so
+the `$` survives), so names that match need no Traefik change and no restart.
+A hostname outside the pattern has to be added to the rule
+(``... || Host(`blog.other.com`)``), and changing the rule recreates the
+`celld` container, which restarts every site. A deploy uploads each static file in its own
 request (at most 20 MiB per file), then the server code and file list, then
 activates the version; visitors switch only at that last step. Each version is
 keyed by a hash of its content.
@@ -115,7 +124,11 @@ node tools/seed.mjs blog.example.com --call Notes main export > notes.json
 A calls file is a JSON array of `{ "class", "name", "method", "args" }`
 (`sites/sveltekit/seed.json`). Copy production data into a preview by exporting
 it and loading the result with the preview's seed method. Add `"version"` to a
-call to seed a version that is uploaded but not active yet.
+call to target another version of the same site: one in its deploy history, or
+one uploaded for it but not active yet (`PUT /code?version=V&host=H` records
+that). Versions of other sites are refused. Seeding a staged version runs its
+code against the live objects, so its migrations apply to production data
+before the version is active.
 
 **5. Operate.**
 
@@ -123,8 +136,10 @@ call to seed a version that is uploaded but not active yet.
 tools/admin.sh POST '/activate?host=blog.example.com&version=<id>'    # roll back (or forward)
 tools/admin.sh PUT '/alias?host=new.example.com&site=blog.example.com' # serve a site under another name
 tools/admin.sh DELETE '/alias?host=new.example.com'
-tools/admin.sh POST '/prune?keep=3'   # delete versions except current + 3 most recent per site
+tools/admin.sh POST '/prune?keep=3'   # keep each site's current version and its 3 most recent deploys
 ```
+
+Pruning also deletes versions that were uploaded but never activated.
 
 **Site ids.** A site's id is the hostname it was first deployed to, and the id
 owns its versions and Durable Objects. To rename a site, alias the new hostname
@@ -191,7 +206,7 @@ API (auth and the read/write split, upload limits, code checks, activation and
 rollback, aliases, object calls, overview, pruning), routing (static-first,
 clean URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site
 bindings (`OBJECTS` validation, plain-data rule, errors, CPU limit; `ASSETS`;
-blocked network) and the packer's refusals. 39 tests, about 6 s. Run it after
+blocked network) and the packer's refusals. 43 tests, about 7 s. Run it after
 changing the router, the tools or the push/admin scripts.
 
 ## Security
@@ -246,9 +261,10 @@ Memory: ~100 MB celld and ~25 MB VersityGW at rest. Each resident Durable
 Object adds ~1.4 MB to celld; it sheds objects at ~2.4 GB (80% of its 3 GB
 limit), so ~1,500-2,000 objects can be resident at once.
 
-Static assets are slower than page renders because each goes through the
-site's isolate and a KV read; caching immutable `_app/` files in the router
-would help.
+These numbers predate serving static files straight from the router (without
+the site's isolate) and need re-measuring. Each static file is still a KV read
+per request, uncompressed and without an ETag; caching immutable files in the
+router and adding validators and compression would help.
 
 ## Status
 

@@ -1,10 +1,18 @@
 #!/bin/sh
 # Deploy a site bundle (from tools/pack.mjs) to the router, tar'ed on stdin:
-#   tar -C <bundle> -cf - . | push.sh <hostname>
+#   tar -C <bundle> -cf - . | push.sh <hostname> [--if-new]
 # Uploads each file, then the code, then activates the version for the
-# hostname's site. Runs inside the celld container, where the token lives.
+# hostname's site. --if-new leaves a site that already has an active version
+# alone (the answer then has "skipped": true). Runs inside the celld container,
+# where the token lives.
 set -eu
-host="${1:?usage: push.sh <hostname> < bundle.tar}"
+host="${1:?usage: push.sh <hostname> [--if-new] < bundle.tar}"
+if_new=
+case "${2:-}" in
+"") ;;
+--if-new) if_new="&ifNew=1" ;;
+*) echo "usage: push.sh <hostname> [--if-new] < bundle.tar" >&2; exit 2 ;;
+esac
 
 umask 077
 work=$(mktemp -d)
@@ -24,6 +32,6 @@ while IFS="$tab" read -r n type path; do
 		"$api/asset?version=$version&path=$path" >/dev/null
 done < "$work/files.tsv"
 
-call -X PUT -H "Content-Type: application/json" --data-binary "@$work/code.json" "$api/code?version=$version" >/dev/null
-call -X POST "$api/activate?host=$host&version=$version"
+call -X PUT -H "Content-Type: application/json" --data-binary "@$work/code.json" "$api/code?version=$version&host=$host" >/dev/null
+call -X POST "$api/activate?host=$host&version=$version$if_new"
 echo

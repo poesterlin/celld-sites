@@ -11,6 +11,7 @@ import { Node, project } from "./harness.mjs";
 const fixtures = join(project, "tests/fixtures");
 const node = new Node();
 let worker; // activation result of the worker fixture
+let spa; // activation result of the spa fixture
 const W = "worker.test";
 const site = (path, opts = {}) => node.request(opts.method ?? "GET", path, { host: opts.host ?? W, headers: opts.headers, body: opts.body });
 const obj = async (cls, name, method, args = [], host = W) =>
@@ -19,7 +20,7 @@ const obj = async (cls, name, method, args = [], host = W) =>
 before(async () => {
 	await node.start();
 	worker = node.deploy(join(fixtures, "worker"), W);
-	node.deploy(join(fixtures, "spa"), "spa.test");
+	spa = node.deploy(join(fixtures, "spa"), "spa.test");
 	node.deploy(join(fixtures, "static"), "static.test");
 });
 after(async () => node.stop());
@@ -90,6 +91,24 @@ describe("deploy: upload, code, activate", () => {
 		assert.match(missing.json().error, /missing 1 files/);
 		assert.equal((await put({ compatibilityDate: "2026-10-01", assets: ["ok.txt"] })).status, 200);
 		assert.equal(node.adminUpload("PUT", "/code?version=bbbbbbbbbbbb", 16 * 1024 * 1024 + 1), 413);
+	});
+	it("--if-new deploys a new site but leaves an existing one alone", async () => {
+		const other = mkdtempSync(join(tmpdir(), "celld-api-ifnew-"));
+		try {
+			cpSync(join(fixtures, "static"), other, { recursive: true });
+			writeFileSync(join(other, "public/index.html"), "changed\n");
+			const fresh = node.deploy(other, "ifnew.test", "--if-new");
+			assert.equal(fresh.skipped, undefined);
+			assert.equal((await site("/", { host: "ifnew.test" })).text, "changed\n");
+			const again = node.deploy(join(fixtures, "static"), "ifnew.test", "--if-new");
+			assert.equal(again.skipped, true);
+			assert.equal(again.version, fresh.version, "reports the version that stays active");
+			assert.equal((await site("/", { host: "ifnew.test" })).text, "changed\n");
+			const history = (await node.admin("GET", "/overview")).json().deploys.filter((d) => d.site === "ifnew.test");
+			assert.equal(history.length, 1, "a skipped deploy adds no history");
+		} finally {
+			rmSync(other, { recursive: true, force: true });
+		}
 	});
 	it("validates activation", async () => {
 		assert.equal((await node.admin("POST", "/activate?host=Not_A_Host&version=aaaaaaaaaaaa")).status, 400);
@@ -264,6 +283,33 @@ describe("admin object calls (seeding)", () => {
 		assert.equal(r.json().result, 42);
 		assert.deepEqual((await obj("Kv", "seeded", "get", ["k"])).result, 42, "visible to the site");
 	});
+	it("refuses versions that were not uploaded for the site", async () => {
+		const r = await call(`host=worker.test&class=Kv&name=x&method=get&version=${spa.version}`, '["k"]');
+		assert.equal(r.status, 409);
+		assert.match(r.json().error, /not uploaded for worker\.test/);
+	});
+	it("accepts the site's staged and earlier versions", async () => {
+		const copy = mkdtempSync(join(tmpdir(), "celld-api-staged-"));
+		try {
+			cpSync(join(fixtures, "worker"), copy, { recursive: true });
+			writeFileSync(join(copy, "public/hello.txt"), "staged\n");
+			const bundle = node.pack(copy);
+			const version = await node.stage(bundle, W);
+			rmSync(bundle, { recursive: true, force: true });
+			assert.notEqual(version, worker.version);
+			assert.equal((await call(`host=worker.test&class=Kv&name=staged&method=put&version=${version}`, '["k", 1]')).status, 200);
+			assert.equal((await site("/hello.txt")).text, "hello from assets\n", "staging does not activate");
+			// The same version staged without a host belongs to no site.
+			const strayBundle = node.pack(copy);
+			assert.equal(await node.stage(strayBundle), version);
+			rmSync(strayBundle, { recursive: true, force: true });
+			assert.equal((await call(`host=spa.test&class=Kv&name=x&method=get&version=${version}`, '["k"]')).status, 409);
+			// The active version is still the default target.
+			assert.equal((await call(`host=worker.test&class=Kv&name=staged&method=get`, '["k"]')).json().result, 1);
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
+	});
 	it("reports method errors", async () => {
 		const r = await call("host=worker.test&class=Kv&name=x&method=boom", "[]");
 		assert.equal(r.status, 500);
@@ -289,6 +335,30 @@ describe("overview and pruning", () => {
 		assert.ok(!r.deleted.includes(worker.version));
 		assert.equal((await site("/about")).status, 200);
 		assert.equal((await node.admin("POST", `/activate?host=${W}&version=eeeeeeeeeeee`)).status, 404, "pruned versions can't be activated");
+	});
+	it("keep=0 keeps only current versions and drops staged ones", async () => {
+		for (const v of ["f1f1f1f1f1f1", "f2f2f2f2f2f2"]) {
+			assert.equal((await node.admin("PUT", `/asset?version=${v}&path=v.txt`, { body: v })).status, 200);
+			const code = { compatibilityDate: "2026-10-01", assets: ["v.txt"] };
+			assert.equal((await node.admin("PUT", `/code?version=${v}&host=keep.test`, { body: code, headers: { "content-type": "application/json" } })).status, 200);
+		}
+		assert.equal((await node.admin("POST", "/activate?host=keep.test&version=f1f1f1f1f1f1")).status, 200);
+		assert.equal((await node.admin("PUT", "/asset?version=f3f3f3f3f3f3&path=v.txt", { body: "3" })).status, 200);
+		const code = { compatibilityDate: "2026-10-01", assets: ["v.txt"] };
+		assert.equal((await node.admin("PUT", "/code?version=f3f3f3f3f3f3&host=keep.test", { body: code, headers: { "content-type": "application/json" } })).status, 200);
+		assert.equal((await node.admin("POST", "/activate?host=keep.test&version=f3f3f3f3f3f3")).status, 200);
+		const two = (await node.admin("POST", "/prune?keep=2")).json();
+		assert.ok(two.deleted.includes("f2f2f2f2f2f2"), "staged-only version is deleted");
+		assert.ok(!two.deleted.includes("f1f1f1f1f1f1") && !two.deleted.includes("f3f3f3f3f3f3"), "keep=2 keeps both deployed versions");
+		const zero = (await node.admin("POST", "/prune?keep=0")).json();
+		assert.ok(zero.deleted.includes("f1f1f1f1f1f1"), "older version goes with keep=0");
+		assert.ok(!zero.deleted.includes("f3f3f3f3f3f3"), "current version stays");
+		assert.equal((await site("/v.txt", { host: "keep.test" })).text, "3");
+		assert.equal(
+			(await node.admin("POST", "/call?host=keep.test&class=Kv&name=x&method=get&version=f2f2f2f2f2f2", { body: "[]" })).status,
+			404,
+			"pruned staged version is gone",
+		);
 	});
 });
 

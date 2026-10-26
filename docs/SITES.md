@@ -185,8 +185,9 @@ deployed, so it behaves like production, including bindings and runtime
 patches. Framework dev servers lack the `OBJECTS` binding. Local data lives in
 `<site>/.celld-preview/`. Preview requests are plain `http://`, so a POST that
 is origin-checked needs `-H 'Origin: http://localhost:<port>'`. A production
-hostname is reachable in a browser only after it is added to `SITES_RULE` in
-`.env`.
+hostname is reachable in a browser only if Traefik routes it to celld:
+`SITES_RULE` in `.env` is a pattern for site hostnames, so a matching name
+works as soon as it is deployed.
 
 **Seeding.** Sites have no secrets, so they can't guard a seed route. Put
 `seed()`/`export()` methods on the object classes; `tools/seed.mjs` calls them

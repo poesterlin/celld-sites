@@ -3,7 +3,7 @@
 #   tools/deploy.sh <site-dir> <hostname>
 # The site needs a celld.json (or the SvelteKit adapter-cloudflare layout), see
 # docs/SITES.md. Deploying to a hostname that is an alias deploys its site. The
-# hostname also needs a Traefik route (SITES_RULE in .env) to be reachable.
+# hostname must also match the Traefik rule (SITES_RULE in .env) to be reachable.
 set -eu
 site="${1:?usage: tools/deploy.sh <site-dir> <hostname>}"
 host="${2:?usage: tools/deploy.sh <site-dir> <hostname>}"

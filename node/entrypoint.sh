@@ -5,7 +5,9 @@
 #   2. deploy the router app (cheap and idempotent, so on every start)
 #   3. start the node
 #   4. once it is healthy, deploy every bundled site in /app/sites
-#      (/app/sites/<name>/, packed at image build time)
+#      (/app/sites/<name>/, packed at image build time) whose site has no
+#      active version yet. An existing site is left alone, so a restart never
+#      undoes a deploy or rollback; update it with tools/deploy.sh.
 set -eu
 
 : "${CELLD_BUCKET:?}" "${S3_ENDPOINT:?}" "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}"
@@ -69,7 +71,13 @@ trap 'kill -TERM "$node" 2>/dev/null' TERM INT
 		[ "$host" = example ] && host="${EXAMPLE_HOST:-}"
 		[ -n "$host" ] || continue
 		for attempt in 1 2 3 4 5; do
-			if tar -C "$bundle" -cf - . | /app/push.sh "$host" >/dev/null; then log "deployed $host"; break; fi
+			if out=$(tar -C "$bundle" -cf - . | /app/push.sh "$host" --if-new); then
+				case "$out" in
+				*'"skipped":true'*) log "$host already has an active version; bundled version not deployed" ;;
+				*) log "deployed $host" ;;
+				esac
+				break
+			fi
 			log "deploying $host failed (attempt $attempt), retrying"; sleep 2
 		done
 	done
