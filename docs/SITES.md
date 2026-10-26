@@ -65,7 +65,9 @@ argument and via `import { env } from "cloudflare:workers"`:
 There is **no KV, D1, R2, Queues or secrets**, and **no outbound network by
 default**: `fetch()` throws until the operator allowlists hostnames for the
 site (`PUT /__admin/egress?host=…`, a JSON array). With a list, `fetch()`
-reaches exactly those hosts and gets a 403 for anything else. `connect()` and
+reaches exactly those hosts, over HTTPS on port 443 only, and gets a 403 for
+anything else (plain `http:` and other ports included). A changed list applies
+within a minute. A deploy's check runs with the site's list. `connect()` and
 WebSockets stay unavailable, redirects come back to the site rather than being
 followed (so every hop is checked), and IP literals and internal names cannot
 be allowlisted. Each request has 1 second

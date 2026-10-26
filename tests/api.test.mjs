@@ -326,6 +326,41 @@ describe("egress allowlist", () => {
 		assert.equal(r.result, 403);
 		assert.equal((await clear()).status, 200);
 	});
+	it("allows only HTTPS on the default port", async () => {
+		assert.equal((await allow(["example.com"])).status, 200);
+		const to = async (url) => (await (await site(`/egress-to?url=${encodeURIComponent(url)}`)).json()).result;
+		const plain = await to("http://example.com/");
+		assert.equal(plain.status, 403);
+		assert.match(plain.text, /http: is not allowed, only https:/);
+		const port = await to("https://example.com:8081/");
+		assert.equal(port.status, 403);
+		assert.match(port.text, /port 8081 is not allowed, only 443/);
+		assert.equal((await clear()).status, 200);
+	});
+	it("gives a deploy check the site's allowlist", async () => {
+		// The check path needs outbound fetch() to work at all; any answer will do,
+		// so this needs no internet: a 502 from the proxy is still not a throw.
+		const dir = mkdtempSync(join(tmpdir(), "celld-api-egresscheck-"));
+		try {
+			cpSync(join(fixtures, "worker"), dir, { recursive: true });
+			writeFileSync(join(dir, "worker.js"), `export default { async fetch(req) {
+	if (new URL(req.url).pathname !== "/needs-net") return new Response("nope", { status: 404 });
+	try { await fetch("https://example.org/"); return new Response("reached the proxy"); }
+	catch (e) { return new Response("no network: " + e.message, { status: 500 }); }
+} };`);
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", assets: "public", objects: "objects.js", check: "/needs-net" }));
+			node.deploy(join(fixtures, "worker"), "egresscheck.test");
+			const without = node.tryDeploy(dir, "egresscheck.test");
+			assert.equal(without.status, 1, "no allowlist: the check sees no network");
+			assert.match(without.stderr, /no network/);
+			assert.equal((await allow(["example.org"], "egresscheck.test")).status, 200);
+			const withList = node.tryDeploy(dir, "egresscheck.test");
+			assert.equal(withList.status, 0, withList.stderr);
+			assert.match(withList.stderr, /check passed: \/needs-net answered 200/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it("follows a site's alias and is deleted with the site", async () => {
 		node.deploy(join(fixtures, "static"), "egress.test");
 		assert.equal((await allow(["example.com"], "egress.test")).status, 200);

@@ -31,7 +31,7 @@ Design within these; none of them can be worked around from site code.
 
 | Constraint | Consequence |
 | --- | --- |
-| **No outbound network by default.** `fetch()`/`connect()` throw unless the operator allowlisted hosts for the site. | No external APIs, CDNs or webhooks at runtime unless allowlisted; `connect()` and WebSockets never work. Bundle everything, fetch at build time, or ask for an allowlist. |
+| **No outbound network by default.** `fetch()`/`connect()` throw unless the operator allowlisted hosts for the site. | No external APIs, CDNs or webhooks at runtime unless allowlisted (then HTTPS on 443 only); `connect()` and WebSockets never work. Bundle everything, fetch at build time, or ask for an allowlist. |
 | **Only two bindings:** `ASSETS` (your static files) and `OBJECTS` (your Durable Objects). | No KV, D1, R2, Queues, email, images, cron or secrets. Store state in Durable Objects (SQLite). |
 | **No secrets.** There are no env vars or secret bindings. | Never put secrets in site code: the server bundle and every static file are readable by the operator, and static files are public. |
 | **1 second of CPU per request,** including Durable Object calls; **30 s wall clock** to start the response (object calls: 24 s). | Keep handlers small; a runaway loop is killed with a 500, a request that waits forever gets a 504. |

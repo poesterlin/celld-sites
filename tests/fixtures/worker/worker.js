@@ -23,6 +23,8 @@ export default {
 				return attempt(() => env.OBJECTS.call("Kv", "x", "echo", new Request("http://example.com/")));
 			case "/egress":
 				return attempt(() => fetch("https://example.com/").then((r) => r.status));
+			case "/egress-to":
+				return attempt(() => fetch(q.get("url")).then(async (r) => ({ status: r.status, text: (await r.text()).slice(0, 200) })));
 			case "/hang":
 				await new Promise((r) => setTimeout(r, 10_000));
 				return new Response("too late");

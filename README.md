@@ -258,7 +258,7 @@ URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site bindings
 (`OBJECTS` validation, plain-data rule, errors, CPU and wall-clock limits;
 `ASSETS`; blocked network, and the egress allowlist), static-file validators
 and caching, and the packer's refusals and defaults, and upgrading from
-per-version files. 74 tests, about 30 s. Run it after changing the router, the
+per-version files. 76 tests, about 33 s. Run it after changing the router, the
 tools or the push/admin scripts.
 
 The image pins `ghcr.io/denoland/celld:v0.6.3`. To judge a new release, put
@@ -293,13 +293,16 @@ rebuild the node image and check the examples.
 - Sites have no outbound network unless the operator allowlists hostnames for
   that site (`PUT /__admin/egress?host=…`, a JSON array). Without a list
   (`globalOutbound: null`) `fetch()` throws; with one, `fetch()` reaches exactly
-  those hosts and gets a 403 for anything else. The proxy refuses IP literals
+  those hosts, over HTTPS on 443 only, and gets a 403 for anything else. The proxy refuses IP literals
   and internal names, does not follow redirects (the site follows them, so
   each hop is checked), and cannot broker `connect()` or WebSockets. This keeps
   site code away from celld's unauthenticated operator API on 127.0.0.1 (stop
   the node, evict objects, call other sites' objects), which was verified with
   a probe site. Only allowlist names whose DNS you control: a name that
   resolves to a private address (DNS rebinding) is not caught by a name check.
+  HTTPS-on-443-only limits the damage: a rebound name cannot reach the
+  operator API, which speaks plain HTTP on another port. A changed list
+  applies within a minute (each router isolate caches it).
 - Both containers drop all capabilities; celld runs as uid 10001.
 
 ## Measured (this VM)

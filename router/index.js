@@ -92,17 +92,34 @@ const scratchFor = (site, version) => `~check~${site}~${version}`;
 const isScratch = (site) => site.startsWith("~check~");
 
 /** The hosts one site may fetch(), as stored by PUT /__admin/egress. */
-async function egressHosts(env, site) {
-	const allow = await env.CODE.get(`egress:${site}`, "json");
-	return Array.isArray(allow) ? allow : [];
-}
+/** The real site behind a site id: a deploy check's scratch id belongs to the
+ *  site it checks, and gets that site's allowlist. */
+const ownerOf = (site) => (isScratch(site) ? site.slice("~check~".length, site.lastIndexOf("~")) : site);
 
-/** Load (or reuse) the isolate for one version of a site. A changed allowlist
- *  gives a different loader key, so the next request gets an isolate with the
- *  new proxy instead of waiting for the old one to be evicted. */
-async function loadSite(env, exports, site, version) {
-	const allow = await egressHosts(env, site);
+/** Allowlists are read on every site request (to pick the isolate), so they are
+ *  cached for a minute per router isolate; PUT/DELETE /egress clear the entry here,
+ *  other router isolates pick a change up within that minute. */
+const EGRESS_TTL_MS = 60_000;
+const egressCache = new Map(); // site -> { allow, tag, until }
+async function egressFor(env, site) {
+	const owner = ownerOf(site);
+	const hit = egressCache.get(owner);
+	if (hit && hit.until > Date.now()) return hit;
+	const stored = await env.CODE.get(`egress:${owner}`, "json");
+	const allow = Array.isArray(stored) ? stored : [];
+	// The list is part of the loader key, so a changed list gets a new isolate with
+	// the new proxy instead of waiting for the old one to be evicted.
 	const tag = allow.length ? `~e${hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(allow.join(",")))).slice(0, 10)}` : "";
+	const entry = { allow, tag, until: Date.now() + EGRESS_TTL_MS };
+	if (egressCache.size > 1000) egressCache.clear();
+	egressCache.set(owner, entry);
+	return entry;
+}
+const egressHosts = async (env, site) => (await egressFor(env, site)).allow;
+
+/** Load (or reuse) the isolate for one version of a site. */
+async function loadSite(env, exports, site, version) {
+	const { allow, tag } = await egressFor(env, site);
 	return env.LOADER.get(`${site}@${version}${tag}`, async () => {
 		const code = await env.CODE.get(`code:${version}`, "json");
 		return {
@@ -316,13 +333,18 @@ function internalHost(host, adminHost) {
 }
 
 /** The outbound network handed to a site with an allowlist. fetch() reaches
- *  only the hosts on it; everything else gets a 403 the site can read. */
+ *  only the hosts on it, over HTTPS on 443; everything else gets a 403 the site
+ *  can read. */
 export class SiteEgress extends WorkerEntrypoint {
 	async fetch(request) {
 		const { site, allow } = this.ctx.props;
 		const url = new URL(request.url);
 		const deny = (why) => new Response(`egress blocked: ${why}\n`, { status: 403 });
-		if (url.protocol !== "https:" && url.protocol !== "http:") return deny(`${url.protocol} is not http(s)`);
+		// HTTPS on 443 only. Besides keeping traffic encrypted, this keeps a rebound
+		// name (an allowlisted host resolving to 127.0.0.1) away from celld's
+		// operator API, which speaks plain HTTP on another port.
+		if (url.protocol !== "https:") return deny(`${url.protocol} is not allowed, only https:`);
+		if (url.port !== "") return deny(`port ${url.port} is not allowed, only 443`);
 		if (!allow.includes(url.hostname)) return deny(`${url.hostname} is not allowlisted for ${site}`);
 		const internal = internalHost(url.hostname, this.env.ADMIN_HOST);
 		if (internal) return deny(`${url.hostname} ${internal}`);
@@ -433,8 +455,26 @@ async function putBlob(request, env, url) {
 	return json({ hash, bytes: bytes.byteLength });
 }
 
-/** Hashes of every stored blob. */
-const storedBlobs = async (env) => new Set((await listAll(env.CODE, "blob:")).map((k) => k.name.slice("blob:".length)));
+/** Which of `hashes` are stored. A deploy asks about its own files (usually tens
+ *  to hundreds), so each is looked up by key prefix, 16 at a time; only for very
+ *  large file sets is one listing of every stored blob cheaper. */
+async function storedBlobs(env, hashes) {
+	const unique = [...new Set(hashes)];
+	if (unique.length > 2000) {
+		const all = new Set((await listAll(env.CODE, "blob:")).map((k) => k.name.slice("blob:".length)));
+		return new Set(unique.filter((h) => all.has(h)));
+	}
+	const stored = new Set();
+	for (let i = 0; i < unique.length; i += 16) {
+		await Promise.all(
+			unique.slice(i, i + 16).map(async (h) => {
+				const page = await env.CODE.list({ prefix: `blob:${h}`, limit: 1 });
+				if (page.keys.some((k) => k.name === `blob:${h}`)) stored.add(h);
+			}),
+		);
+	}
+	return stored;
+}
 
 /** POST /__admin/blobs/missing  body: JSON array of SHA-256 hashes. Answers { missing }:
  *  the ones a deploy has to upload. */
@@ -450,7 +490,7 @@ async function missingBlobs(request, env) {
 	if (!Array.isArray(hashes) || !hashes.every((h) => typeof h === "string" && SHA256.test(h))) {
 		return fail(400, "body must be a JSON array of SHA-256 hashes");
 	}
-	const stored = await storedBlobs(env);
+	const stored = await storedBlobs(env, hashes);
 	return json({ missing: [...new Set(hashes)].filter((h) => !stored.has(h)) });
 }
 
@@ -496,7 +536,7 @@ async function putCode(request, env, url) {
 		(notFound === "none" || notFound === "spa") &&
 		(check === false || (typeof check === "string" && check.startsWith("/") && check.length <= 400));
 	if (!valid) return fail(400, "bad code record");
-	const stored = await storedBlobs(env);
+	const stored = await storedBlobs(env, entries.map(([, f]) => f[0]));
 	const missing = entries.filter(([, f]) => !stored.has(f[0])).map(([path]) => path);
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
 	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, files, immutable, mutable, notFound, check }), {
@@ -522,9 +562,13 @@ async function activate(env, url) {
 		if (current !== null) return json({ host, site, version: current, skipped: true });
 	}
 	const previous = await env.CODE.get(`site:${site}`);
-	await env.CODE.put(`site:${site}`, version); // the switch
 	const summary = { assets: code.files ? Object.keys(code.files).length : (code.assets?.length ?? 0), sourceBytes: code.source?.length ?? 0 };
+	// History first, then the switch: KV has no transactions, and a crash between the
+	// two then leaves a history entry for a version that never went live (harmless:
+	// prune keeps one version more) rather than a live version prune can't see in
+	// the history.
 	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}`, version, { metadata: summary });
+	await env.CODE.put(`site:${site}`, version); // the switch
 	return json({ host, site, version, previous, ...summary });
 }
 
@@ -734,6 +778,7 @@ async function deleteSite(env, url) {
 	}
 	for (const k of await listAll(env.CODE, `staged:${id}:`)) await env.CODE.delete(k.name);
 	await env.CODE.delete(`egress:${id}`);
+	egressCache.delete(id);
 	const result = { id, aliases: aliasKeys.map((k) => k.slice(6)), objects: objects.length, history, errors };
 	return errors.length ? json(result, 500) : json(result);
 }
@@ -834,6 +879,7 @@ async function putEgress(request, env, url) {
 	}
 	if (allow.length > MAX_EGRESS_HOSTS) return fail(400, `at most ${MAX_EGRESS_HOSTS} hostnames`);
 	await env.CODE.put(`egress:${site}`, JSON.stringify(allow));
+	egressCache.delete(site);
 	return json({ host, site, allow });
 }
 
@@ -842,6 +888,7 @@ async function deleteEgress(env, url) {
 	if (!HOSTNAME.test(host)) return fail(400, "bad host");
 	const site = await siteFor(env, host);
 	await env.CODE.delete(`egress:${site}`);
+	egressCache.delete(site);
 	return json({ host, site, allow: [] });
 }
 
