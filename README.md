@@ -256,10 +256,16 @@ activation and rollback, deploy checks and post-activation rollback, aliases,
 object calls, overview, pruning, deleting sites), routing (static-first, clean
 URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site bindings
 (`OBJECTS` validation, plain-data rule, errors, CPU and wall-clock limits;
-`ASSETS`; blocked network), static-file validators and caching, and the
-packer's refusals and defaults, and upgrading from per-version files. 69 tests,
-about 30 s. Run it after changing the router, the tools or the push/admin
-scripts.
+`ASSETS`; blocked network, and the egress allowlist), static-file validators
+and caching, and the packer's refusals and defaults, and upgrading from
+per-version files. 74 tests, about 30 s. Run it after changing the router, the
+tools or the push/admin scripts.
+
+The image pins `ghcr.io/denoland/celld:v0.6.3`. To judge a new release, put
+its `celld` binary on `PATH` and run the suite: it runs the real router under
+`celld dev`, so it exercises the loader, the facet and SQLite APIs, service
+bindings, `globalOutbound` and the admin API the platform depends on. Then
+rebuild the node image and check the examples.
 
 ## Security
 
