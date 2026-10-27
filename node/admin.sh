@@ -1,6 +1,6 @@
 #!/bin/sh
 # Call the router's admin API (inside the celld container, or via tools/):
-#   admin.sh POST '/prune?keep=3'
+#   admin.sh POST '/prune?keep=3&confirm=prune'
 #   admin.sh PUT '/alias?host=new.example.com&site=old.example.com'
 #   admin.sh DELETE '/alias?host=new.example.com'
 #   admin.sh POST '/activate?host=site.example.com&version=0123456789ab'   (rollback)

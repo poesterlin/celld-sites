@@ -80,9 +80,24 @@ if (proc && throws(() => proc.nextTick(() => {}))) {
 `;
 // The isolate's main module: prelude first (ES modules evaluate imports in
 // order), then the site's handler and its Durable Object classes.
+// The exported handler wraps the site's own: the site gets a small request
+// context with the notifications it may use (waitUntil, abort,
+// passThroughOnException) but not the runtime's object graph (ctx.exports,
+// ctx.props). Today ctx.exports only reaches the site's own module, but a
+// future celld release could add more, and this keeps the site's reach fixed.
 const MAIN = `import "./prelude.js";
-export { default } from "./worker.js";
+import * as site from "./worker.js";
 export * from "./worker.js";
+export default {
+	fetch(request, env, ctx) {
+		const safe = {
+			waitUntil: (p) => ctx.waitUntil(p),
+			passThroughOnException: () => ctx.passThroughOnException(),
+		};
+		if (typeof ctx.abort === "function") safe.abort = (reason) => ctx.abort(reason);
+		return site.default.fetch(request, env, Object.freeze(safe));
+	},
+};
 `;
 
 /** Deploy checks (POST /__admin/check) run a version with its Durable Objects under
@@ -109,7 +124,7 @@ async function egressFor(env, site) {
 	const allow = Array.isArray(stored) ? stored : [];
 	// The list is part of the loader key, so a changed list gets a new isolate with
 	// the new proxy instead of waiting for the old one to be evicted.
-	const tag = allow.length ? `~e${hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(allow.join(",")))).slice(0, 10)}` : "";
+	const tag = allow.length ? `~e${hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(allow.join(",")))).slice(0, 32)}` : "";
 	const entry = { allow, tag, until: Date.now() + EGRESS_TTL_MS };
 	if (egressCache.size > 1000) egressCache.clear();
 	egressCache.set(owner, entry);
@@ -151,8 +166,8 @@ async function codeFor(env, version) {
  *  concurrent first requests waited on the load the first one started, and
  *  celld 0.6.3 dropped their responses (denoland/celld#258), so they hung until
  *  the 504. */
-async function loadSite(env, exports, site, version) {
-	const { allow, tag } = await egressFor(env, site);
+async function loadSite(env, exports, site, version, egress) {
+	const { allow, tag } = egress ?? (await egressFor(env, site));
 	const code = await codeFor(env, version);
 	return env.LOADER.get(`${site}@${version}${tag}`, () => {
 		return {
@@ -167,7 +182,10 @@ async function loadSite(env, exports, site, version) {
 			},
 			// No allowlist: fetch() throws. Otherwise the proxy below decides.
 			globalOutbound: allow.length ? exports.SiteEgress({ props: { site, allow } }) : null,
-			limits: { cpuMs: 1000 },
+			// One second of CPU per request, and a cap on subrequests (Durable
+			// Object calls, egress fetches) so one request cannot fan out without
+			// bound. Cloudflare's paid limit is 1000; override with a wrangler var.
+			limits: { cpuMs: 1000, subRequests: limit(env, "SITE_MAX_SUBREQUESTS", 1000, 10000) },
 		};
 	});
 }
@@ -178,6 +196,35 @@ async function loadSite(env, exports, site, version) {
  *  site can still answer when one of them times out. */
 const timeoutMs = (env) => (Number(env.SITE_TIMEOUT_SECS) || 30) * 1000;
 const objectTimeoutMs = (env) => Math.round(timeoutMs(env) * 0.8);
+
+/** A positive whole-number wrangler var, clamped to max, or the default. */
+function limit(env, name, def, max) {
+	const n = Number(env[name]);
+	return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), max) : def;
+}
+
+/** Requests one site may have in flight (started, not yet answered) in this
+ *  router isolate. Per site, so a flooded site gets 503s instead of starving
+ *  every other site on the node. Static files never reach the isolate. */
+const inflight = new Map(); // site -> number
+async function serveWithLimit(request, env, ctx, site, version) {
+	const max = limit(env, "SITE_MAX_INFLIGHT", 128, 10000);
+	const now = inflight.get(site) ?? 0;
+	if (now >= max) {
+		return new Response("too many concurrent requests for this site\n", {
+			status: 503,
+			headers: { "retry-after": "1", "content-type": "text/plain; charset=utf-8" },
+		});
+	}
+	inflight.set(site, now + 1);
+	try {
+		return await serve(request, env, ctx, site, version);
+	} finally {
+		const left = (inflight.get(site) ?? 1) - 1;
+		if (left <= 0) inflight.delete(site);
+		else inflight.set(site, left);
+	}
+}
 class Timeout extends Error {}
 async function withTimeout(promise, ms, what) {
 	let timer;
@@ -263,10 +310,14 @@ async function assetResponse(env, version, path, meta, { head = false, status = 
 	const file = await readAsset(env, meta, version, path);
 	if (file === null) return null;
 	if (status === 200 && notModified(request, headers.etag)) return new Response(null, { status: 304, headers });
-	headers["content-type"] = file.type;
+	headers["content-type"] = safeContentType(file.type);
 	headers["content-length"] = String(file.value.byteLength);
 	return new Response(head ? null : file.value, { status, headers });
 }
+
+/** A stored content type is served as a header only if it is printable ASCII;
+ *  an old record with CR/LF or control characters falls back to octet-stream. */
+const safeContentType = (t) => (typeof t === "string" && t.length <= 200 && /^[\x20-\x7e]+$/.test(t) ? t : "application/octet-stream");
 
 /** The ASSETS binding handed to each site: serves only that version's files. */
 export class SiteAssets extends WorkerEntrypoint {
@@ -277,6 +328,7 @@ export class SiteAssets extends WorkerEntrypoint {
 		} catch {
 			return new Response("Bad path", { status: 400 });
 		}
+		if (badAssetPath(path)) return new Response("Bad path", { status: 400 });
 		const { version } = this.ctx.props;
 		const meta = await siteMeta(this.env, version);
 		if (!meta.legacy && !meta.assets.has(path)) return new Response("Not found", { status: 404 });
@@ -319,9 +371,15 @@ function assetFor(meta, pathname) {
 	} catch {
 		return undefined;
 	}
+	if (badAssetPath(path)) return undefined;
 	const candidates = path === "" || path.endsWith("/") ? [`${path}index.html`] : [path, `${path}/index.html`, `${path}.html`];
 	return candidates.find((c) => meta.assets.has(c));
 }
+
+/** Paths a deploy may store and a request may ask for. Lookups are always exact
+ *  matches against a version's file list, so ".." cannot escape anything; refusing
+ *  it keeps odd keys out of storage and out of cache keys. */
+const badAssetPath = (path) => path.split("/").includes("..") || path.includes("\\");
 
 /** The OBJECTS binding handed to each site: `call(className, name, method, ...args)`
  *  runs an RPC method on that site's object. Arguments and results must be
@@ -330,16 +388,33 @@ export class SiteObjects extends WorkerEntrypoint {
 	async call(className, name, method, ...args) {
 		const { site } = this.ctx.props;
 		const ident = /^[A-Za-z_$][\w$]*$/;
-		if (!ident.test(className) || !ident.test(method) || typeof name !== "string" || !name || name.length > 200) {
+		if (!ident.test(className) || !ident.test(method) || className.length > 128 || method.length > 128 || typeof name !== "string" || !name || name.length > 200) {
 			throw new Error("bad object reference");
 		}
+		// Names inherited from Object.prototype resolve through the site's exports
+		// (`getDurableObjectClass("constructor")` is the DurableObjectState, and
+		// `facet["toString"]` is a prototype method). They are never site classes.
+		if (FORBIDDEN_NAMES.has(className) || FORBIDDEN_NAMES.has(method)) throw new Error("bad object reference");
 		const key = `${site}|${className}|${name}`;
+		// celld KV keys are limited to 512 bytes; a longer key would surface as an
+		// internal KV error instead of a bad reference.
+		if (new TextEncoder().encode(key).length > 500) throw new Error("bad object reference");
 		const version = this.ctx.props.version ?? (await this.env.CODE.get(`site:${site}`));
 		// A site deleted while one of its requests was still running.
 		if (version === null) throw new Error("site not found");
 		// The check deletes its scratch objects through the index, so record them first.
 		if (isScratch(site)) await indexObject(this.env, key);
 		else if (!indexed.has(key)) {
+			const exists = await this.env.CODE.get(`obj:${key}`);
+			// Every object is another SQLite database with its own write log, so
+			// creating one is what needs the quota; using it again does not. The
+			// claim is atomic in a reserved site object, so concurrent first calls
+			// cannot all pass the check.
+			if (exists === null) {
+				const max = limit(this.env, "SITE_MAX_OBJECTS", 1000, 1000);
+				const allowed = await this.env.SITE_OBJECTS.getByName(`~quota~|${site}`).claim(site, key, max);
+				if (!allowed) throw new Error(`object quota reached for ${site} (${max})`);
+			}
 			this.ctx.waitUntil(
 				indexObject(this.env, key).then(() => {
 					if (indexed.size >= MAX_INDEXED) indexed.clear();
@@ -347,7 +422,8 @@ export class SiteObjects extends WorkerEntrypoint {
 				}),
 			);
 		}
-		const call = this.env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		const { allow, tag } = await egressFor(this.env, site);
+		const call = this.env.SITE_OBJECTS.getByName(key).handle(site, version, tag, allow, className, method, args);
 		return withTimeout(call, objectTimeoutMs(this.env), `${className}.${method}`);
 	}
 }
@@ -357,12 +433,17 @@ export class SiteObjects extends WorkerEntrypoint {
  *  rebinding), so only allowlist names whose DNS the operator controls. */
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 const INTERNAL_SUFFIXES = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example"];
+/** A real top-level domain is alphabetic or punycode: `127.1`, `0x7f.1` and
+ *  `1.2.3.4.5` are numeric host forms, not names to allowlist. */
+const TLD = /^(?:[a-z][a-z0-9-]*|xn--[a-z0-9-]+)$/;
 function internalHost(host, adminHost) {
 	if (host === adminHost) return "is the admin hostname";
 	if (!host.includes(".")) return "is a single-label name";
 	if (IPV4.test(host) || host.includes(":") || host.startsWith("[")) return "is an IP address";
 	const suffix = INTERNAL_SUFFIXES.find((s) => host.endsWith(s));
-	return suffix ? `ends in ${suffix}` : null;
+	if (suffix) return `ends in ${suffix}`;
+	if (!TLD.test(host.slice(host.lastIndexOf(".") + 1))) return "has a numeric or invalid top-level domain";
+	return null;
 }
 
 /** The outbound network handed to a site with an allowlist. fetch() reaches
@@ -371,8 +452,13 @@ function internalHost(host, adminHost) {
 export class SiteEgress extends WorkerEntrypoint {
 	async fetch(request) {
 		const { site, allow } = this.ctx.props;
-		const url = new URL(request.url);
 		const deny = (why) => new Response(`egress blocked: ${why}\n`, { status: 403 });
+		let url;
+		try {
+			url = new URL(request.url);
+		} catch {
+			return deny("the request URL is not valid");
+		}
 		// HTTPS on 443 only. Besides keeping traffic encrypted, this keeps a rebound
 		// name (an allowlisted host resolving to 127.0.0.1) away from celld's
 		// operator API, which speaks plain HTTP on another port.
@@ -399,12 +485,54 @@ async function indexObject(env, key) {
 
 /** One per (site, class, name): runs the site's class as a facet. */
 export class SiteObject extends DurableObject {
-	async handle(site, version, className, method, args) {
-		const worker = await loadSite(this.env, this.ctx.exports, site, version);
-		// The facet name selects the database, so data survives redeploys; a new
-		// version only changes the class the facet is started from.
-		if (this.version && this.version !== version) this.ctx.facets.abort(className, new Error("site redeployed"));
+	/** Atomically claim a slot in `site`'s object quota. The instance is keyed
+	 *  `~quota~|site` (site ids are hostnames, so no site object can collide with
+	 *  it), and its SQLite database is the counter. On first use it seeds from the
+	 *  existing object index, so objects created before quotas still count. */
+	async claim(site, key, max) {
+		return this.ctx.blockConcurrencyWhile(async () => {
+			const sql = this.ctx.storage.sql;
+			sql.exec("CREATE TABLE IF NOT EXISTS claimed (k TEXT PRIMARY KEY)");
+			sql.exec("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)");
+			if (sql.exec("SELECT 1 FROM claimed WHERE k = ?", key).toArray().length) return true;
+			if (!sql.exec("SELECT 1 FROM meta WHERE k = 'seeded'").toArray().length) {
+				for (const k of await listAll(this.env.CODE, `obj:${site}|`)) sql.exec("INSERT OR IGNORE INTO claimed (k) VALUES (?)", k.name.slice(4));
+				sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('seeded', ?)", new Date().toISOString());
+			}
+			const count = sql.exec("SELECT count(*) AS c FROM claimed").toArray()[0].c;
+			if (count >= max) return false;
+			sql.exec("INSERT INTO claimed (k) VALUES (?)", key);
+			return true;
+		});
+	}
+
+	/** Delete the quota counter of a deleted site. */
+	async clear() {
+		await this.ctx.storage.deleteAll();
+	}
+
+	/** Abort this object's facet without waiting for its next call. Used when a
+	 *  site's egress allowlist changes: a facet keeps the outbound network it was
+	 *  loaded with, and pending timers would otherwise keep using it. */
+	async rearm(className) {
+		try {
+			this.ctx.facets.abort(className, new Error("egress allowlist changed"));
+		} catch {}
+		this.version = undefined;
+		this.tag = undefined;
+	}
+
+	async handle(site, version, tag, allow, className, method, args) {
+		const worker = await loadSite(this.env, this.ctx.exports, site, version, { allow, tag });
+		// A redeploy and an egress allowlist change both hand the site a different
+		// isolate. Data survives (the facet's name selects the database); a running
+		// facet must not keep the outbound network it was created with, or removing
+		// an allowlist would not stop an app that is already talking to it.
+		const redeployed = this.version !== undefined && this.version !== version;
+		const egressChanged = this.tag !== undefined && this.tag !== tag;
+		if (redeployed || egressChanged) this.ctx.facets.abort(className, new Error(redeployed ? "site redeployed" : "egress allowlist changed"));
 		this.version = version;
+		this.tag = tag;
 		const facet = this.ctx.facets.get(className, () => ({ class: worker.getDurableObjectClass(className) }));
 		return facet[method](...args);
 	}
@@ -417,6 +545,25 @@ export class SiteObject extends DurableObject {
 	}
 }
 
+/** Names inherited from Object.prototype are never site classes or methods: they
+ *  resolve through the exports object (`getDurableObjectClass("constructor")` is
+ *  the DurableObjectState) or through the facet's prototype. */
+const FORBIDDEN_NAMES = new Set([
+	"__proto__",
+	"prototype",
+	"constructor",
+	"toString",
+	"valueOf",
+	"hasOwnProperty",
+	"isPrototypeOf",
+	"propertyIsEnumerable",
+	"toLocaleString",
+	"__defineGetter__",
+	"__defineSetter__",
+	"__lookupGetter__",
+	"__lookupSetter__",
+]);
+
 /** Largest single static file (KV allows 25 MiB per value). */
 const MAX_ASSET_BYTES = 20 * 1024 * 1024;
 /** Largest code upload (bundled server code plus the file list). */
@@ -426,6 +573,11 @@ const SHA256 = /^[a-f0-9]{64}$/;
 /** Most files in one version. */
 const MAX_FILES = 20_000;
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+/** A site id is a hostname; the admin hostname is never a site. */
+const hostOk = (env, host) => HOSTNAME.test(host) && host !== env.ADMIN_HOST;
+/** Deploy and write endpoints take a site id, not an alias: resolving an alias
+ *  would let "deploy for vanity.test" silently change another site. */
+const aliasRefusal = async (env, host) => ((await env.CODE.get(`alias:${host}`)) !== null ? fail(409, `${host} is an alias; use its site id instead`) : null);
 
 const json = (body, status = 200) => Response.json(body, { status });
 const fail = (status, error) => json({ error }, status);
@@ -527,15 +679,39 @@ async function missingBlobs(request, env) {
 	return json({ missing: [...new Set(hashes)].filter((h) => !stored.has(h)) });
 }
 
+/** Two code records are the same version only if every field matches. Used to
+ *  make `code:<version>` write-once while still accepting the re-upload of an
+ *  unchanged build (push.sh does that on every deploy). */
+const canonicalFiles = (files) =>
+	JSON.stringify(
+		Object.keys(files)
+			.sort()
+			.map((p) => [p, files[p]]),
+	);
+const sameCode = (a, b) =>
+	a.compatibilityDate === b.compatibilityDate &&
+	a.source === b.source &&
+	canonicalFiles(a.files) === canonicalFiles(b.files) &&
+	(a.immutable ?? DEFAULT_IMMUTABLE).join("\0") === b.immutable.join("\0") &&
+	(a.mutable ?? []).join("\0") === b.mutable.join("\0") &&
+	(a.notFound ?? "none") === b.notFound;
+
 /** PUT /__admin/code?version=V[&host=H]
  *  body: { compatibilityDate, source, files: { path: [sha256, type] }, immutable, mutable, notFound }.
  *  Refused unless every file's blob was uploaded first. `host` records the version
- *  as staged for H's site, so admin object calls may target it before activation. */
+ *  as staged for H's site, so activation and admin object calls may target it.
+ *  A version id is immutable: the same record may be uploaded again (an unchanged
+ *  build), a different one is refused, so "version V is live" cannot be changed
+ *  after activation without a new id. */
 async function putCode(request, env, url) {
 	const version = url.searchParams.get("version") ?? "";
 	const host = url.searchParams.get("host");
 	if (!VERSION.test(version)) return fail(400, "bad version");
-	if (host !== null && !HOSTNAME.test(host)) return fail(400, "bad host");
+	if (host !== null && !hostOk(env, host)) return fail(400, "bad host");
+	if (host !== null) {
+		const refusal = await aliasRefusal(env, host);
+		if (refusal) return refusal;
+	}
 	const big = tooLarge(request, MAX_CODE_BYTES);
 	if (big) return big;
 	let body;
@@ -558,11 +734,14 @@ async function putCode(request, env, url) {
 				path &&
 				!path.startsWith("/") &&
 				!path.includes("\0") &&
+				!badAssetPath(path) &&
 				new TextEncoder().encode(path).length <= 400 &&
 				Array.isArray(f) &&
 				f.length === 2 &&
 				SHA256.test(f[0]) &&
-				typeof f[1] === "string",
+				typeof f[1] === "string" &&
+				f[1].length <= 200 &&
+				!/[\r\n]/.test(f[1]),
 		) &&
 		strings(immutable) &&
 		strings(mutable) &&
@@ -572,21 +751,83 @@ async function putCode(request, env, url) {
 	const stored = await storedBlobs(env, entries.map(([, f]) => f[0]));
 	const missing = entries.filter(([, f]) => !stored.has(f[0])).map(([path]) => path);
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
-	await env.CODE.put(`code:${version}`, JSON.stringify({ compatibilityDate, source, files, immutable, mutable, notFound, check }), {
-		metadata: { files: entries.length },
-	});
-	metas.delete(version);
-	if (host !== null) await env.CODE.put(`staged:${await siteFor(env, host)}:${version}`, "");
-	return json({ version, files: entries.length, sourceBytes: source.length });
+	const record = { compatibilityDate, source, files, immutable, mutable, notFound, check };
+	const existing = await env.CODE.get(`code:${version}`, "json");
+	// A version stored before content-addressed files has no file list; replacing
+	// that record with the blob format is the documented upgrade path. A legacy
+	// version that is live is not rewritten in place (that would swap the code of
+	// an approved version); it needs a new version id.
+	const upgrade = existing !== null && existing.files === undefined;
+	if (upgrade) {
+		for (const k of await listAll(env.CODE, "site:")) {
+			if ((await env.CODE.get(k.name)) === version) return fail(409, `version ${version} is live; deploy it in the blob format as a new version instead`);
+		}
+	}
+	if (existing !== null && !upgrade && !sameCode(existing, record)) {
+		return fail(409, `version ${version} already exists with different content; build again for a new id`);
+	}
+	const site = host === null ? null : await siteFor(env, host);
+	if (site !== null && !(await canStage(env, site, version))) return fail(429, `at most ${MAX_STAGED} staged versions per site; activate or delete one first`);
+	if (existing === null || upgrade) {
+		await env.CODE.put(`code:${version}`, JSON.stringify(record), { metadata: { files: entries.length } });
+		metas.delete(version);
+		codes.delete(version);
+	} else if ((existing.check ?? "/") !== check) {
+		// `check` is deploy metadata, not part of the version id: editing only that
+		// in celld.json must not force a new build. The code fields stay immutable.
+		await env.CODE.put(`code:${version}`, JSON.stringify(record), { metadata: { files: entries.length } });
+	}
+	if (site !== null) await env.CODE.put(`staged:${site}:${version}`, "", { metadata: { at: Date.now() } });
+	return json({ version, files: entries.length, sourceBytes: source.length, ...(site !== null && { site }), ...(existing !== null && !upgrade && { unchanged: true }) });
 }
 
-/** POST /__admin/activate?host=H&version=V[&ifNew=1]  points H's site at an uploaded
- *  version (a new deploy, or a rollback to an older one). With ifNew, a site that
- *  already has an active version is left alone (bundled sites on node start). */
+/** Staged versions kept per site: enough for a deploy in flight and a manual
+ *  binding, without letting a control plane fill the bucket with staging records. */
+const MAX_STAGED = 20;
+
+/** Whether another staged version may be added (idempotent for one already staged). */
+async function canStage(env, site, version) {
+	if ((await env.CODE.get(`staged:${site}:${version}`)) !== null) return true;
+	const page = await env.CODE.list({ prefix: `staged:${site}:`, limit: MAX_STAGED });
+	return page.keys.length < MAX_STAGED;
+}
+
+/** POST /__admin/stage?host=H&version=V  records an already-uploaded version as
+ *  built for H's site, so it may be activated for it. PUT /code?host= also stages;
+ *  this is for a control plane that uploads first and binds the site later. */
+async function stageVersion(env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	const version = url.searchParams.get("version") ?? "";
+	if (!hostOk(env, host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	const refusal = await aliasRefusal(env, host);
+	if (refusal) return refusal;
+	if ((await env.CODE.get(`code:${version}`)) === null) return fail(404, `version ${version} is not uploaded`);
+	const site = await siteFor(env, host);
+	if (!(await canStage(env, site, version))) return fail(429, `at most ${MAX_STAGED} staged versions per site; activate or delete one first`);
+	await env.CODE.put(`staged:${site}:${version}`, "", { metadata: { at: Date.now() } });
+	return json({ host, site, version });
+}
+
+/** Whether `version` may run as `site`: it was staged for it (PUT /code?host= or
+ *  POST /stage), it is in its deploy history (rollback), or it is active now. */
+async function versionForSite(env, site, version) {
+	if ((await env.CODE.get(`site:${site}`)) === version) return true;
+	if ((await env.CODE.get(`staged:${site}:${version}`)) !== null) return true;
+	for (const k of await listAll(env.CODE, `deploy:${site}:`)) if ((await env.CODE.get(k.name)) === version) return true;
+	return false;
+}
+
+/** POST /__admin/activate?host=H&version=V[&ifNew=1]  points H's site at a version
+ *  uploaded for it (a new deploy, or a rollback to an older one). With ifNew, a
+ *  site that already has an active version is left alone (bundled sites on node
+ *  start). A version built for another site is refused: running it here would run
+ *  that site's code against this site's Durable Objects. */
 async function activate(env, url) {
 	const host = url.searchParams.get("host") ?? "";
 	const version = url.searchParams.get("version") ?? "";
-	if (!HOSTNAME.test(host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	if (!hostOk(env, host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	const refusal = await aliasRefusal(env, host);
+	if (refusal) return refusal;
 	const code = await env.CODE.get(`code:${version}`, "json");
 	if (!code) return fail(404, `version ${version} is not uploaded (or was pruned)`);
 	const site = await siteFor(env, host);
@@ -594,14 +835,20 @@ async function activate(env, url) {
 		const current = await env.CODE.get(`site:${site}`);
 		if (current !== null) return json({ host, site, version: current, skipped: true });
 	}
+	if (!(await versionForSite(env, site, version))) {
+		return fail(409, `version ${version} was not uploaded for ${site} (use PUT /code?host=${site} or POST /stage)`);
+	}
 	const previous = await env.CODE.get(`site:${site}`);
 	const summary = { assets: code.files ? Object.keys(code.files).length : (code.assets?.length ?? 0), sourceBytes: code.source?.length ?? 0 };
 	// History first, then the switch: KV has no transactions, and a crash between the
 	// two then leaves a history entry for a version that never went live (harmless:
 	// prune keeps one version more) rather than a live version prune can't see in
-	// the history.
-	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}`, version, { metadata: summary });
+	// the history. The suffix keeps two activations in the same millisecond apart.
+	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}~${crypto.randomUUID().slice(0, 8)}`, version, { metadata: summary });
 	await env.CODE.put(`site:${site}`, version); // the switch
+	// The deploy is done: the staging hint has served its purpose (the version is
+	// now in the history, which is what rollback and seeding check).
+	await env.CODE.delete(`staged:${site}:${version}`);
 	return json({ host, site, version, previous, ...summary });
 }
 
@@ -617,24 +864,46 @@ async function activate(env, url) {
 async function check(env, ctx, url) {
 	const host = url.searchParams.get("host") ?? "";
 	const version = url.searchParams.get("version") ?? "";
-	if (!HOSTNAME.test(host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	if (!hostOk(env, host) || !VERSION.test(version)) return fail(400, "bad host or version");
+	const refusal = await aliasRefusal(env, host);
+	if (refusal) return refusal;
 	const code = await env.CODE.get(`code:${version}`, "json");
 	if (!code) return fail(404, `version ${version} is not uploaded`);
+	const site = await siteFor(env, host);
+	if (!(await versionForSite(env, site, version))) {
+		return fail(409, `version ${version} was not uploaded for ${site} (use PUT /code?host=${site} or POST /stage)`);
+	}
 	const path = code.check === false ? null : (code.check ?? "/");
 	if (path === null) return json({ ok: true, skipped: true });
-	const scratch = scratchFor(await siteFor(env, host), version);
-	const request = new Request(`https://${host}${path}`, { headers: { accept: "text/html", "user-agent": "celld-sites deploy check" } });
-	const started = Date.now();
-	let status;
-	let error;
+	const scratch = scratchFor(site, version);
+	// A path that exists as a static file never reaches the worker, so a broken
+	// worker would pass. Probe an unknown path too when the site has one; a 404 is
+	// fine (it still ran the handler), a 5xx is not.
+	const paths = [path];
+	const meta = await siteMeta(env, version);
+	let staticCheck = false;
 	try {
-		const res = await serve(request, env, ctx, scratch, version);
-		status = res.status;
-		if (status >= 500) error = (await res.text()).slice(0, 500);
-		else await res.body?.cancel();
-	} catch (e) {
-		status = 500;
-		error = String(e?.message ?? e).slice(0, 500);
+		staticCheck = Boolean(assetFor(meta, new URL(`https://${host}${path}`).pathname));
+	} catch {}
+	if (path === "/" && meta.worker && staticCheck) paths.push(`/~check-${version}`);
+	const started = Date.now();
+	let status = 0;
+	let error;
+	let failed = null;
+	for (const p of paths) {
+		const request = new Request(`https://${host}${p}`, { headers: { accept: "text/html", "user-agent": "celld-sites deploy check" } });
+		try {
+			const res = await serveWithLimit(request, env, ctx, scratch, version);
+			status = res.status;
+			if (status >= 500) {
+				failed = { path: p, status, error: (await res.text()).slice(0, 500) };
+				break;
+			}
+			await res.body?.cancel();
+		} catch (e) {
+			failed = { path: p, status: 500, error: String(e?.message ?? e).slice(0, 500) };
+			break;
+		}
 	}
 	const ms = Date.now() - started;
 	const cleanup = [];
@@ -647,7 +916,14 @@ async function check(env, ctx, url) {
 			cleanup.push(`${key}: ${String(e?.message ?? e).slice(0, 200)}`);
 		}
 	}
-	return json({ ok: status < 500, status, ms, path, ...(error !== undefined && { error }), ...(cleanup.length && { cleanup }) });
+	return json({
+		ok: failed === null,
+		status: failed?.status ?? status,
+		ms,
+		path: failed?.path ?? path,
+		...(failed?.error !== undefined && { error: failed.error }),
+		...(cleanup.length && { cleanup }),
+	});
 }
 
 // --- Aliases -----------------------------------------------------------------
@@ -681,15 +957,26 @@ const ORPHAN_AGE_MS = 60 * 60 * 1000;
 /** Deploy history entries kept per site. */
 const MAX_HISTORY = 100;
 
-/** POST /__admin/prune?keep=N deletes stored versions except each site's current
- *  version and the N most recent versions in its deploy history (default 3).
- *  Then it deletes the files no remaining version uses (blobs after an hour, or
- *  orphanAge seconds), versions that were only staged (never activated), history
- *  beyond the last 100 deploys per site, and index and staging records of things
- *  that are gone. */
+/** POST /__admin/prune?confirm=prune&keep=N[&orphanAge=S][&stagedAge=S] deletes
+ *  stored versions except each site's current version, the N most recent versions
+ *  in its deploy history (default 3), and versions staged for a deploy younger
+ *  than stagedAge (default 3). Then it deletes the files no remaining version uses
+ *  (blobs after an hour, or orphanAge seconds), history beyond the last 100 deploys
+ *  per site, and index and staging records of things that are gone. Destructive and
+ *  node-wide, so it needs confirm=prune; the numbers must be whole. */
 async function prune(env, url) {
-	const keep = Math.max(0, Math.min(100, Number(url.searchParams.get("keep") ?? 3) || 0));
-	const orphanAge = url.searchParams.has("orphanAge") ? Math.max(0, Number(url.searchParams.get("orphanAge")) || 0) * 1000 : ORPHAN_AGE_MS;
+	if (url.searchParams.get("confirm") !== "prune") {
+		return fail(400, "prune deletes versions and history; add confirm=prune");
+	}
+	const keepParam = url.searchParams.get("keep");
+	const orphanParam = url.searchParams.get("orphanAge");
+	const stagedParam = url.searchParams.get("stagedAge");
+	if (keepParam !== null && !/^\d+$/.test(keepParam)) return fail(400, "keep must be a whole number");
+	if (orphanParam !== null && !/^\d+$/.test(orphanParam)) return fail(400, "orphanAge must be a whole number");
+	if (stagedParam !== null && !/^\d+$/.test(stagedParam)) return fail(400, "stagedAge must be a whole number");
+	const keep = Math.max(0, Math.min(100, Number(keepParam ?? 3)));
+	const orphanAge = orphanParam !== null ? Number(orphanParam) * 1000 : ORPHAN_AGE_MS;
+	const stagedAge = stagedParam !== null ? Number(stagedParam) * 1000 : ORPHAN_AGE_MS;
 	const [siteKeys, deployKeys, codeKeys, stagedKeys, objKeys] = await Promise.all(
 		["site:", "deploy:", "code:", "staged:", "obj:"].map((p) => listAll(env.CODE, p)),
 	);
@@ -719,6 +1006,14 @@ async function prune(env, url) {
 			historyDeleted++;
 		}
 	}
+	// A version staged for a deploy that has not activated yet must survive the
+	// prune, or the deploy fails at activation. A staging record without metadata
+	// (written by a router before this existed) is treated as fresh once.
+	const now = Date.now();
+	for (const k of stagedKeys) {
+		const version = k.name.slice(k.name.lastIndexOf(":") + 1);
+		if (now - (k.metadata?.at ?? now) < stagedAge) kept.add(version);
+	}
 	const deleted = [];
 	const remaining = new Set();
 	const used = new Set(); // blob hashes of remaining versions
@@ -738,7 +1033,6 @@ async function prune(env, url) {
 	}
 	// Mark and sweep: blobs no remaining version uses (once old enough, see above).
 	let blobsDeleted = 0;
-	const now = Date.now();
 	for (const b of await listAll(env.CODE, "blob:")) {
 		if (used.has(b.name.slice("blob:".length)) || now - (b.metadata?.at ?? 0) < orphanAge) continue;
 		await env.CODE.delete(b.name);
@@ -812,6 +1106,11 @@ async function deleteSite(env, url) {
 	for (const k of await listAll(env.CODE, `staged:${id}:`)) await env.CODE.delete(k.name);
 	await env.CODE.delete(`egress:${id}`);
 	egressCache.delete(id);
+	try {
+		await env.SITE_OBJECTS.getByName(`~quota~|${id}`).clear();
+	} catch (e) {
+		errors.push(`quota: ${String(e?.message ?? e).slice(0, 200)}`);
+	}
 	const result = { id, aliases: aliasKeys.map((k) => k.slice(6)), objects: objects.length, history, errors };
 	return errors.length ? json(result, 500) : json(result);
 }
@@ -848,7 +1147,7 @@ async function adminCall(request, env, url) {
 	const name = url.searchParams.get("name") ?? "";
 	const method = url.searchParams.get("method") ?? "";
 	const ident = /^[A-Za-z_$][\w$]*$/;
-	if (!HOSTNAME.test(host) || !ident.test(className) || !ident.test(method) || !name || name.length > 200) {
+	if (!hostOk(env, host) || !ident.test(className) || !ident.test(method) || !name || name.length > 200) {
 		return fail(400, "need host, class, name and method");
 	}
 	const big = tooLarge(request, MAX_CALL_BYTES);
@@ -870,12 +1169,33 @@ async function adminCall(request, env, url) {
 	const key = `${site}|${className}|${name}`;
 	await indexObject(env, key);
 	try {
-		const call = env.SITE_OBJECTS.getByName(key).handle(site, version, className, method, args);
+		const { allow, tag } = await egressFor(env, site);
+		const call = env.SITE_OBJECTS.getByName(key).handle(site, version, tag, allow, className, method, args);
 		const result = await withTimeout(call, objectTimeoutMs(env), `${className}.${method}`);
 		return json({ site, className, name, method, result: result ?? null });
 	} catch (e) {
 		if (e instanceof Timeout) return fail(504, e.message);
 		return fail(500, `${className}.${method}: ${String(e?.message ?? e).slice(0, 500)}`);
+	}
+}
+
+/** Abort every indexed object of `site`, so a changed egress allowlist reaches
+ *  running facets immediately. Objects missing from the index (created before
+ *  it existed) are not found; they are also the ones the dashboard reports as
+ *  "not in the index". */
+async function abortFacets(env, site) {
+	const keys = await listAll(env.CODE, `obj:${site}|`);
+	for (let i = 0; i < keys.length; i += 16) {
+		await Promise.all(
+			keys.slice(i, i + 16).map(async (k) => {
+				const key = k.name.slice("obj:".length);
+				const className = key.slice(site.length + 1, key.indexOf("|", site.length + 1));
+				if (!className) return;
+				try {
+					await env.SITE_OBJECTS.getByName(key).rearm(className);
+				} catch {}
+			}),
+		);
 	}
 }
 
@@ -891,7 +1211,9 @@ async function getEgress(env, url) {
 const MAX_EGRESS_HOSTS = 20;
 async function putEgress(request, env, url) {
 	const host = url.searchParams.get("host") ?? "";
-	if (!HOSTNAME.test(host)) return fail(400, "bad host");
+	if (!hostOk(env, host)) return fail(400, "bad host");
+	const refusal = await aliasRefusal(env, host);
+	if (refusal) return refusal;
 	const site = await siteFor(env, host);
 	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, `no site for ${host}`);
 	let list;
@@ -913,15 +1235,22 @@ async function putEgress(request, env, url) {
 	if (allow.length > MAX_EGRESS_HOSTS) return fail(400, `at most ${MAX_EGRESS_HOSTS} hostnames`);
 	await env.CODE.put(`egress:${site}`, JSON.stringify(allow));
 	egressCache.delete(site);
+	// A running facet keeps the outbound network it was loaded with, including
+	// pending timers, so it is aborted now rather than on its next call.
+	await abortFacets(env, site);
 	return json({ host, site, allow });
 }
 
 async function deleteEgress(env, url) {
 	const host = url.searchParams.get("host") ?? "";
-	if (!HOSTNAME.test(host)) return fail(400, "bad host");
+	if (!hostOk(env, host)) return fail(400, "bad host");
+	const refusal = await aliasRefusal(env, host);
+	if (refusal) return refusal;
 	const site = await siteFor(env, host);
+	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, `no site for ${host}`);
 	await env.CODE.delete(`egress:${site}`);
 	egressCache.delete(site);
+	await abortFacets(env, site);
 	return json({ host, site, allow: [] });
 }
 
@@ -941,8 +1270,8 @@ async function overview(env) {
 	);
 	const deploys = await Promise.all(
 		deployKeys.map(async (k) => {
-			const rest = k.name.slice(7); // <site>:<iso time>
-			const at = rest.slice(rest.indexOf(":") + 1);
+			const rest = k.name.slice(7); // <site>:<iso time>~<suffix>
+			const at = rest.slice(rest.indexOf(":") + 1).split("~")[0];
 			return { site: rest.slice(0, rest.indexOf(":")), at, version: await env.CODE.get(k.name), ...k.metadata };
 		}),
 	);
@@ -989,6 +1318,7 @@ async function admin(request, env, ctx, url) {
 	if (method === "POST" && pathname === "/__admin/blobs/missing") return missingBlobs(request, env);
 	if (method === "PUT" && pathname === "/__admin/code") return putCode(request, env, url);
 	if (method === "POST" && pathname === "/__admin/activate") return activate(env, url);
+	if (method === "POST" && pathname === "/__admin/stage") return stageVersion(env, url);
 	if (method === "POST" && pathname === "/__admin/check") return check(env, ctx, url);
 	if ((method === "PUT" || method === "DELETE") && pathname === "/__admin/alias") return alias(request, env, url);
 	if (method === "POST" && pathname === "/__admin/prune") return prune(env, url);
@@ -1019,7 +1349,7 @@ export default {
 			version = await env.CODE.get(`site:${site}`);
 		}
 		if (!version) return new Response(`No site for ${host}`, { status: 404 });
-		return serve(request, env, ctx, site, version);
+		return serveWithLimit(request, env, ctx, site, version);
 	},
 };
 

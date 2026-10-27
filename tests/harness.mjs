@@ -37,7 +37,10 @@ export class Node {
 			.replace("@ADMIN_HOST@", ADMIN_HOST)
 			.replace("@DEFAULT_SITE@", "")
 			.replace("@OPERATOR_URL@", "")
-			.replace("@SITE_TIMEOUT_SECS@", "2");
+			.replace("@SITE_TIMEOUT_SECS@", "3")
+			.replace("@SITE_MAX_INFLIGHT@", process.env.TEST_SITE_MAX_INFLIGHT ?? "128")
+			.replace("@SITE_MAX_OBJECTS@", process.env.TEST_SITE_MAX_OBJECTS ?? "1000")
+			.replace("@SITE_MAX_SUBREQUESTS@", process.env.TEST_SITE_MAX_SUBREQUESTS ?? "1000");
 		writeFileSync(join(router, "wrangler.json"), template);
 		return this.#launch();
 	}

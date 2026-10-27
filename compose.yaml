@@ -2,6 +2,14 @@
 # served by one celld node, each in its own Dynamic Worker isolate, picked by
 # the Host header.
 # Site code, assets and Durable Object data live in the S3 bucket below.
+#
+# This is the development stack: it builds the images locally, bundles the
+# example site and uses the default `celld-sites-node` image tag. Production
+# runs the pull-only compose file in the celld-sites-deploy repo, which uses the
+# same project name so volumes carry over; see README, "Development vs hosting".
+# Both must not run at the same time.
+
+name: celld-sites
 
 x-logging: &logging
   driver: json-file
@@ -50,6 +58,9 @@ services:
     build:
       context: .
       dockerfile: node/Dockerfile
+      # The dev target bundles sites/example; the hosting image built by CI does
+      # not (node/Dockerfile).
+      target: dev
     image: celld-sites-node
     restart: unless-stopped
     init: true
@@ -76,6 +87,12 @@ services:
       CELLD_LTX_RETENTION_SECS: ${CELLD_LTX_RETENTION_SECS:-3600}
       # Wall-clock limit for a site's response and each Durable Object call (504 after).
       SITE_TIMEOUT_SECS: ${SITE_TIMEOUT_SECS:-30}
+      # Per-site limits: concurrent requests in one router isolate (503 above),
+      # Durable Objects a site may create, and subrequests (object calls plus
+      # egress fetches) one request may make.
+      SITE_MAX_INFLIGHT: ${SITE_MAX_INFLIGHT:-128}
+      SITE_MAX_OBJECTS: ${SITE_MAX_OBJECTS:-1000}
+      SITE_MAX_SUBREQUESTS: ${SITE_MAX_SUBREQUESTS:-1000}
       # Per-isolate V8 heap limit (celld's default is 128 MB, Cloudflare's DO
       # limit). A loaded EmDash site is ~120 MB, so a query's result set could
       # tip it over, and an isolate over the limit stops materializing result

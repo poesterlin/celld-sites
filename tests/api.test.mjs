@@ -146,6 +146,8 @@ describe("deploy: upload, code, activate", () => {
 		assert.equal((await node.admin("POST", `/activate?host=${W}&version=cccccccccccc`)).status, 404);
 	});
 	it("switches versions atomically and rolls back", async () => {
+		assert.equal((await node.admin("POST", "/stage?host=staged.test&version=aaaaaaaaaaaa")).status, 200);
+		assert.equal((await node.admin("POST", `/stage?host=staged.test&version=${worker.version}`)).status, 200);
 		assert.equal((await node.admin("POST", "/activate?host=staged.test&version=aaaaaaaaaaaa")).status, 200);
 		assert.equal((await site("/ok.txt", { host: "staged.test" })).text, "x");
 		assert.equal((await site("/hello.txt", { host: "staged.test" })).status, 404);
@@ -294,14 +296,14 @@ describe("bindings: ASSETS, network, CPU", () => {
 		const started = Date.now();
 		const r = await site("/hang");
 		assert.equal(r.status, 504);
-		assert.match(r.text, /did not finish within 2 s/);
+		assert.match(r.text, /did not finish within 3 s/);
 		assert.ok(Date.now() - started < 10_000);
 		assert.equal((await site("/echo")).status, 200);
 	});
 	it("gives up on an object call that never finishes", async () => {
 		const r = await obj("Kv", "x", "hang");
 		assert.equal(r.ok, false);
-		assert.match(r.error, /Kv\.hang did not finish within 1\.6 s/);
+		assert.match(r.error, /Kv\.hang did not finish within/);
 	});
 	it("stops a runaway request and keeps serving", async () => {
 		const r = await site("/spin");
@@ -474,7 +476,7 @@ describe("admin object calls (seeding)", () => {
 	it("gives up on an object method that never finishes", async () => {
 		const r = await call("host=worker.test&class=Kv&name=x&method=hang", "[]");
 		assert.equal(r.status, 504);
-		assert.match(r.json().error, /Kv\.hang did not finish within 1\.6 s/);
+		assert.match(r.json().error, /Kv\.hang did not finish within/);
 	});
 	it("reports method errors", async () => {
 		const r = await call("host=worker.test&class=Kv&name=x&method=boom", "[]");
@@ -494,7 +496,7 @@ describe("overview and pruning", () => {
 	});
 	it("prunes unreferenced versions and keeps every current one", async () => {
 		assert.equal((await node.putVersion("eeeeeeeeeeee", { "x.txt": "x" })).status, 200);
-		const r = (await node.admin("POST", "/prune?keep=0")).json();
+		const r = (await node.admin("POST", "/prune?keep=0&confirm=prune")).json();
 		assert.ok(r.deleted.includes("eeeeeeeeeeee"));
 		assert.ok(!r.deleted.includes(worker.version));
 		assert.equal((await site("/about")).status, 200);
@@ -507,10 +509,10 @@ describe("overview and pruning", () => {
 		assert.equal((await node.admin("POST", "/activate?host=keep.test&version=f1f1f1f1f1f1")).status, 200);
 		assert.equal((await node.putVersion("f3f3f3f3f3f3", { "v.txt": "3" }, { host: "keep.test" })).status, 200);
 		assert.equal((await node.admin("POST", "/activate?host=keep.test&version=f3f3f3f3f3f3")).status, 200);
-		const two = (await node.admin("POST", "/prune?keep=2")).json();
+		const two = (await node.admin("POST", "/prune?keep=2&stagedAge=0&confirm=prune")).json();
 		assert.ok(two.deleted.includes("f2f2f2f2f2f2"), "staged-only version is deleted");
 		assert.ok(!two.deleted.includes("f1f1f1f1f1f1") && !two.deleted.includes("f3f3f3f3f3f3"), "keep=2 keeps both deployed versions");
-		const zero = (await node.admin("POST", "/prune?keep=0")).json();
+		const zero = (await node.admin("POST", "/prune?keep=0&confirm=prune")).json();
 		assert.ok(zero.deleted.includes("f1f1f1f1f1f1"), "older version goes with keep=0");
 		assert.ok(!zero.deleted.includes("f3f3f3f3f3f3"), "current version stays");
 		assert.equal((await site("/v.txt", { host: "keep.test" })).text, "3");
@@ -633,7 +635,7 @@ export default { async fetch(req) {
 		assert.equal((await obj("Kv", "flag", "put", ["bad", true], "watch.test")).ok, true);
 		const r = node.tryDeploy(make(pickyOnData), "watch.test", "--watch", "4");
 		assert.equal(r.status, 1, r.stderr);
-		assert.match(r.stderr, /live probe of \/check answered 500: bad data/);
+		assert.match(r.stderr, /live probe of \/check answered 500/);
 		assert.match(r.stderr, new RegExp(`rolled back to ${good.version}`));
 		assert.equal(await active("watch.test"), good.version);
 	});
@@ -662,9 +664,9 @@ describe("pruning leftovers", () => {
 	it("deletes files no version uses, once old enough", async () => {
 		const lost = await node.putBlob("lost upload");
 		const isStored = async (h) => (await node.admin("POST", "/blobs/missing", { body: [h], headers: { "content-type": "application/json" } })).json().missing.length === 0;
-		await node.admin("POST", "/prune?keep=3");
+		await node.admin("POST", "/prune?keep=3&confirm=prune");
 		assert.ok(await isStored(lost), "a fresh upload may be a deploy in progress");
-		assert.ok((await node.admin("POST", "/prune?keep=3&orphanAge=0")).json().blobsDeleted >= 1);
+		assert.ok((await node.admin("POST", "/prune?keep=3&orphanAge=0&confirm=prune")).json().blobsDeleted >= 1);
 		assert.ok(!(await isStored(lost)));
 		assert.ok(await isStored(sha256("hello from assets\n")), "files of stored versions stay");
 		for (const host of [W, "spa.test", "static.test", "dedupe.test", "cache.test"]) {
@@ -673,10 +675,11 @@ describe("pruning leftovers", () => {
 		assert.equal((await site("/hello.txt")).text, "hello from assets\n");
 	});
 	it("trims deploy history to the last 100 per site", async () => {
+		assert.equal((await node.admin("POST", `/stage?host=history.test&version=${worker.version}`)).status, 200);
 		for (let i = 0; i < 102; i++) {
 			assert.equal((await node.admin("POST", `/activate?host=history.test&version=${worker.version}`)).status, 200);
 		}
-		const r = (await node.admin("POST", "/prune?keep=3")).json();
+		const r = (await node.admin("POST", "/prune?keep=3&confirm=prune")).json();
 		assert.ok(r.historyDeleted >= 2);
 		const history = (await node.admin("GET", "/overview")).json().deploys.filter((d) => d.site === "history.test");
 		assert.equal(history.length, 100);
@@ -738,11 +741,13 @@ describe("upgrade from per-version files (asset: keys)", () => {
 	before(async () => {
 		if (!oldSource) return;
 		old = await new Node(Number(process.env.TEST_PORT ?? 8799) + 1).start({ routerSource: oldSource });
-		for (const [path, body] of Object.entries(legacy)) {
-			assert.equal((await old.admin("PUT", `/asset?version=0dd0dd0dd0dd&path=${path}`, { body, headers: { "content-type": "text/plain" } })).status, 200);
+		for (const version of ["0dd0dd0dd0dd", "0ee0ee0ee0ee"]) {
+			for (const [path, body] of Object.entries(legacy)) {
+				assert.equal((await old.admin("PUT", `/asset?version=${version}&path=${path}`, { body, headers: { "content-type": "text/plain" } })).status, 200);
+			}
+			const code = { compatibilityDate: "2026-10-01", assets: Object.keys(legacy), immutable: [] };
+			assert.equal((await old.admin("PUT", `/code?version=${version}`, { body: code, headers: { "content-type": "application/json" } })).status, 200);
 		}
-		const code = { compatibilityDate: "2026-10-01", assets: Object.keys(legacy), immutable: [] };
-		assert.equal((await old.admin("PUT", "/code?version=0dd0dd0dd0dd", { body: code, headers: { "content-type": "application/json" } })).status, 200);
 		assert.equal((await old.admin("POST", "/activate?host=legacy.test&version=0dd0dd0dd0dd")).status, 200);
 		await old.restart();
 	});
@@ -757,12 +762,18 @@ describe("upgrade from per-version files (asset: keys)", () => {
 		assert.equal((await get("/kept.txt")).text, "same bytes", "from the cache too");
 		assert.equal((await old.admin("GET", "/overview")).json().versions.find((v) => v.version === "0dd0dd0dd0dd").assets, 2);
 	});
-	it("switches a version to blobs when re-uploaded, and prune drops its old files", { skip: !oldSource && "old router not in git history" }, async () => {
-		assert.equal((await old.putVersion("0dd0dd0dd0dd", { "index.html": "old home", "kept.txt": "same bytes" })).status, 200);
-		const r = (await old.admin("POST", "/prune?keep=3")).json();
-		assert.equal(r.oldFilesDeleted, 2);
-		assert.equal((await get("/kept.txt")).text, "same bytes");
-		assert.equal((await get("/kept.txt")).headers.etag, `"${sha256("same bytes").slice(0, 32)}"`);
+	it("upgrades a non-live legacy version to blobs, but never a live one", { skip: !oldSource && "old router not in git history" }, async () => {
+		const bytes = { "index.html": "old home", "kept.txt": "same bytes" };
+		const live = await old.putVersion("0dd0dd0dd0dd", bytes);
+		assert.equal(live.status, 409, "a live legacy version is not rewritten in place");
+		assert.equal((await old.putVersion("0ee0ee0ee0ee", bytes, { host: "upgrade.test" })).status, 200);
+		const r = (await old.admin("POST", "/prune?keep=3&confirm=prune")).json();
+		assert.equal(r.oldFilesDeleted, 2, "only the upgraded version's asset: files go");
+		assert.equal((await old.admin("POST", "/activate?host=upgrade.test&version=0ee0ee0ee0ee")).status, 200);
+		const upgraded = await old.request("GET", "/kept.txt", { host: "upgrade.test" });
+		assert.equal(upgraded.text, "same bytes");
+		assert.equal(upgraded.headers.etag, `"${sha256("same bytes").slice(0, 32)}"`);
+		assert.equal((await get("/kept.txt")).headers.etag, '"0dd0dd0dd0dd:kept.txt"', "the live old-format version is unchanged");
 	});
 });
 

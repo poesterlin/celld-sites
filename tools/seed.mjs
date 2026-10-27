@@ -16,7 +16,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const project = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const project = process.env.CELLD_COMPOSE_DIR
+	? resolve(process.env.CELLD_COMPOSE_DIR)
+	: resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
 const die = (msg) => {
 	console.error(`seed: ${msg}`);

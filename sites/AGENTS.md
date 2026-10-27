@@ -8,6 +8,13 @@ directory. Read these too:
 - `sites/<framework>/RECIPE.md`: worked setups for SvelteKit, Nuxt and
   TanStack Start, with pitfalls actually hit and what was verified.
 
+New sites usually go in their **own checkout/repo**, not here: this repo
+gitignores everything under `sites/` except the five example templates
+(`example`, `sveltekit`, `nuxt`, `tanstack`, `static`). A site kept under
+`sites/<name>/` still builds and deploys normally with `tools/deploy.sh`; it
+just isn't part of the platform source. To add a new template here, un-ignore
+it in `.gitignore`.
+
 ## What a site is
 
 A site is a **Cloudflare Workers module** (`export default { fetch(request, env, ctx) }`)

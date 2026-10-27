@@ -2,15 +2,20 @@
 # Build a site and deploy it to the running router:
 #   tools/deploy.sh <site-dir> <hostname> [--no-check] [--watch SECS]
 # The site needs a celld.json (or the SvelteKit adapter-cloudflare layout), see
-# docs/SITES.md. Deploying to a hostname that is an alias deploys its site. The
-# hostname must also match the Traefik rule (SITES_RULE in .env) to be reachable.
-# The new version is checked before and watched after activation (see node/push.sh);
-# the options are passed on to it.
+# docs/SITES.md. The hostname must be the site id, not an alias (an alias is
+# refused; deploy to the site id instead). The hostname must also match the
+# Traefik rule (SITES_RULE in .env) to be reachable. The new version is checked
+# before and watched after activation (see node/push.sh); the options are passed
+# on to it.
+#
+# CELLD_COMPOSE_DIR points the deploy at another compose project (e.g. the
+# pull-only production one in ~/projects/services/celld-sites-deploy) instead of
+# this checkout. The project name, and therefore the volumes, stay the same.
 set -eu
 site="${1:?usage: tools/deploy.sh <site-dir> <hostname>}"
 host="${2:?usage: tools/deploy.sh <site-dir> <hostname>}"
 shift 2
-project=$(cd "$(dirname "$0")/.." && pwd)
+project="${CELLD_COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 bundle=$(mktemp -d)
 trap 'rm -rf "$bundle"' EXIT
 

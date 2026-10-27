@@ -20,7 +20,10 @@
 # atomic snapshot (a VM backup is); --pause pauses the live s3 container during
 # the copy (writes stall for those seconds) to get one.
 set -eu
-project=$(cd "$(dirname "$0")/.." && pwd)
+project="${CELLD_COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# The image the live stack runs; override when drilling the pull-only
+# production stack (e.g. CELLD_NODE_IMAGE=ghcr.io/poesterlin/celld-sites-node:latest).
+image="${CELLD_NODE_IMAGE:-celld-sites-node}"
 pause= calls=
 source=celld-sites_s3-data
 usage="usage: tools/restore-drill.sh [--pause] [--calls FILE] [volume]"
@@ -46,7 +49,7 @@ rand() { head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
 log "copying $source"
 docker volume create "$id" >/dev/null
 [ -n "$pause" ] && docker compose --project-directory "$project" pause s3 >/dev/null
-docker run --rm --network none -v "$source:/from:ro" -v "$id:/to" --user 0 --entrypoint sh celld-sites-node \
+docker run --rm --network none -v "$source:/from:ro" -v "$id:/to" --user 0 --entrypoint sh "$image" \
 	-c 'cp -a /from/. /to/ && du -sh /to | cut -f1' || { [ -n "$pause" ] && docker compose --project-directory "$project" unpause s3; exit 1; }
 [ -n "$pause" ] && docker compose --project-directory "$project" unpause s3 >/dev/null
 
@@ -61,9 +64,13 @@ docker run -d --name "$id-node" --network "container:$id-s3" --init --cap-drop A
 	-e CELLD_BUCKET=s3://celld -e S3_ENDPOINT=http://127.0.0.1:7070 -e AWS_REGION=us-east-1 \
 	-e AWS_ACCESS_KEY_ID="$s3key" -e AWS_SECRET_ACCESS_KEY="$s3secret" \
 	-e ADMIN_TOKEN="$(rand)" -e READ_TOKEN="$(rand)" -e ADMIN_HOST=admin.internal -e EXAMPLE_HOST=drill.invalid \
-	celld-sites-node >/dev/null
+	-e SITE_MAX_INFLIGHT="${SITE_MAX_INFLIGHT:-128}" -e SITE_MAX_OBJECTS="${SITE_MAX_OBJECTS:-1000}" \
+	-e SITE_MAX_SUBREQUESTS="${SITE_MAX_SUBREQUESTS:-1000}" \
+	"$image" >/dev/null
 i=0
-until docker logs "$id-node" 2>&1 | grep -qE 'entrypoint: .*(already has|deployed|failed)'; do
+# Wait for the node itself, not for a bundled-site log line: the production
+# (hosting) image bundles no sites, so there is nothing to deploy.
+until docker exec "$id-node" curl -sf -o /dev/null http://127.0.0.1:8080/.well-known/celld/health 2>/dev/null; do
 	i=$((i + 1))
 	[ $i -gt 120 ] && { log "node did not start"; docker logs --tail 20 "$id-node" >&2; exit 1; }
 	sleep 1

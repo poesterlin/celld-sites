@@ -28,7 +28,7 @@ if [ "${1:-}" = "--extra-assets" ]; then
 	extra=$(cd "${2:?$usage}" && pwd)
 	shift 2
 fi
-project=$(cd "$(dirname "$0")/.." && pwd)
+project="${CELLD_COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 compose() { docker compose --project-directory "$project" "$@"; }
 
 [ -f "$site/astro.config.mjs" ] || { echo "deploy-emdash: $site has no astro.config.mjs" >&2; exit 1; }

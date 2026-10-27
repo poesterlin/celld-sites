@@ -35,7 +35,7 @@ relative to the site directory):
 | `immutable` | Path prefixes of content-hashed files (1-year cache). Default: whichever of `_app/immutable/` and `_nuxt/` exist, plus `assets/` if every file in it has a hash in its name. |
 | `mutable` | Exact paths under those prefixes that change between builds (served `no-cache`). `_nuxt/builds/latest.json` is always included. |
 | `compatibilityDate` | workerd compatibility date, `YYYY-MM-DD`. Default `2026-10-01`. |
-| `check` | Path a deploy requests on the new version before activating it (Durable Objects in an empty scratch namespace) and probes on the live site after; a 5xx stops or rolls back the deploy. Default `"/"`; `false` turns it off. |
+| `check` | Path a deploy requests on the new version before activating it (Durable Objects in an empty scratch namespace) and probes on the live site after; a 5xx stops or rolls back the deploy. Default `"/"`; `false` turns it off. If the default `/` is a static file and the site has a worker, the check also requests `/~check-<version>` so a broken worker cannot pass on the static page; a custom path is used as given. |
 | `notFound` | `"spa"`: a static-only site answers page navigations to unknown paths with `index.html`. Default `"none"`. |
 | `minify` | `true` minifies the bundled server code (default `false`), for big builds near the 16 MiB code limit. |
 | `exclude` | Asset paths never to serve (adapters' `_worker.js`, `_routes.json`, `_headers`, `_redirects`, `.assetsignore` are always excluded). |
@@ -79,6 +79,12 @@ of CPU, and has to start its response within 30 s (`SITE_TIMEOUT_SECS`, else
 workerd-compatible with `nodejs_compat` and compatibility date `2026-10-01`, or
 `compatibilityDate` (YYYY-MM-DD) from `celld.json`. celld 0.6.3 accepts any
 date without complaint, so test a site with a non-default date in a preview.
+
+Per-site quotas: at most 1000 Durable Objects (`SITE_MAX_OBJECTS`; the call that
+would create another throws "object quota reached"), 1000 subrequests per
+request (object calls plus egress fetches), and 128 concurrent requests per site
+per router isolate (`SITE_MAX_INFLIGHT`, above that a 503 with `Retry-After`).
+Static files do not count against CPU, but they do count against in-flight.
 
 ### Runtime gaps the platform papers over
 
@@ -126,6 +132,14 @@ and call them from server code: `await env.OBJECTS.call("Notes", "main", "add", 
 - Arguments and return values must be plain data (structured-cloneable):
   no `Request`, `Response`, functions or class instances.
 - Objects cannot set alarms.
+- `className` and `method` must be identifiers of at most 128 characters and
+  cannot be `Object.prototype` names (`constructor`, `__proto__`, `toString`,
+  …); `name` is at most 200 characters, and the whole `site|class|name` key at
+  most 500 bytes. A site may create `SITE_MAX_OBJECTS` objects (default 1000);
+  creating another throws `object quota reached`.
+- The request context passed to `fetch` is a frozen object with `waitUntil`,
+  `abort` and `passThroughOnException`. `ctx.exports` and `ctx.props` are not
+  exposed.
 
 ## Migrations
 
@@ -220,7 +234,8 @@ site is live: only the active version runs on live data).
 
 **Limits.** A single static file can be at most 20 MiB (the packer refuses
 larger ones, and the router answers 413), the server code at most 16 MiB.
-Symlinks in the static directory are refused. Data belongs to the site id (the
-first hostname deployed to), so serve a site under a new name with an alias
-(`tools/admin.sh PUT '/alias?host=<new>&site=<id>'`) rather than deploying it
-to the new name.
+Symlinks in the static directory are refused. Asset paths are relative (no
+leading `/`, no `..` segment, no backslash, at most 400 bytes). Data belongs to
+the site id (the first hostname deployed to), so serve a site under a new name
+with an alias (`tools/admin.sh PUT '/alias?host=<new>&site=<id>'`) rather than
+deploying it to the new name.

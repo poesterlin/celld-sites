@@ -13,6 +13,10 @@ set -eu
 : "${CELLD_BUCKET:?}" "${S3_ENDPOINT:?}" "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}"
 : "${ADMIN_TOKEN:?}" "${READ_TOKEN:?}" "${ADMIN_HOST:?}"
 case "${SITE_TIMEOUT_SECS:-30}" in *[!0-9]* | "") echo "entrypoint: SITE_TIMEOUT_SECS must be a whole number" >&2; exit 1 ;; esac
+for knob in SITE_MAX_INFLIGHT SITE_MAX_OBJECTS SITE_MAX_SUBREQUESTS; do
+	eval "value=\${$knob:-}"
+	case "$value" in "" | *[!0-9]*) echo "entrypoint: $knob must be a whole number" >&2; exit 1 ;; esac
+done
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 STORE="--bucket $CELLD_BUCKET --endpoint $S3_ENDPOINT --region $AWS_REGION"
 log() { echo "entrypoint: $*" >&2; }
@@ -46,7 +50,9 @@ cp /app/router/index.js "$work/"
 # the bucket, which the dashboard can read.
 admin_hash=$(printf '%s' "$ADMIN_TOKEN" | sha256sum | cut -d' ' -f1)
 read_hash=$(printf '%s' "$READ_TOKEN" | sha256sum | cut -d' ' -f1)
-sed -e "s/@ADMIN_TOKEN_SHA256@/$admin_hash/" -e "s/@READ_TOKEN_SHA256@/$read_hash/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" -e "s/@DEFAULT_SITE@//" -e "s#@OPERATOR_URL@#http://127.0.0.1:8081#" -e "s/@SITE_TIMEOUT_SECS@/${SITE_TIMEOUT_SECS:-30}/" /app/router/wrangler.template.json > "$work/wrangler.json"
+sed -e "s/@ADMIN_TOKEN_SHA256@/$admin_hash/" -e "s/@READ_TOKEN_SHA256@/$read_hash/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" -e "s/@DEFAULT_SITE@//" -e "s#@OPERATOR_URL@#http://127.0.0.1:8081#" -e "s/@SITE_TIMEOUT_SECS@/${SITE_TIMEOUT_SECS:-30}/" \
+	-e "s/@SITE_MAX_INFLIGHT@/${SITE_MAX_INFLIGHT:-128}/" -e "s/@SITE_MAX_OBJECTS@/${SITE_MAX_OBJECTS:-1000}/" -e "s/@SITE_MAX_SUBREQUESTS@/${SITE_MAX_SUBREQUESTS:-1000}/" \
+	/app/router/wrangler.template.json > "$work/wrangler.json"
 log "deploying the router"
 # shellcheck disable=SC2086
 celld deploy "$work" $STORE

@@ -16,8 +16,9 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard` and `sizer` |
-| `node/` | celld node image: entrypoint (bucket setup, router deploy, node, bundled sites), `push.sh` and `admin.sh` |
+| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard` and `sizer` |
+| `node/` | celld node image: entrypoint (bucket setup, router deploy, node, optional bundled sites), `push.sh` and `admin.sh`; `Dockerfile` targets `dev` and `hosting` |
+| `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
@@ -30,24 +31,65 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
+| `docs/SECURITY.md` | Threat model: what a site can reach, what it can break, hostile-tenant checklist |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
-| `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the image |
+| `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the dev image only |
 | `sites/sveltekit/`, `sites/nuxt/`, `sites/tanstack/` | Framework examples with Durable Objects, each with a `RECIPE.md` |
 | `sites/static/` | A plain static site (no build, no server code), with a `RECIPE.md` |
 
-## Run
+## Run (development)
 
 ```sh
 cp .env.example .env    # fill in random values, chmod 600
 docker compose up -d --build
 ```
 
-The test app is served at `https://$HOST_DOMAIN` (set in `.env`). On every
-start the `celld` container creates the bucket if it is missing, deploys the
-router and starts the node, so a fresh or wiped bucket needs no manual steps.
-The bundled example is deployed only if its site has no active version yet: a
-restart never undoes a deploy or a rollback. To update the example after
-changing it, deploy it like any site (`tools/deploy.sh sites/example $HOST_DOMAIN`).
+This builds both images locally and runs the **development** node image, which
+bundles the example site. The test app is served at `https://$HOST_DOMAIN` (set
+in `.env`). On every start the `celld` container creates the bucket if it is
+missing, deploys the router and starts the node, so a fresh or wiped bucket
+needs no manual steps. The bundled example is deployed only if its site has no
+active version yet: a restart never undoes a deploy or a rollback. To update the
+example after changing it, deploy it like any site
+(`tools/deploy.sh sites/example $HOST_DOMAIN`).
+
+## Development vs hosting
+
+The platform has two halves that share one codebase:
+
+- **Development (this checkout).** Examples, recipes, tests, previews and the
+  deploy tooling live here. `compose.yaml` builds images locally
+  (`node/Dockerfile` target `dev`) and bundles `sites/example` so a fresh bucket
+  has something to serve.
+- **Hosting (separate repo, `celld-sites-deploy`).** A pull-only compose file
+  that runs the images CI publishes to GHCR and contains no examples or site
+  sources. It pins `name: celld-sites`, the same project name as the dev stack,
+  so switching between them keeps the volumes and all site data.
+
+`.github/workflows/images.yml` builds and pushes:
+
+| Image | Target | Notes |
+| --- | --- | --- |
+| `ghcr.io/poesterlin/celld-sites-node` | `node/Dockerfile` `hosting` | no bundled sites; `entrypoint.sh` deploys only what is in `/app/sites` |
+| `ghcr.io/poesterlin/celld-sites-dashboard` | `dashboard/Dockerfile` | dashboard and sizer |
+
+Tags are `:latest` on `main`, `X.Y.Z`/`X.Y` on `v*` tags and `:main`; pull
+requests build without pushing. Build a target by hand with
+`docker build -f node/Dockerfile --target hosting .`.
+
+The dev tooling reaches a hosting stack through `CELLD_COMPOSE_DIR`, without
+copying anything into it:
+
+```sh
+CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy \
+  tools/deploy.sh sites/wichtel wichteln.oesterlin.dev
+CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy tools/admin.sh GET /overview
+```
+
+The hosting repo's README covers first start, migration, upgrades and GHCR
+access. Live sites (including `sites/wichtel/`) are gitignored: they are built
+and pushed with `tools/deploy.sh` from their own checkouts and are not part of
+the platform source.
 
 ## Dashboard
 
@@ -106,6 +148,12 @@ tools/preview.sh sites/blog --stop     # or --reset to delete the local data
 tools/deploy.sh sites/blog blog.example.com
 ```
 
+If production runs the separate pull-only stack (the normal setup here), prefix
+the command with `CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy` so
+the build and check target that stack instead of this checkout; without it the
+deploy goes to the local development stack. The same applies to `admin.sh`,
+`seed.mjs`, `deploy-emdash.sh` and `restore-drill.sh`.
+
 Before activating, the deploy **checks** the new version: the router runs it
 without activating it, with its Durable Objects in an empty scratch namespace
 (so its migrations run on fresh databases; deleted afterwards), and requests
@@ -160,12 +208,17 @@ refuses it (409).
 tools/admin.sh POST '/activate?host=blog.example.com&version=<id>'    # roll back (or forward)
 tools/admin.sh PUT '/alias?host=new.example.com&site=blog.example.com' # serve a site under another name
 tools/admin.sh DELETE '/alias?host=new.example.com'
-tools/admin.sh POST '/prune?keep=3'   # keep each site's current version and its 3 most recent deploys
+tools/admin.sh POST '/prune?keep=3&confirm=prune'   # keep each site's current version and its 3 most recent deploys
 tools/admin.sh DELETE '/site?id=blog.example.com&confirm=blog.example.com'  # delete a site and all its data
 printf '["api.example.com"]\n' | tools/admin.sh PUT '/egress?host=blog.example.com' -  # let a site fetch these hosts
 tools/admin.sh GET '/egress?host=blog.example.com'
-tools/admin.sh DELETE '/egress?host=blog.example.com'  # back to no outbound network
+tools/admin.sh DELETE '/egress?host=blog.example.com'  # back to no outbound network: aborts the site's live objects
 ```
+
+Deploy and activation endpoints take a **site id, not an alias** (an alias is
+refused with 409, so a deploy cannot silently change the site it points at).
+Changing an egress list aborts every indexed object of that site, so pending
+timers cannot keep using the old list.
 
 Pruning also deletes versions that were uploaded but never activated, files
 of uploads that never got a code record (after an hour), deploy history beyond
@@ -307,7 +360,7 @@ objects, all served; one compared export identical; 14 s.
   cleaned up: `CELLD_LTX_RETENTION_SECS` (default 3600) deletes write-log
   epochs older than an hour that no restore needs. A new epoch starts when an
   object is restored, e.g. after a celld restart.
-- **Old site versions** stay until pruned (`tools/admin.sh POST '/prune?keep=3'`):
+- **Old site versions** stay until pruned (`tools/admin.sh POST '/prune?keep=3&confirm=prune'`):
   each costs its server code plus the files that changed since earlier
   versions. Prune deletes the files no remaining version uses.
 
@@ -322,8 +375,10 @@ URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site bindings
 (`OBJECTS` validation, plain-data rule, errors, CPU and wall-clock limits;
 `ASSETS`; blocked network, and the egress allowlist), static-file validators
 and caching, and the packer's refusals and defaults, and upgrading from
-per-version files. 76 tests, about 33 s. Run it after changing the router, the
-tools or the push/admin scripts.
+per-version files. `tests/security.test.mjs` adds the request-context surface,
+admin-host isolation, path traversal, the atomic object quota and the in-flight
+cap. 92 tests, about a minute. Run it after changing the router, the tools or the
+push/admin scripts.
 
 The image pins `ghcr.io/denoland/celld:v0.6.3`. To judge a new release, put
 its `celld` binary on `PATH` and run the suite: it runs the real router under
@@ -353,7 +408,28 @@ rebuild the node image and check the examples.
   `SITE_TIMEOUT_SECS` (default 30) of wall-clock time to start gets a 504, and
   an object call gives up after 80% of that, so code that waits forever can't
   hold connections open. The isolates share one process, so this is not
-  a boundary against hostile code: fine for your own sites only.
+  a boundary against hostile code: fine for your own sites only. See
+  `docs/SECURITY.md` for the full threat model and the hostile-tenant checklist.
+- Per-site limits make one flooded or runaway site fail on its own instead of
+  starving the node: 128 concurrent requests per site (503 above,
+  `SITE_MAX_INFLIGHT`), 1000 subrequests per request (`SITE_MAX_SUBREQUESTS`),
+  and 1000 Durable Objects per site (`SITE_MAX_OBJECTS`). The object cap is
+  checked when an object is created and bounds the SQLite databases and write
+  logs a site can add; bytes are not quota'd, so watch bucket growth.
+- Site code gets a minimal request context (`waitUntil`, `abort`,
+  `passThroughOnException`); `ctx.exports` and `ctx.props` are dropped, so the
+  router's own exports are not reachable from a site even if celld grows that
+  API. Deploy paths with `..` segments or backslashes are refused, and request
+  paths containing them answer 404 without a lookup.
+- Deploy invariants: a version id is immutable (re-uploading the same record is
+  a no-op, different content is a 409), and `activate`/`check` refuse a version
+  that was not uploaded for that site (staged with `PUT /code?host=` or
+  `POST /stage`, or in its deploy history), so a bundle built for one site
+  cannot run with another site's Durable Objects. Deploy endpoints refuse an
+  alias hostname, and at most 20 versions may be staged per site. `prune` needs
+  `confirm=prune` and whole-number `keep`/`orphanAge`/`stagedAge`; it keeps
+  versions staged for a deploy younger than `stagedAge` (default an hour) so an
+  in-flight deploy is not deleted. `admin.internal` is not a valid site id.
 - Sites have no outbound network unless the operator allowlists hostnames for
   that site (`PUT /__admin/egress?host=…`, a JSON array). Without a list
   (`globalOutbound: null`) `fetch()` throws; with one, `fetch()` reaches exactly

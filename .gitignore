@@ -3,3 +3,16 @@ node_modules/
 .env
 data/
 .celld-preview/
+
+# Live sites are deployed content, not platform source: they are built and
+# pushed with tools/deploy.sh, and belong in their own repos. Only the example
+# templates below are part of this repo. To add a new template, un-ignore it
+# explicitly.
+/sites/*
+!/sites/AGENTS.md
+!/sites/CLAUDE.md
+!/sites/example/
+!/sites/nuxt/
+!/sites/sveltekit/
+!/sites/tanstack/
+!/sites/static/
