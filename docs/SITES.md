@@ -37,9 +37,12 @@ relative to the site directory):
 | `compatibilityDate` | workerd compatibility date, `YYYY-MM-DD`. Default `2026-10-01`. |
 | `check` | Path a deploy requests on the new version before activating it (Durable Objects in an empty scratch namespace) and probes on the live site after; a 5xx stops or rolls back the deploy. Default `"/"`; `false` turns it off. |
 | `notFound` | `"spa"`: a static-only site answers page navigations to unknown paths with `index.html`. Default `"none"`. |
+| `minify` | `true` minifies the bundled server code (default `false`), for big builds near the 16 MiB code limit. |
 | `exclude` | Asset paths never to serve (adapters' `_worker.js`, `_routes.json`, `_headers`, `_redirects`, `.assetsignore` are always excluded). |
 
 Without `celld.json` the SvelteKit `adapter-cloudflare` layout is assumed.
+EmDash (Astro) sites need more than a `celld.json`: deploy them with
+`tools/deploy-emdash.sh` (README, "EmDash sites").
 The site needs `esbuild` in its devDependencies.
 
 ## Request handling
@@ -86,6 +89,9 @@ platform fixes the ones frameworks have hit, so site code needs nothing:
 - global `process.nextTick`: replaced with a `queueMicrotask` version by the prelude.
 - `setImmediate`/`clearImmediate` imported from `node:timers` (Nitro/h3): the
   packer points `node:timers` imports at a shim built on the working globals.
+
+- Bare Node built-in imports (`"fs"`, `"path"`, bundled CommonJS in Astro
+  builds): the packer turns them into `node:fs`, `node:path`.
 
 Still broken and not patched: `nextTick` imported from `node:process` (the
 module object is separate from the global and can't be patched). If a build

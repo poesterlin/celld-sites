@@ -76,11 +76,19 @@ services:
       CELLD_LTX_RETENTION_SECS: ${CELLD_LTX_RETENTION_SECS:-3600}
       # Wall-clock limit for a site's response and each Durable Object call (504 after).
       SITE_TIMEOUT_SECS: ${SITE_TIMEOUT_SECS:-30}
+      # Per-isolate V8 heap limit (celld's default is 128 MB, Cloudflare's DO
+      # limit). A loaded EmDash site is ~120 MB, so a query's result set could
+      # tip it over, and an isolate over the limit stops materializing result
+      # sets ("the isolate is over its V8 heap limit").
+      CELLD_V8_HEAP_LIMIT_MB: ${CELLD_V8_HEAP_LIMIT_MB:-256}
     # celld's local working copy (SQLite, replication); the bucket is the source
     # of truth, this just saves re-downloading objects after a restart.
     volumes:
       - celld-state:/var/lib/celld
-    mem_limit: 3g
+    # Each loaded site isolate stays resident; an EmDash site takes ~120 MB
+    # (tools/deploy-emdash.sh), small sites a few MB. celld sheds Durable Objects
+    # at 80% of this limit.
+    mem_limit: ${CELLD_MEM_LIMIT:-8g}
     # celld drains for up to 40 s (CELLD_SHUTDOWN_TOTAL_MS) before it exits.
     stop_grace_period: 50s
     security_opt:

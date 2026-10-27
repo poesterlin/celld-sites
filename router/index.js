@@ -117,11 +117,44 @@ async function egressFor(env, site) {
 }
 const egressHosts = async (env, site) => (await egressFor(env, site)).allow;
 
-/** Load (or reuse) the isolate for one version of a site. */
+/** Code records of recently used versions (LRU), so a warm request needs no KV
+ *  read. Bounded by bytes: the router isolate's heap is limited to 128 MiB and an
+ *  EmDash site's code is ~8 MB. Values only, never a promise another request is
+ *  waiting on (see loadSite). */
+const codes = new Map(); // version -> code record
+const CODE_CACHE_BYTES = 24 * 1024 * 1024;
+let codeBytes = 0;
+const codeSize = (code) => (code.source?.length ?? 0) + 1024;
+async function codeFor(env, version) {
+	let code = codes.get(version);
+	if (code) {
+		codes.delete(version); // most recently used goes last
+		codes.set(version, code);
+		return code;
+	}
+	code = await env.CODE.get(`code:${version}`, "json");
+	const size = codeSize(code);
+	if (size <= CODE_CACHE_BYTES / 2 && !codes.has(version)) {
+		for (const [v, c] of codes) {
+			if (codeBytes + size <= CODE_CACHE_BYTES) break;
+			codes.delete(v);
+			codeBytes -= codeSize(c);
+		}
+		codes.set(version, code);
+		codeBytes += size;
+	}
+	return code;
+}
+
+/** Load (or reuse) the isolate for one version of a site. The code is read in the
+ *  calling request and the loader gets it synchronously: with an async callback,
+ *  concurrent first requests waited on the load the first one started, and
+ *  celld 0.6.3 dropped their responses (denoland/celld#258), so they hung until
+ *  the 504. */
 async function loadSite(env, exports, site, version) {
 	const { allow, tag } = await egressFor(env, site);
-	return env.LOADER.get(`${site}@${version}${tag}`, async () => {
-		const code = await env.CODE.get(`code:${version}`, "json");
+	const code = await codeFor(env, version);
+	return env.LOADER.get(`${site}@${version}${tag}`, () => {
 		return {
 			compatibilityDate: code.compatibilityDate,
 			compatibilityFlags: ["nodejs_compat"],

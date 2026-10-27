@@ -1,0 +1,8 @@
+{
+	"worker": "celld-adapter/entry.mjs",
+	"assets": "dist/client",
+	"objects": "celld-adapter/objects.mjs",
+	"immutable": ["_astro/"],
+	"compatibilityDate": "2026-02-24",
+	"minify": true
+}

@@ -21,6 +21,8 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
+| `tools/deploy-emdash.sh` | Builds an EmDash (Astro) site for celld and deploys it, CMS editor included (see [EmDash sites](#emdash-sites)) |
+| `adapters/emdash/` | Entry and Durable Objects that give an EmDash build its database, media and session bindings on celld |
 | `tools/admin.sh` | Admin API from the host: aliases, egress allowlists, rollback, pruning |
 | `tools/preview.sh` | Local preview: the production router under `celld dev` with one site |
 | `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
@@ -186,6 +188,68 @@ SvelteKit sites should set `version: { name: <git commit> }` (see
 `sites/example/vite.config.ts`): the default is a build timestamp, which makes
 every rebuild a new version even with no changes.
 
+## EmDash sites
+
+An [EmDash](https://github.com/emdash-cms/emdash) site (Astro +
+`@astrojs/cloudflare`, e.g. a checkout of the EmDash starter kit) runs here
+with its CMS editor at `https://<host>/_emdash/admin`:
+
+```sh
+(cd ../emdash-site && bun install)
+tools/deploy-emdash.sh ../emdash-site blog.example.com
+```
+
+The script builds the site's own `astro.config.mjs` with one change, the
+database: EmDash's Durable Object adapter (`durableObjects()`) instead of D1.
+`adapters/emdash/` supplies what the build expects from Cloudflare on top of
+`OBJECTS`: the `DB_DO` namespace (class `EmDashDB`, one SQLite database for the
+whole CMS), an R2-style `MEDIA` bucket for uploads (`EmDashMedia`, files in
+512 KiB rows) and the `SESSION` KV namespace for logins (`EmDashKV`). It hides
+celld's internal `_litestream_*` tables from EmDash's schema introspection;
+reading their schema is not authorized, which is what made every migration
+fail before.
+
+On a site's first deploy the script applies the site's seed (setup step 1,
+with content). Whoever then opens `/_emdash/admin` first registers the admin
+with a passkey, bound to that hostname; until then anyone who can reach the
+hostname can claim it. Later deploys change code only: content edited in the
+CMS stays. Not available here: email (EmDash's email plugin and magic links),
+EmDash's cron jobs (scheduled publishing) and the Cloudflare Images binding.
+
+celld 0.6.3 never settles an outbound call made from a promise continuation
+that another request's event resumed (denoland/celld#258, #277). Two places
+hit that: concurrent first requests waiting on a site load another request had
+started (the router now reads the code itself and loads synchronously; test
+"cold start under concurrency"), and EmDash sharing in-flight promises between
+requests, which made its admin's ~15 parallel API calls hang until the 504.
+The adapter therefore runs one request at a time per isolate (a 15-call admin
+burst takes 0.2-1 s).
+
+Each EmDash site is ~8 MB of minified server code and ~120 MB of node memory
+once loaded (loaded sites stay resident), hence `CELLD_MEM_LIMIT` (default
+`8g`). The first request after a deploy runs EmDash's migrations (~7 s).
+
+The router keeps recent code records in memory, so a warm request costs no
+multi-MB bucket read. That cache is bounded by bytes (24 MiB); bounded by
+entries (64) instead, the records of the 72 deployed versions (the EmDash ones
+~8 MB each) filled the whole of the router isolate's V8 heap: it measured 132
+MB against the default limit of 128 MB (`CELLD_V8_HEAP_LIMIT_MB`), and an
+isolate over its limit stops materializing SQL result sets. Every admin API
+read that lists keys then answered 500 ("the isolate is over its V8 heap
+limit"), which also made deploys fail, until a restart. The router's heap now
+stays around 50 MB while deploying.
+
+EmDash builds a content URL from its collection's `urlPattern` and falls back
+to `/<collection>/<slug>`, so with no pattern set its admin linked pages to
+`/pages/<slug>` while they render at `/<slug>` (the sitemap and menus used the
+same fallback). Two fixes: `tools/deploy-emdash.sh` adds
+`"urlPattern": "/{slug}"` to every collection in the seed that lacks one (for a
+site's first deploy; the checkout copy is restored after the build), and the
+adapter fills the pattern into `/_emdash/api/manifest` from the collection row,
+because emdash 0.36 never sends it there — the field is missing from its
+`ManifestResponse`, and the admin therefore always took the fallback. emdash
+0.37 added it, so the adapter's patch can go when the starter upgrades.
+
 ## Durable Objects
 
 Export classes from `src/objects.ts` and call them from routes:
@@ -329,8 +393,9 @@ Writes to many different objects pay one disk flush each, which is where fsync
 costs most. Reads and pages without writes don't touch the bucket's disk.
 
 Memory: ~100 MB celld and ~25 MB VersityGW at rest. Each resident Durable
-Object adds ~1.4 MB to celld; it sheds objects at ~2.4 GB (80% of its 3 GB
-limit), so ~1,500-2,000 objects can be resident at once.
+Object adds ~1.4 MB to celld and each loaded EmDash site ~120 MB; it sheds
+objects at ~6.4 GB (80% of its 8 GB limit, `CELLD_MEM_LIMIT`), so ~4,500
+objects can be resident at once.
 
 Static files (2026-10-26). The router serves them without starting the site's
 isolate, keeps up to 32 MiB of files (each up to 1 MiB) in memory, sends an

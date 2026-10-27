@@ -253,6 +253,33 @@ describe("bindings: OBJECTS", () => {
 	});
 });
 
+describe("cold start under concurrency", () => {
+	// celld 0.6.3 dropped responses of requests that waited on a site load another
+	// request had started (denoland/celld#258); the router now loads synchronously.
+	it("answers every concurrent first request to a new version", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "celld-api-cold-"));
+		try {
+			writeFileSync(join(dir, "worker.js"), 'export default { async fetch(request, env) { for (let i = 0; i < 5; i++) await env.OBJECTS.call("Box", "main", "get"); return new Response("ok"); } };\n');
+			writeFileSync(join(dir, "objects.js"), 'import { DurableObject } from "cloudflare:workers";\nexport class Box extends DurableObject { get() { return 1; } }\n');
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", objects: "objects.js", check: false }));
+			for (let round = 0; round < 3; round++) {
+				// A new version each round, so every round starts cold.
+				writeFileSync(join(dir, "round.js"), `export const round = ${round};\n`);
+				writeFileSync(join(dir, "objects.js"), `import { DurableObject } from "cloudflare:workers";\nexport class Box extends DurableObject { get() { return ${round}; } }\n`);
+				node.deploy(dir, "cold.test");
+				const answers = await Promise.all(
+					Array.from({ length: 20 }, () =>
+						Promise.race([site("/", { host: "cold.test" }).then((r) => r.text), new Promise((r) => setTimeout(() => r("hung"), 10_000))]),
+					),
+				);
+				assert.deepEqual(answers.filter((a) => a !== "ok"), [], `round ${round}`);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("bindings: ASSETS, network, CPU", () => {
 	it("serves the site's own files through ASSETS", async () => {
 		assert.deepEqual((await (await site("/assets-binding")).json()).result, { status: 200, text: "hello from assets\n" });
@@ -799,6 +826,28 @@ describe("packer", () => {
 		rmSync(dir, { recursive: true, force: true });
 		assert.equal(r.ok, false);
 		assert.match(r.error, /check must be a path/);
+	});
+	it("serves bare Node built-in imports (\"path\") as node:*, and minifies on request", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "celld-api-bare-"));
+		try {
+			writeFileSync(join(dir, "worker.js"), 'import path from "path";\nexport default { fetch: () => new Response(path.posix.join("a", "b")) };\n');
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js" }));
+			const plain = node.pack(dir);
+			const source = JSON.parse(readFileSync(join(plain, "code.json"), "utf8")).source;
+			rmSync(plain, { recursive: true, force: true });
+			assert.match(source, /from "node:path"/);
+			node.deploy(dir, "bare.test");
+			const r = await site("/", { host: "bare.test" });
+			assert.equal(r.text, "a/b");
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", minify: true }));
+			const minified = node.pack(dir);
+			assert.ok(JSON.parse(readFileSync(join(minified, "code.json"), "utf8")).source.length < source.length);
+			rmSync(minified, { recursive: true, force: true });
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", minify: "yes" }));
+			assert.throws(() => node.pack(dir), /minify must be true or false/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 	it("refuses an invalid notFound option", () => {
 		const dir = copy();

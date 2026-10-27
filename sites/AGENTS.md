@@ -38,6 +38,10 @@ Design within these; none of them can be worked around from site code.
 | **Fixed runtime:** `nodejs_compat`, compatibility date `2026-10-01` (or `compatibilityDate` in `celld.json`), on celld (alpha). | Some Node APIs exist but throw `... is not implemented in celld`. The platform patches `console.createTask`, the global `process.nextTick` and `setImmediate`/`clearImmediate` from `node:timers`; `nextTick` imported from `node:process` still throws. |
 | **Upload limits:** 20 MiB per static file, 16 MiB of server code; no symlinks in the static directory. | Keep large media out of sites. |
 
+EmDash (Astro CMS) sites are the exception to "only two bindings": deploy them
+with `tools/deploy-emdash.sh`, which maps their D1/R2/KV needs onto Durable
+Objects (README, "EmDash sites"). Don't hand-roll that in site code.
+
 ## celld.json
 
 ```json

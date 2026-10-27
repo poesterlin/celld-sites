@@ -26,13 +26,15 @@
 //              (default "/"); false skips both. See node/push.sh.
 //   notFound   "none" (default) or "spa": a static-only site answers unknown
 //              paths with index.html (client-side routing).
+//   minify     true: minify the bundled server code (default false). For big
+//              builds (EmDash/Astro: 12 MB -> 8 MB) under the 16 MiB code limit.
 // Without celld.json, the SvelteKit adapter-cloudflare layout applies:
 //   { "worker": ".svelte-kit/cloudflare/_worker.js", "assets": ".svelte-kit/cloudflare",
 //     "objects": "src/objects.ts" (if present) }
 // esbuild comes from the site's devDependencies, else from tools/ (npm ci --prefix tools).
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { builtinModules, createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 
 const siteDir = resolve(process.argv[2] ?? ".");
@@ -51,7 +53,8 @@ const config = existsSync(configFile)
 			assets: ".svelte-kit/cloudflare",
 			objects: existsSync(join(siteDir, "src/objects.ts")) ? "src/objects.ts" : undefined,
 		};
-const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01", check = "/" } = config;
+const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01", check = "/", minify = false } = config;
+if (typeof minify !== "boolean") fail("minify must be true or false");
 if (check !== false && (typeof check !== "string" || !check.startsWith("/"))) fail(`check must be a path starting with "/", or false`);
 if (notFound !== "none" && notFound !== "spa") fail(`notFound must be "none" or "spa"`);
 // celld 0.6.3 accepts any string here (even a non-date), so check it ourselves.
@@ -86,11 +89,15 @@ export const clearImmediate = (...a) => g.clearImmediate(...a);
 export const promises = timersPromises;
 export default { setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate, promises };
 `;
+const BARE_BUILTIN = new RegExp(`^(${builtinModules.filter((m) => !m.startsWith("_") && m !== "timers").map((m) => m.replace(/[/]/g, "\\/")).join("|")})$`);
 const celldShims = {
 	name: "celld-shims",
 	setup(build) {
 		build.onResolve({ filter: /^(node:)?timers$/ }, () => ({ path: "timers", namespace: "celld-shim" }));
 		build.onLoad({ filter: /.*/, namespace: "celld-shim" }, () => ({ contents: TIMERS_SHIM, loader: "js", resolveDir: siteDir }));
+		// Bundled CommonJS dependencies (e.g. in Astro builds) import Node built-ins
+		// by their bare name ("fs", "path"); nodejs_compat serves them as node:*.
+		build.onResolve({ filter: BARE_BUILTIN }, (args) => ({ path: `node:${args.path}`, external: true }));
 	},
 };
 
@@ -121,6 +128,7 @@ if (workerPath) {
 		mainFields: ["module", "main"],
 		external: ["cloudflare:*", "node:*"],
 		plugins: [celldShims],
+		minify,
 		logLevel: "warning",
 	});
 	source = bundle.outputFiles[0].text;
