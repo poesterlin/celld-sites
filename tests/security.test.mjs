@@ -186,6 +186,11 @@ describe("per-site quotas", () => {
 		assert.deepEqual(results.filter((r) => r.ok), [], "no slot is left");
 		for (const r of results) assert.match(r.error, /object quota/);
 	});
+	it("applies the object quota to admin seeding too", async () => {
+		const r = await quota.admin("POST", "/call?host=guard.test&class=Box&name=admin-extra&method=get", { body: "[]" });
+		assert.equal(r.status, 429);
+		assert.match(r.json().error, /object quota/);
+	});
 	it("answers 503 above the in-flight limit and recovers", async () => {
 		const results = await Promise.all(Array.from({ length: 6 }, () => site(flood, "/slow").then((r) => r.status)));
 		assert.ok(results.includes(503), `statuses: ${results.join(",")}`);

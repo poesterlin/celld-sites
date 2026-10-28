@@ -16,7 +16,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard` and `sizer` |
+| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `sizer`, `cubby` and `cubby-shelf` |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node, optional bundled sites), `push.sh` and `admin.sh`; `Dockerfile` targets `dev` and `hosting` |
 | `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
 | `router/` | The host-header router Worker and its config template |
@@ -30,6 +30,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/restore-drill.sh` | Restore drill: a throwaway node on a copy of a bucket volume, checked against live |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
+| `cubby/` | Cubby: a catalog/store, a CLI and the local Shelf UI for installing tiny sandboxed applets; the store never runs or builds them ([cubby/README.md](cubby/README.md)) |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `docs/SECURITY.md` | Threat model: what a site can reach, what it can break, hostile-tenant checklist |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
@@ -240,6 +241,29 @@ dashboard shows each site's id, hostnames and deploy history.
 SvelteKit sites should set `version: { name: <git commit> }` (see
 `sites/example/vite.config.ts`): the default is a build timestamp, which makes
 every rebuild a new version even with no changes.
+
+## Cubby app store (prototype)
+
+`cubby/` is a small, self-hostable catalog for the "little tools" that are too
+small for Docker: publishers upload a packed celld bundle, users run
+`cubby install <app> --host <their-host>` and the app runs in their own node
+with its data in local SQLite. The store holds metadata and bytes only; it has
+no route to the celld admin API or the bucket and never executes published
+code. Egress is the only permission an app can request, and the installer asks
+before granting it.
+
+The compose file adds the public-facing `cubby` catalog (`CUBBY_HOST`,
+`CUBBY_ADMIN_TOKEN`, `CUBBY_REQUIRE_REVIEW`) and the LAN-only `cubby-shelf`
+install UI (`CUBBY_SHELF_HOST`, `CUBBY_SHELF_PASSWORD`, `CUBBY_SHELF_SECRET`).
+For everyday use, open the shelf, search the store and press Install/Update;
+`cubby install` remains the scriptable fallback. App entries also have **Try it
+live**, which deploys the release to the disposable `celld-demo` node, iframes
+it for `CUBBY_DEMO_TTL_SECS` (default 15 min) and deletes it; that node has its
+own bucket/token, no egress and session limits. Making the catalog public is a
+Cloudflare tunnel entry plus `CUBBY_REQUIRE_REVIEW=1`; never expose the shelf,
+and public demos additionally need wildcard `demo-*` DNS/tunnel.
+See [cubby/README.md](cubby/README.md) for the architecture, threat model, API
+and deployment checklist.
 
 ## EmDash sites
 

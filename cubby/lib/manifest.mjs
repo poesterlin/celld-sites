@@ -1,0 +1,129 @@
+// Manifest rules shared by the publisher CLI and the store API.
+//
+// A manifest describes the applet a publisher is shipping. It is deliberately
+// small and strict: the store only needs enough to list, search and display the
+// app, and the installer needs the one permission that matters (egress). The
+// platform-specific build config stays in the app's celld.json.
+
+export class ManifestError extends Error {}
+
+const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])$/;
+const PUBLISHER = /^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/;
+const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+const TAG = /^[a-z0-9](?:[a-z0-9-]{0,18}[a-z0-9])?$/;
+const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const TLD = /^(?:[a-z][a-z0-9-]*|xn--[a-z0-9-]+)$/;
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const INTERNAL = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example", ".onion"];
+const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "tags", "egress"]);
+
+const fail = (msg) => {
+	throw new ManifestError(msg);
+};
+const str = (v, field, min, max) => {
+	if (typeof v !== "string") fail(`${field} must be a string`);
+	const s = v.trim();
+	if (s.length < min) fail(`${field} is required`);
+	if (s.length > max) fail(`${field} is longer than ${max} characters`);
+	return s;
+};
+const optionalUrl = (v, field) => {
+	if (v === undefined) return undefined;
+	const s = str(v, field, 1, 300);
+	let u;
+	try {
+		u = new URL(s);
+	} catch {
+		fail(`${field} must be an absolute http(s) URL`);
+	}
+	if (u.protocol !== "https:" && u.protocol !== "http:") fail(`${field} must be an http(s) URL`);
+	if (u.username || u.password) fail(`${field} must not contain credentials`);
+	return s;
+};
+
+/** Validate a publisher name (part of `cubby register`). */
+export function validatePublisherName(value) {
+	if (typeof value !== "string" || !PUBLISHER.test(value)) {
+		throw new ManifestError("publisher name must be 3-30 characters: lowercase letters, digits and dashes");
+	}
+	return value;
+}
+
+export function validateSlug(value) {
+	if (typeof value !== "string" || !SLUG.test(value)) {
+		throw new ManifestError("app id must be 2-40 characters: lowercase letters, digits and dashes, not starting or ending with a dash");
+	}
+	return value;
+}
+
+export function validateVersion(value) {
+	if (typeof value !== "string" || value.length > 40 || !VERSION.test(value)) {
+		throw new ManifestError("version must be semver, e.g. 1.0.0 or 0.2.1-beta.1");
+	}
+	return value;
+}
+
+/** A hostname an app may fetch. The store rejects names a public app must never
+ *  need (IP literals, single labels, internal suffixes, numeric TLDs); the
+ *  installer shows the list and refuses to grant it without consent. */
+export function validateEgressHost(value) {
+	const host = String(value ?? "").trim().toLowerCase();
+	if (!host || host.length > 253) throw new ManifestError("egress hostnames must be 1-253 characters");
+	if (/[\s/\\@:*"'<>]/.test(host)) throw new ManifestError(`bad egress hostname: ${value}`);
+	const labels = host.split(".");
+	if (labels.length < 2) throw new ManifestError(`egress hostname ${host} must be a fully qualified name, not a single label`);
+	if (!labels.every((l) => LABEL.test(l))) throw new ManifestError(`bad egress hostname: ${value}`);
+	if (IPV4.test(host) || host.includes(":")) throw new ManifestError(`egress hostname ${host} is an IP address`);
+	const suffix = INTERNAL.find((s) => host.endsWith(s));
+	if (suffix) throw new ManifestError(`egress hostname ${host} ends in ${suffix} and cannot be requested`);
+	if (!TLD.test(labels[labels.length - 1])) throw new ManifestError(`egress hostname ${host} has a numeric or invalid top-level domain`);
+	return host;
+}
+
+/**
+ * Validate and normalize a `cubby.json` manifest.
+ * Throws ManifestError with a human message; returns the trimmed manifest.
+ */
+export function validateManifest(input) {
+	if (!input || typeof input !== "object" || Array.isArray(input)) fail("manifest must be a JSON object");
+	for (const key of Object.keys(input)) if (!FIELDS.has(key)) fail(`unknown manifest field: ${key}`);
+	const schema = input.schema ?? 1;
+	if (schema !== 1) fail("manifest schema must be 1");
+
+	const slug = validateSlug(input.slug);
+	const name = str(input.name, "name", 1, 60);
+	const summary = str(input.summary, "summary", 1, 160);
+	const description = input.description === undefined ? "" : str(input.description, "description", 0, 8000);
+	const version = validateVersion(input.version);
+	const license = str(input.license, "license", 1, 40); // SPDX id or "Proprietary"; not enforced
+	const homepage = optionalUrl(input.homepage, "homepage");
+	const source = optionalUrl(input.source, "source");
+	const icon = input.icon === undefined ? "" : str(input.icon, "icon", 0, 16);
+	if (/[\u0000-\u001f\u007f]/.test(icon)) fail("icon must not contain control characters");
+
+	let tags = [];
+	if (input.tags !== undefined) {
+		if (!Array.isArray(input.tags) || input.tags.length > 8) fail("tags must be an array of at most 8 strings");
+		tags = [...new Set(input.tags.map((t) => String(t).trim().toLowerCase()))];
+		for (const tag of tags) if (!TAG.test(tag)) fail(`bad tag: ${tag} (1-20 chars: a-z, 0-9, dashes)`);
+	}
+
+	let egress = [];
+	if (input.egress !== undefined) {
+		if (!Array.isArray(input.egress) || input.egress.length > 10) fail("egress must be an array of at most 10 hostnames");
+		egress = [...new Set(input.egress.map(validateEgressHost))];
+	}
+
+	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, tags, egress };
+}
+
+/** Parse and validate manifest text (used by the CLI). */
+export function parseManifest(json) {
+	let value;
+	try {
+		value = JSON.parse(json);
+	} catch {
+		fail("cubby.json is not valid JSON");
+	}
+	return validateManifest(value);
+}

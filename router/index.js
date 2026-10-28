@@ -405,16 +405,7 @@ export class SiteObjects extends WorkerEntrypoint {
 		// The check deletes its scratch objects through the index, so record them first.
 		if (isScratch(site)) await indexObject(this.env, key);
 		else if (!indexed.has(key)) {
-			const exists = await this.env.CODE.get(`obj:${key}`);
-			// Every object is another SQLite database with its own write log, so
-			// creating one is what needs the quota; using it again does not. The
-			// claim is atomic in a reserved site object, so concurrent first calls
-			// cannot all pass the check.
-			if (exists === null) {
-				const max = limit(this.env, "SITE_MAX_OBJECTS", 1000, 1000);
-				const allowed = await this.env.SITE_OBJECTS.getByName(`~quota~|${site}`).claim(site, key, max);
-				if (!allowed) throw new Error(`object quota reached for ${site} (${max})`);
-			}
+			await claimObject(this.env, site, key);
 			this.ctx.waitUntil(
 				indexObject(this.env, key).then(() => {
 					if (indexed.size >= MAX_INDEXED) indexed.clear();
@@ -432,7 +423,7 @@ export class SiteObjects extends WorkerEntrypoint {
  *  only: an allowlisted name can still resolve to a private address (DNS
  *  rebinding), so only allowlist names whose DNS the operator controls. */
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
-const INTERNAL_SUFFIXES = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example"];
+const INTERNAL_SUFFIXES = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example", ".onion"];
 /** A real top-level domain is alphabetic or punycode: `127.1`, `0x7f.1` and
  *  `1.2.3.4.5` are numeric host forms, not names to allowlist. */
 const TLD = /^(?:[a-z][a-z0-9-]*|xn--[a-z0-9-]+)$/;
@@ -481,6 +472,15 @@ async function indexObject(env, key) {
 	if ((await env.CODE.get(`obj:${key}`)) !== null) return;
 	const id = env.SITE_OBJECTS.idFromName(key).toString();
 	await env.CODE.put(`obj:${key}`, "", { metadata: { id, firstSeen: new Date().toISOString() } });
+}
+
+/** Claim a new object against the site's quota. Shared by site code and the
+ *  admin seeding endpoint so neither route can create databases past the cap. */
+async function claimObject(env, site, key) {
+	if ((await env.CODE.get(`obj:${key}`)) !== null) return;
+	const max = limit(env, "SITE_MAX_OBJECTS", 1000, 1000);
+	const allowed = await env.SITE_OBJECTS.getByName(`~quota~|${site}`).claim(site, key, max);
+	if (!allowed) throw new Error(`object quota reached for ${site} (${max})`);
 }
 
 /** One per (site, class, name): runs the site's class as a facet. */
@@ -1167,6 +1167,13 @@ async function adminCall(request, env, url) {
 	const refusal = await callRefusal(env, site, version);
 	if (refusal) return fail(409, refusal);
 	const key = `${site}|${className}|${name}`;
+	if (new TextEncoder().encode(key).length > 500) return fail(400, "bad object reference");
+	try {
+		await claimObject(env, site, key);
+	} catch (e) {
+		if (/object quota/.test(String(e?.message ?? e))) return fail(429, e.message);
+		throw e;
+	}
 	await indexObject(env, key);
 	try {
 		const { allow, tag } = await egressFor(env, site);
@@ -1175,6 +1182,7 @@ async function adminCall(request, env, url) {
 		return json({ site, className, name, method, result: result ?? null });
 	} catch (e) {
 		if (e instanceof Timeout) return fail(504, e.message);
+		if (/object quota/.test(String(e?.message ?? e))) return fail(429, e.message);
 		return fail(500, `${className}.${method}: ${String(e?.message ?? e).slice(0, 500)}`);
 	}
 }
@@ -1214,8 +1222,9 @@ async function putEgress(request, env, url) {
 	if (!hostOk(env, host)) return fail(400, "bad host");
 	const refusal = await aliasRefusal(env, host);
 	if (refusal) return refusal;
+	// Allowed before the site exists: the Cubby installer grants the declared
+	// hosts first, so the deploy check runs with the permissions the app needs.
 	const site = await siteFor(env, host);
-	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, `no site for ${host}`);
 	let list;
 	try {
 		list = await request.json();
@@ -1247,7 +1256,6 @@ async function deleteEgress(env, url) {
 	const refusal = await aliasRefusal(env, host);
 	if (refusal) return refusal;
 	const site = await siteFor(env, host);
-	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, `no site for ${host}`);
 	await env.CODE.delete(`egress:${site}`);
 	egressCache.delete(site);
 	await abortFacets(env, site);

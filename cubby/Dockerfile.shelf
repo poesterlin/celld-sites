@@ -1,0 +1,30 @@
+# Cubby Shelf: the local install/preview UI. It holds the celld admin token, so
+# it is LAN-only and separate from the public store image.
+FROM node:24-bookworm-slim
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# push.sh needs curl and a POSIX tar; both are also used by the CLI's local mode.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends curl ca-certificates findutils \
+	&& rm -rf /var/lib/apt/lists/*
+
+COPY cubby/package.json cubby/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
+COPY cubby/lib ./lib
+COPY cubby/cli ./cli
+COPY cubby/shelf.mjs ./
+COPY cubby/shelf-public ./shelf-public
+COPY cubby/public/fonts ./shelf-public/fonts
+COPY node/push.sh ./node/push.sh
+
+RUN chmod +x cli/cubby.mjs node/push.sh && mkdir -p /data && chown node:node /data
+USER node
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+	CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "shelf.mjs"]

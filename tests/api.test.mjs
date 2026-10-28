@@ -325,12 +325,16 @@ describe("egress allowlist", () => {
 		assert.equal((await node.admin("PUT", `/egress?host=${W}`, { token: "read", body: "[]" })).status, 403);
 	});
 	it("refuses malformed and internal target names", async () => {
-		for (const bad of ["127.0.0.1", "10.0.0.4", "[::1]", "localhost", "s3.internal", "metadata.google.internal", "*.example.com", "no_space.example.com"]) {
+		for (const bad of ["127.0.0.1", "10.0.0.4", "[::1]", "localhost", "s3.internal", "metadata.google.internal", "*.example.com", "no_space.example.com", "service.onion"]) {
 			assert.equal((await allow([bad])).status, 400, bad);
 		}
 		assert.equal((await allow("example.com")).status, 400); // not an array
 		assert.equal((await node.admin("PUT", `/egress?host=${W}`, { body: JSON.stringify(Array.from({ length: 21 }, (_, i) => `h${i}.example.com`)) })).status, 400);
-		assert.equal((await node.admin("PUT", "/egress?host=nobody.test", { body: "[]" })).status, 404);
+		// Egress may be set before the site exists: the Cubby installer grants the
+		// declared hosts first, so the deploy check runs with the intended list.
+		assert.equal((await node.admin("PUT", "/egress?host=new.test", { body: '["example.com"]' })).status, 200);
+		assert.deepEqual((await node.admin("GET", "/egress?host=new.test")).json().allow, ["example.com"]);
+		assert.equal((await node.admin("DELETE", "/egress?host=new.test")).status, 200);
 	});
 	it("lets an allowlisted site fetch, blocks other hosts, and clears", async (t) => {
 		const online = await fetch("https://example.com/", { signal: AbortSignal.timeout(5000) })

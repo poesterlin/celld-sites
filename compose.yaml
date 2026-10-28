@@ -146,6 +146,65 @@ services:
       - 'traefik.http.routers.celld-sites.middlewares=celld-sites-compress'
       - 'traefik.http.services.celld-sites.loadbalancer.server.port=8080'
 
+  # Disposable celld node for interactive store demos. It has its own bucket,
+  # state volume and admin token; production site data is never reachable from
+  # it. The store deploys a demo site, iframes it for a few minutes, then deletes
+  # it. LAN-only until demo-* is added to the tunnel (wildcard).
+  celld-demo:
+    build:
+      context: .
+      dockerfile: node/Dockerfile
+      target: hosting
+    image: celld-sites-node:demo
+    restart: unless-stopped
+    init: true
+    depends_on:
+      s3:
+        condition: service_healthy
+        restart: true
+    environment:
+      CELLD_BUCKET: s3://celld-demo
+      S3_ENDPOINT: http://s3:7070
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:?Set DEMO_ADMIN_TOKEN in .env}
+      READ_TOKEN: ${DEMO_READ_TOKEN:?Set DEMO_READ_TOKEN in .env}
+      ADMIN_HOST: demo-admin.internal
+      SITE_TIMEOUT_SECS: 20
+      SITE_MAX_INFLIGHT: 32
+      SITE_MAX_OBJECTS: 100
+      SITE_MAX_SUBREQUESTS: 100
+      CELLD_V8_HEAP_LIMIT_MB: 128
+      CELLD_LTX_RETENTION_SECS: 1800
+    volumes:
+      - demo-state:/var/lib/celld
+    mem_limit: 2g
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/.well-known/celld/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+    networks:
+      default:
+        aliases:
+          - demo-admin.internal
+      traefik_web: {}
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.celld-demo.rule=HostRegexp(`^demo-[a-z0-9]+[.]${CUBBY_DEMO_DOMAIN:-example.com}$`)'
+      - 'traefik.http.routers.celld-demo.ruleSyntax=v3'
+      - 'traefik.http.routers.celld-demo.priority=10'
+      - 'traefik.http.services.celld-demo.loadbalancer.server.port=8080'
+
   # Read-only dashboard, no authentication: LAN-only (not in the Cloudflare
   # tunnel). It can't change anything: GET routes only, a read-only token for the
   # router's admin API. It has no access to the bucket (site code and data);
@@ -220,9 +279,117 @@ services:
     networks:
       - default
 
+  # Cubby: the public catalog for tiny applets (see cubby/README.md). It holds
+  # metadata and packed bundles, never builds or runs app code, and has no
+  # access to the bucket or the celld admin API. LAN-only by default; making it
+  # public is a Cloudflare tunnel entry plus CUBBY_REQUIRE_REVIEW=1.
+  cubby:
+    build:
+      context: .
+      dockerfile: cubby/Dockerfile
+    image: celld-sites-cubby
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: 3000
+      CUBBY_DATA_DIR: /data
+      # Enables review, takedown and report handling. Empty disables /admin.
+      CUBBY_ADMIN_TOKEN: ${CUBBY_ADMIN_TOKEN:-}
+      # 1: new releases stay out of the catalog until an admin approves them.
+      CUBBY_REQUIRE_REVIEW: ${CUBBY_REQUIRE_REVIEW:-0}
+      # Interactive demos run on celld-demo, with a separate admin token.
+      CUBBY_DEMO_API: http://demo-admin.internal:8080
+      CUBBY_DEMO_HOST: demo-admin.internal
+      CUBBY_DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:?Set DEMO_ADMIN_TOKEN in .env}
+      CUBBY_DEMO_DOMAIN: ${CUBBY_DEMO_DOMAIN:-example.com}
+      CUBBY_DEMO_SCHEME: https
+      CUBBY_DEMO_TTL_SECS: ${CUBBY_DEMO_TTL_SECS:-900}
+      CUBBY_DEMO_MAX: ${CUBBY_DEMO_MAX:-8}
+      CUBBY_DEMO_PER_HOUR: ${CUBBY_DEMO_PER_HOUR:-6}
+    volumes:
+      - cubby-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.cubby.rule=Host(`${CUBBY_HOST:-cubby.example.com}`)'
+      - 'traefik.http.routers.cubby.priority=20'
+      - 'traefik.http.services.cubby.loadbalancer.server.port=3000'
+
+  # Cubby Shelf: the non-technical local UI for installing store apps into this
+  # node. Unlike the store it holds ADMIN_TOKEN, so it is LAN-only and never
+  # gets a public tunnel entry. See cubby/README.md.
+  cubby-shelf:
+    build:
+      context: .
+      dockerfile: cubby/Dockerfile.shelf
+    image: celld-sites-cubby-shelf
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: 3000
+      CUBBY_STORE: http://cubby:3000
+      CUBBY_STORE_PUBLIC: https://${CUBBY_HOST:-cubby.example.com}
+      # The celld service's network alias on the default network.
+      CELLD_ADMIN_API: http://admin.internal:8080
+      ADMIN_HOST: admin.internal
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env}
+      CUBBY_APP_DOMAIN: ${CUBBY_APP_DOMAIN:-example.com}
+      CUBBY_APP_SCHEME: https
+      CUBBY_SHELF_PASSWORD: ${CUBBY_SHELF_PASSWORD:?Set CUBBY_SHELF_PASSWORD in .env}
+      CUBBY_SHELF_SECRET: ${CUBBY_SHELF_SECRET:?Set CUBBY_SHELF_SECRET in .env}
+    volumes:
+      - cubby-shelf-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.cubby-shelf.rule=Host(`${CUBBY_SHELF_HOST:-cubby-shelf.example.com}`)'
+      - 'traefik.http.routers.cubby-shelf.priority=20'
+      - 'traefik.http.services.cubby-shelf.loadbalancer.server.port=3000'
+
 volumes:
   s3-data:
   celld-state:
+  cubby-data:
+  cubby-shelf-data:
+  demo-state:
 
 networks:
   traefik_web:

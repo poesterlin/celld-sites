@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Cubby Shelf</title>
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<link rel="stylesheet" href="/style.css" />
+	</head>
+	<body>
+		<header class="top">
+			<a class="brand" href="/">
+				<svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true"><path d="M4 10.5 16 4l12 6.5v11L16 28 4 21.5z" fill="none" stroke="currentColor" stroke-width="2" /><path d="M4 10.5 16 17l12-6.5M16 17v11" fill="none" stroke="currentColor" stroke-width="2" /></svg>
+				<span class="wordmark">cubby</span>
+				<span class="brand-tag">node shelf</span>
+			</a>
+			<nav class="tabs">
+				<button type="button" class="tab" data-tab="store">Store</button>
+				<button type="button" class="tab" data-tab="installed">Installed <span class="count" id="count"></span></button>
+			</nav>
+			<form method="post" action="/logout"><button class="ghost small" type="submit">Sign out</button></form>
+		</header>
+
+		<main id="main" aria-live="polite"></main>
+		<div class="modal" id="modal" hidden>
+			<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+				<div id="modalBody"></div>
+			</div>
+		</div>
+		<div class="toast" id="toast" hidden></div>
+
+		<script src="/app.js" type="module"></script>
+	</body>
+</html>
