@@ -139,6 +139,16 @@ These are accepted for self-hosted, first-party sites. They matter for a store.
    returns them to `READ_TOKEN`, and the unauthenticated LAN dashboard shows
    them. Do not put secrets or unnecessary user identifiers in object names.
 
+## Proxy-only sites (Hamstr grains)
+
+Sites whose id starts with `PROXY_SITE_PREFIX` (default `grain-`) answer only
+requests carrying `x-celld-proxy-token`, whose SHA-256 is the router's
+`PROXY_TOKEN_SHA256`; anything else gets the same 404 as a missing site, aliases
+included. The router strips the header before site code runs, on every site.
+This is what lets [Hamstr](../hamstr/README.md) hand apps identity headers they
+can trust: another container on the bridge cannot reach a grain directly or
+forge them. Without `PROXY_TOKEN` grain sites answer nobody.
+
 ## Hostile tenant checklist
 
 Before running untrusted apps on a shared node:

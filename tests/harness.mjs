@@ -18,6 +18,8 @@ export class Node {
 		this.port = port;
 		this.adminToken = token();
 		this.readToken = token();
+		this.proxyToken = token();
+		this.proxyPrefix = "grain-";
 		this.dir = mkdtempSync(join(tmpdir(), "celld-api-test-"));
 		this.env = {
 			...process.env,
@@ -40,7 +42,9 @@ export class Node {
 			.replace("@SITE_TIMEOUT_SECS@", "3")
 			.replace("@SITE_MAX_INFLIGHT@", process.env.TEST_SITE_MAX_INFLIGHT ?? "128")
 			.replace("@SITE_MAX_OBJECTS@", process.env.TEST_SITE_MAX_OBJECTS ?? "1000")
-			.replace("@SITE_MAX_SUBREQUESTS@", process.env.TEST_SITE_MAX_SUBREQUESTS ?? "1000");
+			.replace("@SITE_MAX_SUBREQUESTS@", process.env.TEST_SITE_MAX_SUBREQUESTS ?? "1000")
+			.replace("@PROXY_TOKEN_SHA256@", sha256(this.proxyToken))
+			.replace("@PROXY_SITE_PREFIX@", this.proxyPrefix);
 		writeFileSync(join(router, "wrangler.json"), template);
 		return this.#launch();
 	}

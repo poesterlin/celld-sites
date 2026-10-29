@@ -322,6 +322,12 @@ downloads per IP. Limits are in-memory for the prototype and reset on restart.
 }
 ```
 
+Optional, for apps that run as [Hamstr](../hamstr/README.md) grains:
+`permissions` (`[{ "id", "title", "description"? }]`, at most 16) and `roles`
+(`[{ "id", "title", "description"?, "permissions": [ids], "default"? }]`, at
+most 8, `owner` is reserved). They define what a grain owner can share; see
+`examples/pinboard`.
+
 Strict by design: unknown fields are rejected so a typo cannot silently drop a
 permission. `egress` is the only permission; Durable Objects and storage are
 implicitly scoped to the app's site id. Egress entries must be public,

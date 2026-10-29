@@ -390,7 +390,7 @@ export function createShelf(options = {}) {
 				const host = String(body.host ?? "").trim().toLowerCase();
 				const version = body.version ? String(body.version) : null;
 				if (!/^[a-z0-9-]{2,40}$/.test(slug)) return fail(res, 400, "bad app id");
-				if (!HOSTNAME.test(host) || host === "admin.internal") return fail(res, 400, "enter a site hostname, e.g. celld-wichteln.oesterlin.dev");
+				if (!HOSTNAME.test(host) || host === "admin.internal") return fail(res, 400, "enter a site hostname, e.g. celld-wichteln.example.com");
 				const detail = await storeJson(`/api/v1/apps/${slug}`);
 				const release = version ? detail.releases.find((r) => r.version === version) : detail.releases.find((r) => r.status === "published");
 				if (!release || release.status !== "published") return fail(res, 404, "that release is not published");

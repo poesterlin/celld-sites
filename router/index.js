@@ -1357,9 +1357,31 @@ export default {
 			version = await env.CODE.get(`site:${site}`);
 		}
 		if (!version) return new Response(`No site for ${host}`, { status: 404 });
+		// Sites under PROXY_SITE_PREFIX (Hamster grains) belong to a front proxy
+		// that authenticates the visitor and sets identity headers. Only that proxy
+		// knows the token, so another container on the bridge cannot reach a grain
+		// directly or forge its identity headers.
+		const proxied = proxyPrefix(env) !== "" && site.startsWith(proxyPrefix(env));
+		const supplied = request.headers.get(PROXY_HEADER);
+		if (proxied && !(await tokenMatches(supplied, env.PROXY_TOKEN_SHA256))) return new Response(`No site for ${host}`, { status: 404 });
+		if (supplied !== null) {
+			const headers = new Headers(request.headers);
+			headers.delete(PROXY_HEADER);
+			request = new Request(request, { headers });
+		}
 		return serveWithLimit(request, env, ctx, site, version);
 	},
 };
+
+const PROXY_HEADER = "x-celld-proxy-token";
+/** An unreplaced template placeholder (an older preview script) disables the check. */
+const proxyPrefix = (env) => (/^[a-z0-9][a-z0-9.-]*$/.test(env.PROXY_SITE_PREFIX ?? "") ? env.PROXY_SITE_PREFIX : "");
+async function tokenMatches(token, expectedHex) {
+	if (token === null || !expectedHex || !/^[a-f0-9]{64}$/.test(expectedHex)) return false;
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+	const expected = Uint8Array.from(expectedHex.match(/../g), (h) => parseInt(h, 16));
+	return crypto.subtle.timingSafeEqual(digest, expected);
+}
 
 /** Answer a request with one version of a site: static files first, then its worker. */
 async function serve(request, env, ctx, site, version) {

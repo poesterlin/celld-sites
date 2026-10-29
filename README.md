@@ -31,6 +31,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
 | `cubby/` | Cubby: a catalog/store, a CLI and the local Shelf UI for installing tiny sandboxed applets; the store never runs or builds them ([cubby/README.md](cubby/README.md)) |
+| `hamstr/` | Hamstr: a Sandstorm-style app shell: grains (one site per document), tsidp sign-in, identity headers for apps, revocable share links ([hamstr/README.md](hamstr/README.md)) |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `docs/SECURITY.md` | Threat model: what a site can reach, what it can break, hostile-tenant checklist |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
@@ -83,7 +84,7 @@ copying anything into it:
 
 ```sh
 CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy \
-  tools/deploy.sh sites/wichtel wichteln.oesterlin.dev
+  tools/deploy.sh sites/wichtel wichteln.example.com
 CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy tools/admin.sh GET /overview
 ```
 
@@ -264,6 +265,17 @@ Cloudflare tunnel entry plus `CUBBY_REQUIRE_REVIEW=1`; never expose the shelf,
 and public demos additionally need wildcard `demo-*` DNS/tunnel.
 See [cubby/README.md](cubby/README.md) for the architecture, threat model, API
 and deployment checklist.
+
+## Hamstr
+
+`hamstr/` turns the node into a small Sandstorm: people sign in with tsidp,
+install apps from the Cubby store, and make **grains** (a board, a list, a
+draw), each its own site at `grain-<id>.<domain>` with its own data. Hamstr
+proxies every grain request, so apps get the visitor's identity and
+permissions as `X-Hamstr-*` headers and never implement login; owners share
+grains with revocable links whose roles the app declares. The router serves
+`grain-*` sites only to Hamstr (`PROXY_TOKEN`). It is a compose profile
+(`COMPOSE_PROFILES=hamstr`) and LAN-only. See [hamstr/README.md](hamstr/README.md).
 
 ## EmDash sites
 
@@ -518,3 +530,8 @@ Durable Object numbers above are older.
 celld (v0.6.3) is alpha; Dynamic Workers and facets are beta at Cloudflare.
 celld's ideas are being merged into Cloudflare's workerd, so expect a
 migration at some point; sites are standard `adapter-cloudflare` builds.
+
+## License
+
+[MIT](LICENSE). The bundled fonts in `cubby/public/fonts` keep their own
+license (SIL OFL 1.1, see `cubby/public/fonts/LICENSE.txt`).

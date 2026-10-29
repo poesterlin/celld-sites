@@ -32,6 +32,9 @@ before(async () => {
 				props: typeof ctx.props,
 			});
 		}
+		if (url.pathname === "/hdr") {
+			return Response.json({ proxy: request.headers.get("x-celld-proxy-token"), user: request.headers.get("x-hamstr-user-id") });
+		}
 		if (url.pathname === "/slow") {
 			await new Promise((resolve) => setTimeout(resolve, 800));
 			return new Response("slow\\n");
@@ -73,6 +76,7 @@ export class Box extends DurableObject {
 	process.env.TEST_SITE_MAX_INFLIGHT = "2";
 	await flood.start();
 	main.deploy(dir, host);
+	main.deploy(dir, "grain-guarded.test");
 	quota.deploy(dir, host);
 	flood.deploy(dir, host);
 	const v = await main.putVersion("bbbbbbbbbbbb", { "index.html": "home\n" }, { host: "files.test" });
@@ -115,6 +119,28 @@ describe("isolate boundary", () => {
 			assert.doesNotMatch(r.text, /root:|home/);
 		}
 		assert.equal((await main.request("GET", "/", { host: "files.test" })).text, "home\n");
+	});
+});
+
+describe("proxy-only grain sites", () => {
+	const grain = (headers = {}) => main.request("GET", "/hdr", { host: "grain-guarded.test", headers });
+	it("hides a grain site from requests without the proxy token", async () => {
+		assert.equal((await grain()).status, 404);
+		assert.equal((await grain({ "x-celld-proxy-token": "wrong", "x-hamstr-user-id": "forged" })).status, 404);
+	});
+	it("serves the proxy and strips the token before the site sees it", async () => {
+		const r = await grain({ "x-celld-proxy-token": main.proxyToken, "x-hamstr-user-id": "u1" });
+		assert.equal(r.status, 200);
+		assert.deepEqual(r.json(), { proxy: null, user: "u1" });
+	});
+	it("does not let an alias bypass the check", async () => {
+		assert.equal((await main.admin("PUT", "/alias?host=open-door.test&site=grain-guarded.test")).status, 200);
+		assert.equal((await main.request("GET", "/hdr", { host: "open-door.test" })).status, 404);
+		assert.equal((await main.admin("DELETE", "/alias?host=open-door.test")).status, 200);
+	});
+	it("strips the token header on ordinary sites too", async () => {
+		const r = await site(main, "/hdr", { headers: { "x-celld-proxy-token": "anything" } });
+		assert.equal(r.json().proxy, null);
 	});
 });
 

@@ -98,6 +98,9 @@ services:
       # tip it over, and an isolate over the limit stops materializing result
       # sets ("the isolate is over its V8 heap limit").
       CELLD_V8_HEAP_LIMIT_MB: ${CELLD_V8_HEAP_LIMIT_MB:-256}
+      # Hamstr grains (sites named grain-*) answer only requests that carry this
+      # token, i.e. only the Hamstr proxy. Empty: grain sites answer nobody.
+      PROXY_TOKEN: ${HAMSTR_PROXY_TOKEN:-}
     # celld's local working copy (SQLite, replication); the bucket is the source
     # of truth, this just saves re-downloading objects after a restart.
     volumes:
@@ -384,12 +387,77 @@ services:
       - 'traefik.http.routers.cubby-shelf.priority=20'
       - 'traefik.http.services.cubby-shelf.loadbalancer.server.port=3000'
 
+  # Hamstr: the personal app shell (grains, sign-in via tsidp, share links). It
+  # holds ADMIN_TOKEN and the proxy token, so it is LAN-only, like the shelf.
+  # Off unless COMPOSE_PROFILES includes "hamstr" (see .env.example).
+  hamstr:
+    profiles: ["hamstr"]
+    build:
+      context: .
+      dockerfile: hamstr/Dockerfile
+    image: celld-sites-hamstr
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: 3000
+      HAMSTR_DATA: /data
+      HAMSTR_HOST: ${HAMSTR_HOST:-hamstr.example.com}
+      HAMSTR_GRAIN_DOMAIN: ${HAMSTR_GRAIN_DOMAIN:-example.com}
+      HAMSTR_SCHEME: https
+      HAMSTR_STORE: http://cubby:3000
+      HAMSTR_STORE_PUBLIC: https://${CUBBY_HOST:-cubby.example.com}
+      CELLD_ADMIN_API: http://admin.internal:8080
+      ADMIN_HOST: admin.internal
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      PROXY_TOKEN: ${HAMSTR_PROXY_TOKEN:-}
+      HAMSTR_SECRET: ${HAMSTR_SECRET:-}
+      OIDC_ISSUER: ${HAMSTR_OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${HAMSTR_OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${HAMSTR_OIDC_CLIENT_SECRET:-}
+      HAMSTR_ADMINS: ${HAMSTR_ADMINS:-}
+      HAMSTR_ALLOWED_USERS: ${HAMSTR_ALLOWED_USERS:-}
+    volumes:
+      - hamstr-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.hamstr.rule=Host(`${HAMSTR_HOST:-hamstr.example.com}`)'
+      - 'traefik.http.routers.hamstr.priority=20'
+      - 'traefik.http.routers.hamstr.service=hamstr'
+      # Every grain hostname (grain-<12 chars>.<domain>) goes to Hamstr, never
+      # straight to celld. Above celld-sites (10) and static-host's catch-all (1).
+      - 'traefik.http.routers.hamstr-grains.rule=${HAMSTR_GRAINS_RULE:-Host(`hamstr-grains.invalid`)}'
+      - 'traefik.http.routers.hamstr-grains.ruleSyntax=v3'
+      - 'traefik.http.routers.hamstr-grains.priority=20'
+      - 'traefik.http.routers.hamstr-grains.service=hamstr'
+      - 'traefik.http.services.hamstr.loadbalancer.server.port=3000'
+
 volumes:
   s3-data:
   celld-state:
   cubby-data:
   cubby-shelf-data:
   demo-state:
+  hamstr-data:
 
 networks:
   traefik_web:
