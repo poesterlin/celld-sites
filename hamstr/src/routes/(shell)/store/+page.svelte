@@ -3,10 +3,11 @@
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
-	import { oops, toast } from "#lib/client/ui.svelte.js";
-	import { sized } from "#lib/icons.js";
+	import { askUninstall, contextMenu, oops } from "#lib/client/ui.svelte.js";
+	import { appMenu, openApp } from "#lib/client/actions.js";
 	import TileIcon from "#lib/components/TileIcon.svelte";
-	import Modal from "#lib/components/Modal.svelte";
+	import ConsentModal from "#lib/components/ConsentModal.svelte";
+	import { install as installApp, latestRelease, newHosts } from "#lib/client/install.js";
 
 	let { data } = $props();
 
@@ -14,14 +15,18 @@
 	const installed = $derived(new Map(data.apps.map((a) => [a.slug, a])));
 
 	let market = $state(data.market);
-	let query = $state("");
+	let query = $state(page.url.searchParams.get("q") ?? "");
 	let updates = $state({});
+	let busy = $state(""); // the slug being installed or updated
 
-	// The install/update dialog: { slug, update } while open, plus what the
-	// store says about the release.
-	let dialog = $state(null);
-	let detail = $state(null);
-	let installing = $state(false);
+	// What the store lists, plus installed apps it no longer lists (so they can
+	// still be opened or removed).
+	const cards = $derived.by(() => {
+		const listed = market.apps ?? [];
+		if (query) return listed;
+		const seen = new Set(listed.map((a) => a.slug));
+		return [...listed, ...data.apps.filter((a) => !seen.has(a.slug))];
+	});
 
 	onMount(() => {
 		if (!admin || !data.apps.length) return;
@@ -39,185 +44,115 @@
 		}, 250);
 	}
 
-	async function makeGrain(app) {
+	// "Get" and "Update" go straight through; only new internet access asks first.
+	let consent = $state(null);
+	async function get(slug, update = false) {
+		if (busy) return;
+		busy = slug;
 		try {
-			const { grain } = await api("/api/grains", { method: "POST", body: { slug: app.slug, title: `Untitled ${app.name}` } });
-			await goto(`/g/${grain.id}`);
+			const detail = await api(`/api/market/${encodeURIComponent(slug)}`);
+			const release = latestRelease(detail);
+			if (!release) throw new Error(`${detail.app.name} has no published release`);
+			const added = newHosts(release, installed.get(slug));
+			if (added.length) {
+				consent = { slug, update, release, name: detail.app.name, app: detail.app, version: release.version, egress: release.manifest.egress, added };
+				return;
+			}
+			await run(slug, release.version, detail.app.name, update, false);
 		} catch (err) {
 			oops(err);
+		} finally {
+			busy = "";
 		}
 	}
 
-	async function removeApp(app) {
+	async function run(slug, version, name, update, allowEgress) {
+		busy = slug;
 		try {
-			await api(`/api/apps/${app.slug}`, { method: "DELETE" });
-			toast("Removed");
+			await installApp({ slug, version, name, update, allowEgress });
+			consent = null;
+			delete updates[slug];
 			await invalidateAll();
 		} catch (err) {
 			oops(err);
+		} finally {
+			busy = "";
 		}
 	}
 
-	async function openInstall(slug, update = false) {
-		try {
-			detail = await api(`/api/market/${encodeURIComponent(slug)}`);
-			dialog = { slug, update };
-			installing = false;
-		} catch (err) {
-			oops(err);
-		}
-	}
-
-	const release = $derived((detail?.releases ?? []).find((r) => r.status === "published"));
-	const egress = $derived(release?.manifest?.egress ?? []);
-	const roles = $derived(release?.manifest?.roles ?? []);
-
-	async function install() {
-		installing = true;
-		try {
-			const result = await api("/api/apps", {
-				method: "POST",
-				body: { slug: dialog.slug, version: release.version, allowEgress: egress.length > 0 }
-			});
-			dialog = null;
-			toast(
-				result.failedGrains?.length
-					? `${detail.app.name} updated, but ${result.failedGrains.length} grain(s) failed to move`
-					: `${detail.app.name} is ready`,
-				Boolean(result.failedGrains?.length)
-			);
-			await invalidateAll();
-		} catch (err) {
-			installing = false;
-			oops(err);
-		}
+	// Right click on a card: the installed app's menu, or Get / Details.
+	function cardMenu(app) {
+		const mine = installed.get(app.slug);
+		const details = { label: "Details", icon: "info", onclick: () => goto(`/store/${app.slug}`) };
+		if (!mine) return [{ label: "Get", icon: "download", hidden: !admin || Boolean(busy), onclick: () => get(app.slug) }, details];
+		return [
+			...appMenu(mine, { admin, here: "store" }).slice(0, -1),
+			{ label: `Update to v${updates[app.slug]?.version}`, icon: "restore", hidden: !admin || !updates[app.slug] || Boolean(busy), onclick: () => get(app.slug, true) },
+			{ ...details, separator: true },
+			...appMenu(mine, { admin, here: "store" }).slice(-1),
+		];
 	}
 </script>
 
-<svelte:head><title>Apps · {page.data.name}</title></svelte:head>
+<svelte:head><title>Store · {page.data.name}</title></svelte:head>
 
 {#if !data.signedOut}
 	<div class="page">
 		<div class="page-head">
 			<div>
-				<h1>Apps</h1>
+				<h1>Store</h1>
 				<p class="dim">
-					{admin
-						? "Install apps from the store; everyone here can then make grains with them."
-						: "Apps installed on this Hamstr. Ask an admin to add more."}
+					{admin ? "Get an app and it lands on everyone's Home, ready to open." : "Apps from the store. Ask an admin to add one."}
 				</p>
 			</div>
+			<input class="input search" type="search" placeholder="Search apps" aria-label="Search the store" value={query} oninput={search} />
 		</div>
+		{#if market.error}
+			<p class="error">{market.error}</p>
+		{/if}
 		<div class="cards">
-			{#each data.apps as app (app.slug)}
-				<div class="card" data-slug={app.slug}>
-					<div class="card-head">
+			{#each cards as app (app.slug)}
+				{@const mine = installed.get(app.slug)}
+				<div class="card linked" data-slug={app.slug} use:contextMenu={() => cardMenu(app)}>
+					<a class="card-head card-link" href="/store/{app.slug}">
 						<TileIcon {app} />
 						<div>
 							<h3>{app.name}</h3>
-							<span class="dim small">v{app.version} · {app.grains} grain{app.grains === 1 ? "" : "s"}</span>
+							<span class="dim small">{app.publisher ?? ""}{app.publisher && app.version ? " · " : ""}{app.version ? `v${mine?.version ?? app.version}` : ""}</span>
 						</div>
-					</div>
+					</a>
 					<p class="dim small">{app.summary}</p>
 					<div class="card-actions">
-						<button type="button" class="button small" onclick={() => makeGrain(app)}>New grain</button>
-						{#if updates[app.slug]}
-							<button type="button" class="button ghost small" onclick={() => openInstall(app.slug, true)}>
-								Update to v{updates[app.slug].version}
+						{#if mine}
+							<button type="button" class="button small" onclick={() => openApp(mine)}>Open</button>
+							{#if updates[app.slug]}
+								<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(app.slug, true)}>
+									{#if busy === app.slug}<span class="spinner"></span> Updating{:else}Update to v{updates[app.slug].version}{/if}
+								</button>
+							{/if}
+							{#if admin}
+								<button type="button" class="button quiet small danger-text" onclick={() => askUninstall(mine)}>Uninstall</button>
+							{/if}
+						{:else if admin}
+							<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(app.slug)}>
+								{#if busy === app.slug}<span class="spinner"></span> Getting{:else}Get{/if}
 							</button>
 						{/if}
-						{#if admin && app.grains === 0}
-							<button type="button" class="button quiet small" onclick={() => removeApp(app)}>Remove</button>
-						{/if}
+						<a class="button quiet small push" href="/store/{app.slug}">Details</a>
 					</div>
 				</div>
 			{:else}
-				<div class="empty span-all">
-					<h2>No apps installed</h2>
-					<p>{admin ? "Pick some from the store below." : "Nothing to make grains with yet."}</p>
-				</div>
+				{#if !market.error}<p class="dim">No apps match.</p>{/if}
 			{/each}
-		</div>
-		<div class="section">
-			<div class="page-head compact">
-				<h2>From the store</h2>
-				<input class="input search" type="search" placeholder="Search apps" aria-label="Search the store" oninput={search} />
-			</div>
-			<div class="cards">
-				{#if market.error}
-					<p class="error">{market.error}</p>
-				{:else if market.apps?.length}
-					{#each market.apps as app (app.slug)}
-						<div class="card" data-slug={app.slug}>
-							<div class="card-head">
-								<TileIcon {app} />
-								<div>
-									<h3>{app.name}</h3>
-									<span class="dim small">{app.publisher ?? ""}{app.version ? ` · v${app.version}` : ""}</span>
-								</div>
-							</div>
-							<p class="dim small">{app.summary}</p>
-							<div class="card-actions">
-								{#if installed.has(app.slug)}
-									<span class="chip">Installed</span>
-								{:else if admin}
-									<button type="button" class="button ghost small" onclick={() => openInstall(app.slug)}>Install</button>
-								{/if}
-							</div>
-						</div>
-					{/each}
-				{:else}
-					<p class="dim">No apps match.</p>
-				{/if}
-			</div>
 		</div>
 	</div>
 {/if}
 
-{#if dialog && detail}
-	<Modal
-		title="{dialog.update ? "Update" : "Install"} {detail.app.name}"
-		sub="v{release?.version ?? ""}"
-		onclose={() => (dialog = null)}
-	>
-		{#if !release}
-			<p class="dim">That app has no published release.</p>
-		{:else}
-			<div class="card-head gap-bottom">
-				<TileIcon app={detail.app} />
-				<p class="dim flush">{detail.app.summary}</p>
-			</div>
-			<div class="callout">
-				<strong>What it can do</strong>
-				<ul class="perm-list">
-					<li>Store data inside each grain, separately per grain</li>
-					{#if egress.length}
-						<li><strong>Connect to the internet:</strong> {egress.join(", ")}</li>
-					{:else}
-						<li>No internet access</li>
-					{/if}
-					{#if roles.length}
-						<li>Sharing roles: {roles.map((r) => r.title).join(", ")}</li>
-					{:else}
-						<li>No sharing roles: links give full access</li>
-					{/if}
-				</ul>
-			</div>
-			{#if dialog.update}
-				<p class="dim small">Every grain of this app moves to the new version. Their data stays.</p>
-			{/if}
-			<div class="sheet-foot">
-				<button type="button" class="button ghost" onclick={() => (dialog = null)}>Cancel</button>
-				<button type="button" class="button" disabled={installing} onclick={install}>
-					{#if installing}
-						<span class="spinner"></span> {dialog.update ? "Updating" : "Installing"}…
-					{:else if egress.length}
-						Allow network and {dialog.update ? "update" : "install"}
-					{:else}
-						{dialog.update ? "Update" : "Install"}
-					{/if}
-				</button>
-			</div>
-		{/if}
-	</Modal>
+{#if consent}
+	<ConsentModal
+		{consent}
+		busy={busy === consent.slug}
+		onclose={() => (consent = null)}
+		onallow={() => run(consent.slug, consent.version, consent.name, consent.update, true)}
+	/>
 {/if}

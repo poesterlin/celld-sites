@@ -6,7 +6,7 @@
 // process-level timeouts and logging.
 //
 // One process answers two kinds of hostname:
-//   HAMSTR_HOST            the shell: UI, JSON API, sign-in, share links
+//   HAMSTR_HOST            the shell: UI, JSON API, sign-in
 //   grain-<id>.<domain>    a grain: /.hamstr/enter, then everything is proxied
 import { createServer } from "node:http";
 import { resolve } from "node:path";

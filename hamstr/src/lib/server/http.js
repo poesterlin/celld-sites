@@ -18,9 +18,7 @@ export function csp(core) {
 		"connect-src 'self'",
 		`frame-src ${core.grainSources}`,
 		"base-uri 'none'",
-		// Chromium applies form-action to the redirect after a POST too, and
-		// "Open as guest" redirects into the grain.
-		`form-action 'self' ${core.grainSources}`,
+		"form-action 'self'",
 		"frame-ancestors 'none'",
 	].join("; ");
 }
@@ -29,7 +27,7 @@ export function csp(core) {
  *  Appended to the policy SvelteKit builds for rendered pages (which already
  *  carries frame-ancestors from the static directives). */
 export function cspExtras(core) {
-	return [`frame-src ${core.grainSources}`, `form-action 'self' ${core.grainSources}`];
+	return [`frame-src ${core.grainSources}`, "form-action 'self'"];
 }
 
 export function shellHeaders(core, extra = {}) {

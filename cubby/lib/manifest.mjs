@@ -15,7 +15,7 @@ const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TLD = /^(?:[a-z][a-z0-9-]*|xn--[a-z0-9-]+)$/;
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const INTERNAL = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example", ".onion"];
-const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "tags", "egress", "permissions", "roles", "instances"]);
+const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "tags", "egress", "permissions", "roles", "instances", "export"]);
 const PERMISSION_ID = /^[a-z][a-z0-9-]{0,30}$/;
 
 const fail = (msg) => {
@@ -122,7 +122,17 @@ export function validateManifest(input) {
 	if (input.instances !== undefined && input.instances !== "single" && input.instances !== "many") fail('instances must be "single" or "many"');
 	const instances = input.instances === "single" ? { instances: "single" } : {};
 
-	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, tags, egress, permissions, roles, ...instances };
+	// Hamstr: a GET path in the app that answers with one grain's data as a file
+	// (JSON, CSV, a zip, ...). Hamstr calls it as the owner for "Download data".
+	if (input.export !== undefined) {
+		const path = input.export;
+		if (typeof path !== "string" || !/^\/(?![/\\])[\x21-\x7e]{0,199}$/.test(path) || /[\\#]/.test(path) || path.startsWith("/.hamstr/")) {
+			fail('export must be a path in the app, such as "/export"');
+		}
+	}
+	const exportPath = input.export === undefined ? {} : { export: input.export };
+
+	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, tags, egress, permissions, roles, ...instances, ...exportPath };
 }
 
 /** Optional sharing model, read by Hamstr. `permissions` are what the app checks

@@ -172,3 +172,75 @@ export async function grainRequest(event, grainId) {
 		return text(502, "the grain is not reachable right now\n");
 	}
 }
+
+const EXTENSIONS = {
+	"application/json": "json",
+	"application/x-ndjson": "ndjson",
+	"application/zip": "zip",
+	"application/gzip": "gz",
+	"application/x-tar": "tar",
+	"application/vnd.sqlite3": "sqlite",
+	"application/x-sqlite3": "sqlite",
+	"application/xml": "xml",
+	"text/csv": "csv",
+	"text/plain": "txt",
+	"text/markdown": "md",
+	"text/html": "html",
+	"text/calendar": "ics",
+};
+/** The extension for a download: the app's own filename's, else the type's. */
+function extensionFor(type, disposition) {
+	const suggested = /filename="?[^";]*\.([a-z0-9]{1,8})"?/i.exec(disposition ?? "")?.[1];
+	return (suggested ?? EXTENSIONS[String(type ?? "").split(";")[0].trim().toLowerCase()] ?? "bin").toLowerCase();
+}
+
+/**
+ * "Download data": ask the grain's app for its export path as the owner and
+ * hand the answer back as an attachment. The app decides the format; Hamstr
+ * names the file after the grain and keeps the browser from rendering it.
+ */
+export function grainExport(core, grain, user, path) {
+	const host = core.grainHost(grain.id);
+	const headers = {
+		host,
+		accept: "*/*",
+		"x-forwarded-proto": core.config.scheme,
+		"x-forwarded-host": host,
+		"x-celld-proxy-token": core.config.proxyToken,
+		"x-hamstr-grain-id": grain.id,
+		"x-hamstr-session-id": core.randomId(16),
+		"x-hamstr-permissions": core.accessFor(grain, { userId: user.id }).permissions.join(","),
+		"x-hamstr-role": "owner",
+		"x-hamstr-username": encodeURIComponent(user.name ?? ""),
+		"x-hamstr-user-id": core.publicUserId(user.id),
+		"x-hamstr-export": "1",
+	};
+	return new Promise((resolvePromise) => {
+		const fail = (status, error) => resolvePromise(Response.json({ error }, { status, headers: { "cache-control": "no-store" } }));
+		const upstream = httpRequest(
+			{ hostname: core.sitesApi.hostname, port: core.sitesApi.port || 80, path, method: "GET", headers, timeout: 120_000 },
+			(up) => {
+				if (up.statusCode !== 200) {
+					up.resume();
+					return fail(502, `the app could not export this (it answered ${up.statusCode})`);
+				}
+				const day = new Date().toISOString().slice(0, 10);
+				const base = `${grain.title} ${day}`.replace(/[\u0000-\u001f\u007f/\\:*?"<>|]+/g, "-").slice(0, 120);
+				const name = `${base}.${extensionFor(up.headers["content-type"], up.headers["content-disposition"])}`;
+				const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/[%;]/g, "_");
+				const out = new Headers({
+					"content-type": up.headers["content-type"] ? String(up.headers["content-type"]) : "application/octet-stream",
+					"content-disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+					"cache-control": "no-store",
+					"x-content-type-options": "nosniff",
+					"content-security-policy": "default-src 'none'; sandbox",
+				});
+				if (up.headers["content-length"]) out.set("content-length", String(up.headers["content-length"]));
+				resolvePromise(new Response(Readable.toWeb(up), { status: 200, headers: out }));
+			},
+		);
+		upstream.on("timeout", () => upstream.destroy(new Error("timeout")));
+		upstream.on("error", () => fail(502, "the app is not reachable right now"));
+		upstream.end();
+	});
+}

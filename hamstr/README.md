@@ -6,24 +6,29 @@ Hamstr is a personal app platform in the spirit of [Sandstorm](https://sandstorm
 built on a celld-sites node. A hamster hoards *grains*; so does Hamstr.
 
 - **Apps** come from the [Cubby](../cubby/README.md) store. Developers publish
-  with the `cubby` CLI; everyone else only uses the web UI.
+  with the `cubby` CLI; everyone else only uses the web UI. *Home* is a
+  launcher: every installed app is an icon there. An admin's *Get* in the store
+  puts an app on everyone's Home at once; only an app that wants internet
+  access asks first.
 - **Grains**: every board, list or draw you make is its own grain. A grain is
   its own celld site at `grain-<id>.<domain>`, with its own Durable Objects
   (its data) and no network access unless the app declares egress and an admin
-  allows it.
+  allows it. Tapping an app shows the grains you made with it and a *New* tile
+  (a new one is called "Untitled …" until you rename it in the title bar). An
+  app that declares `"instances": "single"` has one grain per person instead:
+  its icon opens it directly, and the first open creates it.
 - **Sign-in is the platform's job.** Hamstr signs people in with OIDC (tsidp
   here) and tells each app who is visiting and what they may do. Apps contain
   no login code.
-- **Sharing is by link.** An owner shares a grain with a role the app defines
-  ("can view", "can pin", …). Links can be revoked, and revoking one cuts off
-  everyone using it at once. Signed-in people keep shared grains under
-  *Shared*; anyone else opens the link as a guest.
+- **Private by default.** A grain belongs to the person who made it; nobody
+  else on the Hamstr can list, open or download it. (Share links existed
+  once and were removed; their old tables stay in the database, unused.)
 
 ## How it works
 
 ```
  browser ──▶ Traefik ──▶ Hamstr ─────────────────────────────▶ celld router ──▶ grain isolate
-             hamstr.<d>    shell UI, API, sign-in, share links    (site = grain-<id>.<d>)
+             hamstr.<d>    shell UI, API, sign-in                 (site = grain-<id>.<d>)
              grain-*.<d>   grain proxy:                            only answers requests
                            · checks the grain session             that carry PROXY_TOKEN
                            · drops X-Hamstr-* from the browser
@@ -35,7 +40,7 @@ Opening a grain: the shell (`/g/<id>`) asks the API for a one-time ticket
 (60 s, single use, bound to that grain), loads
 `https://grain-<id>.<d>/.hamstr/enter?ticket=…` in an iframe, and the grain
 host turns the ticket into a grain session cookie. Every proxied request then
-re-checks access: signing out, trashing the grain or revoking the share link
+re-checks access: signing out or trashing the grain
 takes effect on the next request.
 
 Installing an app downloads the release from the store, verifies its SHA-256
@@ -55,30 +60,31 @@ with `cubby publish`. Inside a grain, read who is visiting from request headers:
 
 | Header | Value |
 | --- | --- |
-| `X-Hamstr-User-Id` | stable 32-hex id of a signed-in user; **absent for guests** |
+| `X-Hamstr-User-Id` | stable 32-hex id of the signed-in owner |
 | `X-Hamstr-Username` | display name, percent-encoded UTF-8 (`decodeURIComponent`) |
 | `X-Hamstr-Permissions` | comma-separated permission ids from your `cubby.json` |
-| `X-Hamstr-Role` | `owner`, the role id of the visitor's link, or `member` |
+| `X-Hamstr-Role` | always `owner` |
 | `X-Hamstr-Grain-Id` | this grain's id |
 | `X-Hamstr-Session-Id` | random per grain session |
 
-The owner always holds every permission. Declare permissions and the roles an
-owner can share in `cubby.json`:
+The owner holds every permission the app declares in `cubby.json`
+(`"permissions": [{ "id": "pin", "title": "Pin notes" }]`), so an app written
+for several roles still works. `roles` are still accepted in manifests but
+Hamstr ignores them.
 
-```json
-"permissions": [
-	{ "id": "pin", "title": "Pin notes" },
-	{ "id": "moderate", "title": "Moderate" }
-],
-"roles": [
-	{ "id": "editor", "title": "Can pin", "permissions": ["pin"], "default": true },
-	{ "id": "viewer", "title": "Can view", "permissions": [] }
-]
-```
+Add `"instances": "single"` for an app people only need one of (a family
+board, a settings page): Home opens it straight away. The default, `"many"`,
+suits documents. In the API, `POST /api/apps/<slug>/open` finds or creates
+the visitor's one grain of a single-instance app.
 
-An app without `roles` is shared all-or-nothing (role `member`); the share
-dialog says so. Enforce permissions in your server code: Hamstr tells you what
-the visitor may do, it does not know your routes.
+**Download data.** Add `"export": "/export"` (any GET path in your app) and
+owners get *Download data* on the item's menu and title bar. Hamstr calls that
+path through celld as the owner (`X-Hamstr-Role: owner`, plus
+`X-Hamstr-Export: 1`) and returns your answer as an attachment named after the
+item and the date. Answer 200 with any format (JSON, CSV, a zip); the
+extension comes from your `Content-Disposition` filename or the content type.
+Without `export`, the item's data stays in its Durable Objects and only the
+app can read it: celld has no generic per-site export.
 
 Notes:
 
@@ -110,11 +116,17 @@ shelf (it holds `ADMIN_TOKEN`). Setup:
 
 `HAMSTR_ALLOWED_USERS` limits who can sign in at all (emails or usernames);
 empty means anyone the IdP authenticates (for tsidp: anyone on the tailnet).
-`HAMSTR_ADMINS` can install, update and remove apps; `*` makes everyone who
+`HAMSTR_ADMINS` can install, update and uninstall apps; `*` makes everyone who
 can sign in an admin.
 
-Data: `hamstr-data` holds Hamstr's SQLite (users, sessions, grains, share
-links). The grains' data is in the celld bucket like any site's. Back up both.
+**Uninstalling** (an app's ⋯ menu, its right-click menu, the store) removes the
+app for everyone *and deletes every item made with it*, other people's and the
+trash included; the dialog says how many and from whom first. In the API,
+`GET /api/apps/<slug>` returns that `usage`, and `DELETE /api/apps/<slug>`
+answers 409 while items exist unless called with `?items=delete`. If any
+item's site cannot be deleted, the app stays installed.
+
+Data: `hamstr-data` holds Hamstr's SQLite (users, sessions, grains). The grains' data is in the celld bucket like any site's. Back up both.
 
 ### Develop and test
 
@@ -125,7 +137,7 @@ plain-Node modules in `hamstr/lib` hold the platform core, the celld and OIDC
 clients and the proxy, so the tests drive them without a browser.
 
 ```sh
-npm test --prefix hamstr            # 28 tests: mock IdP, mock celld, real Cubby store
+npm test --prefix hamstr            # 33 tests: mock IdP, mock celld, real Cubby store
 npm run e2e --prefix hamstr         # real celld dev node, real `cubby publish`, Pinboard
 npm run playground --prefix hamstr  # http://hamstr.localhost:8795, seeded
 ```
@@ -149,8 +161,8 @@ What Hamstr adds on top of [docs/SECURITY.md](../docs/SECURITY.md):
   `allow-top-navigation` without a user click.
 - **Sessions**: shell sessions are server-side (logout revokes), cookies are
   `__Host-` prefixed and HttpOnly. Grain sessions are tied to the shell session
-  that opened them, so signing out ends them. Share links and tickets are
-  stored only as SHA-256; a link is shown once.
+  that opened them, so signing out ends them. Tickets are stored only as
+  SHA-256.
 - **Sign-in** uses the authorization code flow with PKCE, `state` and `nonce`;
   the ID token's signature (JWKS), issuer, audience and expiry are checked.
 - **Cookie mode.** If the shell and the grains share a registrable domain

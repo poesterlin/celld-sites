@@ -48,6 +48,13 @@ describe("manifest validation", () => {
 		assert.equal(validateManifest(manifest()).instances, undefined);
 		for (const instances of ["one", 1, true, null]) assert.throws(() => validateManifest({ ...manifest(), instances }), ManifestError);
 	});
+	it("accepts an export path and nothing that leaves the app", () => {
+		assert.equal(validateManifest({ ...manifest(), export: "/export?format=json" }).export, "/export?format=json");
+		assert.equal(validateManifest(manifest()).export, undefined);
+		for (const bad of ["export", "//evil.example/x", "/\\evil", "https://x.example/", "/a b", "/a#b", "/.hamstr/enter", "/" + "a".repeat(200), 1, ""]) {
+			assert.throws(() => validateManifest({ ...manifest(), export: bad }), ManifestError, String(bad));
+		}
+	});
 	it("rejects unknown fields instead of silently dropping typos", () => {
 		assert.throws(() => validateManifest({ ...manifest(), egresss: [] }), ManifestError);
 	});

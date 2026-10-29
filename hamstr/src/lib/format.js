@@ -33,3 +33,11 @@ export function initials(name) {
 		.slice(0, 2)
 		.toUpperCase();
 }
+
+export function shortDate(iso) {
+	if (!iso) return "";
+	const d = new Date(iso);
+	return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
+export const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;

@@ -2,13 +2,16 @@
 	import { page } from "$app/state";
 	import { initials } from "#lib/format.js";
 	import Toaster from "#lib/components/Toaster.svelte";
+	import ContextMenu from "#lib/components/ContextMenu.svelte";
+	import UninstallModal from "#lib/components/UninstallModal.svelte";
 
 	let { data, children } = $props();
 
 	const me = $derived(data.me);
 	const path = $derived(page.url.pathname);
 	const grainMode = $derived(/^\/g\/[a-z0-9]{12}$/.test(path));
-	const tab = $derived(path === "/" ? "home" : path.slice(1));
+	// App pages (/a/<slug>) belong to Home.
+	const tab = $derived({ "": "home", a: "home" }[path.split("/")[1]] ?? path.split("/")[1]);
 
 	let menuOpen = $state(false);
 	let scrolled = $state(false);
@@ -38,8 +41,7 @@
 			</a>
 			<nav class="nav" aria-label="Main">
 				<a href="/" aria-current={tab === "home" ? "page" : undefined}>Home</a>
-				<a href="/shared" aria-current={tab === "shared" ? "page" : undefined}>Shared</a>
-				<a href="/apps" aria-current={tab === "apps" ? "page" : undefined}>Apps</a>
+				<a href="/store" aria-current={tab === "store" ? "page" : undefined}>Store</a>
 				<a href="/trash" aria-current={tab === "trash" ? "page" : undefined}>Trash</a>
 			</nav>
 			<div class="me">
@@ -78,3 +80,7 @@
 {/if}
 
 <Toaster />
+{#if me}
+	<ContextMenu />
+	<UninstallModal />
+{/if}

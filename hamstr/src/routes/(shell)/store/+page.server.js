@@ -1,11 +1,12 @@
-export async function load({ locals }) {
+export async function load({ locals, url }) {
 	const c = locals.core;
 	if (!locals.user) return { signedOut: true };
 	const counts = new Map(c.db.prepare("SELECT slug, COUNT(*) AS n FROM grains GROUP BY slug").all().map((r) => [r.slug, r.n]));
 	const apps = c.db.prepare("SELECT * FROM apps ORDER BY name COLLATE NOCASE").all();
 	let market;
 	try {
-		market = await c.storeJson("/api/v1/apps?limit=60");
+		const q = String(url.searchParams.get("q") ?? "").trim().slice(0, 100);
+		market = await c.storeJson(`/api/v1/apps?limit=60${q ? `&q=${encodeURIComponent(q)}` : ""}`);
 	} catch (err) {
 		market = { error: err.message };
 	}

@@ -32,6 +32,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
 | `cubby/` | Cubby: a catalog/store, a CLI and the local Shelf UI for installing tiny sandboxed applets; the store never runs or builds them ([cubby/README.md](cubby/README.md)) |
 | `hamstr/` | Hamstr: a Sandstorm-style app shell: grains (one site per document), tsidp sign-in, identity headers for apps, revocable share links ([hamstr/README.md](hamstr/README.md)) |
+| `names/` | Hamstr names: hostnames `<id>.<zone>` with a wildcard and DNS-01 for installs, so a Hamstr install needs no domain or DNS setup ([names/README.md](names/README.md)) |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `docs/SECURITY.md` | Threat model: what a site can reach, what it can break, hostile-tenant checklist |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |

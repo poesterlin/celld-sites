@@ -325,8 +325,12 @@ downloads per IP. Limits are in-memory for the prototype and reset on restart.
 Optional, for apps that run as [Hamstr](../hamstr/README.md) grains:
 `permissions` (`[{ "id", "title", "description"? }]`, at most 16) and `roles`
 (`[{ "id", "title", "description"?, "permissions": [ids], "default"? }]`, at
-most 8, `owner` is reserved). They define what a grain owner can share; see
-`examples/pinboard`.
+most 8, `owner` is reserved). The grain's owner holds every permission; Hamstr
+no longer has share links, so `roles` are validated but unused. `instances` is `"many"` (the default: people make as many
+grains as they like, one per document) or `"single"` (one grain per person,
+opened straight from the Hamstr home screen, like Pinboard). `export` is a
+path in the app (`"/export"`) that answers with one grain's data as a file;
+Hamstr offers it to owners as *Download data*.
 
 Strict by design: unknown fields are rejected so a typo cannot silently drop a
 permission. `egress` is the only permission; Durable Objects and storage are

@@ -23,7 +23,6 @@ const TICKET_MS = 60 * 1000;
 const LOGIN_MS = 10 * 60 * 1000;
 const TRASH_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_GRAINS_PER_USER = 500;
-const MAX_SHARES_PER_GRAIN = 50;
 
 export class HttpError extends Error {
 	constructor(status, message) {
@@ -151,6 +150,8 @@ export function createCore(options = {}) {
 			owner_id TEXT NOT NULL REFERENCES users(id), code_version TEXT NOT NULL,
 			created_at TEXT NOT NULL, opened_at TEXT, trashed_at TEXT);
 		CREATE INDEX IF NOT EXISTS grains_owner ON grains(owner_id);
+		-- shares and members held share links, a feature that was removed; the
+		-- tables stay so existing databases open unchanged, but nothing reads them.
 		CREATE TABLE IF NOT EXISTS shares (
 			id TEXT PRIMARY KEY, hash TEXT UNIQUE NOT NULL, grain_id TEXT NOT NULL REFERENCES grains(id) ON DELETE CASCADE,
 			role TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
@@ -184,11 +185,6 @@ export function createCore(options = {}) {
 		session: db.prepare("SELECT s.*, u.name, u.email, u.login, u.sub FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.hash = ? AND s.expires_at > ?"),
 		app: db.prepare("SELECT * FROM apps WHERE slug = ?"),
 		grain: db.prepare("SELECT * FROM grains WHERE id = ?"),
-		share: db.prepare("SELECT * FROM shares WHERE id = ?"),
-		shareByHash: db.prepare("SELECT * FROM shares WHERE hash = ?"),
-		memberRoles: db.prepare(
-			"SELECT s.role FROM members m JOIN shares s ON s.id = m.share_id WHERE m.user_id = ? AND s.grain_id = ? AND s.revoked_at IS NULL",
-		),
 	};
 
 	// --- identity --------------------------------------------------------------------
@@ -211,31 +207,13 @@ export function createCore(options = {}) {
 
 	// --- apps and the access model ---------------------------------------------------
 	const manifestOf = (app) => (app ? JSON.parse(app.manifest) : null);
-	/** Turn the roles a visitor holds into one role name and a permission set. */
-	function combine(manifest, roleIds) {
-		const declared = manifest?.roles ?? [];
-		if (!declared.length) return { role: "member", permissions: (manifest?.permissions ?? []).map((p) => p.id) };
-		const byId = new Map(declared.map((r) => [r.id, r]));
-		// A role the app no longer declares degrades to its least privileged role.
-		const weakest = [...declared].sort((a, b) => a.permissions.length - b.permissions.length)[0];
-		const held = [...roleIds].map((id) => byId.get(id) ?? weakest);
-		const strongest = [...held].sort((a, b) => b.permissions.length - a.permissions.length)[0];
-		return { role: strongest.id, permissions: [...new Set(held.flatMap((r) => r.permissions))] };
-	}
-	function accessFor(grain, { userId = null, shareId = null } = {}) {
-		if (!grain || grain.trashed_at) return null;
+	/** A grain belongs to its owner alone: they hold every permission the app
+	 *  declares, and nobody else gets in. */
+	function accessFor(grain, { userId = null } = {}) {
+		if (!grain || grain.trashed_at || !userId || grain.owner_id !== userId) return null;
 		const manifest = manifestOf(q.app.get(grain.slug));
-		if (userId && grain.owner_id === userId) return { role: "owner", permissions: (manifest?.permissions ?? []).map((p) => p.id), owner: true };
-		const roles = new Set();
-		if (shareId) {
-			const share = q.share.get(shareId);
-			if (share && !share.revoked_at && share.grain_id === grain.id) roles.add(share.role);
-		}
-		if (userId) for (const row of q.memberRoles.all(userId, grain.id)) roles.add(row.role);
-		if (!roles.size) return null;
-		return { ...combine(manifest, roles), owner: false };
+		return { role: "owner", permissions: (manifest?.permissions ?? []).map((p) => p.id), owner: true };
 	}
-	const defaultRole = (manifest) => (manifest.roles ?? []).find((r) => r.default)?.id ?? manifest.roles?.[0]?.id ?? "member";
 
 	function appJson(app, extra = {}) {
 		const m = manifestOf(app);
@@ -244,11 +222,14 @@ export function createCore(options = {}) {
 			name: app.name,
 			icon: app.icon,
 			summary: app.summary,
+			description: m.description ?? "",
+			license: m.license ?? "",
+			homepage: m.homepage ?? null,
+			source: m.source ?? null,
 			version: app.version,
-			permissions: m.permissions ?? [],
-			roles: m.roles ?? [],
-			defaultRole: defaultRole(m),
+			canExport: Boolean(m.export),
 			egress: m.egress ?? [],
+			instances: m.instances ?? "many",
 			installedAt: app.installed_at,
 			updatedAt: app.updated_at,
 			...extra,
@@ -351,19 +332,83 @@ export function createCore(options = {}) {
 		}
 	}
 
+	/** A new grain of an installed app, as its own celld site. */
+	async function createGrain(user, app, title = "") {
+		if (db.prepare("SELECT COUNT(*) AS n FROM grains WHERE owner_id = ?").get(user.id).n >= MAX_GRAINS_PER_USER) {
+			throw new HttpError(403, `you can have at most ${MAX_GRAINS_PER_USER} grains`);
+		}
+		const id = randomId(12);
+		try {
+			await celld.deployGrain(grainHost(id), app.code_version, manifestOf(app).egress ?? []);
+		} catch (err) {
+			await celld.deleteSite(grainHost(id)).catch(() => {});
+			throw err;
+		}
+		const name = String(title).trim().slice(0, 80) || (manifestOf(app).instances === "single" ? app.name : `Untitled ${app.name}`);
+		db.prepare("INSERT INTO grains (id, slug, title, owner_id, code_version, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, app.slug, name, user.id, app.code_version, now());
+		return q.grain.get(id);
+	}
+
+	/** Open an app from the home screen. A single-instance app has one grain per
+	 *  person: the newest one that is not in the trash, made on first open. */
+	const opening = new Map();
+	async function openApp(user, app) {
+		const find = () =>
+			db.prepare("SELECT * FROM grains WHERE owner_id = ? AND slug = ? AND trashed_at IS NULL ORDER BY created_at DESC LIMIT 1").get(user.id, app.slug);
+		const existing = find();
+		if (existing) return { grain: existing, created: false };
+		// Two taps (or two tabs) at once must not make two grains.
+		const key = `${user.id}/${app.slug}`;
+		if (!opening.has(key)) opening.set(key, createGrain(user, app).finally(() => opening.delete(key)));
+		const grain = await opening.get(key);
+		return { grain, created: true };
+	}
+
 	async function purgeGrain(grain) {
 		await celld.deleteSite(grainHost(grain.id));
 		db.prepare("DELETE FROM grains WHERE id = ?").run(grain.id);
 	}
 
+	/** What uninstalling an app would delete, as seen by `user`. */
+	function usage(slug, user) {
+		const row = db
+			.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(owner_id = ?), 0) AS mine, COUNT(DISTINCT owner_id) AS owners FROM grains WHERE slug = ?")
+			.get(user.id, slug);
+		return { items: row.total, mine: row.mine, others: row.total - row.mine, people: row.owners };
+	}
+
+	/** Remove an app for everyone. Its grains (with their data, trash included)
+	 *  go too, but only when `deleteItems` says so; a failed delete keeps the app. */
+	async function uninstall(slug, { deleteItems = false } = {}) {
+		const app = q.app.get(slug);
+		if (!app) throw new HttpError(404, "that app is not installed");
+		if (installing.has(slug)) throw new HttpError(409, `${app.name} is being installed or updated right now`);
+		const grains = db.prepare("SELECT * FROM grains WHERE slug = ?").all(slug);
+		if (grains.length && !deleteItems) {
+			throw new HttpError(409, `${app.name} still has ${grains.length} item${grains.length === 1 ? "" : "s"} (including the trash)`);
+		}
+		const failed = [];
+		for (const grain of grains) {
+			try {
+				await purgeGrain(grain);
+			} catch (err) {
+				failed.push(grain.id);
+				console.error(`hamstr: deleting grain ${grain.id} failed`, err.message);
+			}
+		}
+		if (failed.length) throw new HttpError(502, `${failed.length} item${failed.length === 1 ? "" : "s"} could not be deleted; ${app.name} stays installed, try again`);
+		db.prepare("DELETE FROM apps WHERE slug = ?").run(slug);
+		return { deleted: grains.length };
+	}
+
 	// --- tickets and grain sessions ----------------------------------------------------
-	function issueTicket(grain, { userId = null, shareId = null, parent = null, path = "/" }) {
+	function issueTicket(grain, { userId, parent = null, path = "/" }) {
 		const value = token();
 		db.prepare("INSERT INTO tickets (hash, grain_id, user_id, share_id, parent, path, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
 			sha256(value),
 			grain.id,
 			userId,
-			shareId,
+			null,
 			parent,
 			safePath(path),
 			Date.now() + TICKET_MS,
@@ -380,19 +425,9 @@ export function createCore(options = {}) {
 		const gs = db.prepare("SELECT * FROM grain_sessions WHERE hash = ? AND expires_at > ?").get(sha256(value), Date.now());
 		if (!gs || gs.grain_id !== grain.id) return null;
 		if (gs.parent && !db.prepare("SELECT 1 FROM sessions WHERE hash = ? AND expires_at > ?").get(gs.parent, Date.now())) return null;
-		const access = accessFor(grain, { userId: gs.user_id, shareId: gs.share_id });
+		const access = accessFor(grain, { userId: gs.user_id });
 		if (!access) return null;
 		return { gs, access, user: gs.user_id ? q.user.get(gs.user_id) : null };
-	}
-
-	// --- share links -------------------------------------------------------------------
-	function shareFromToken(raw) {
-		if (!/^[A-Za-z0-9_-]{20,64}$/.test(raw)) return null;
-		const share = q.shareByHash.get(sha256(raw));
-		if (!share || share.revoked_at) return null;
-		const grain = q.grain.get(share.grain_id);
-		if (!grain || grain.trashed_at) return null;
-		return { share, grain };
 	}
 
 	// --- housekeeping ------------------------------------------------------------------
@@ -440,7 +475,6 @@ export function createCore(options = {}) {
 		TICKET_MS,
 		TRASH_MS,
 		MAX_GRAINS_PER_USER,
-		MAX_SHARES_PER_GRAIN,
 		sha256,
 		token,
 		now,
@@ -452,17 +486,18 @@ export function createCore(options = {}) {
 		publicUserId,
 		sessionFor,
 		manifestOf,
-		combine,
 		accessFor,
-		defaultRole,
 		appJson,
 		grainJson,
 		storeJson,
 		install,
+		createGrain,
+		openApp,
 		purgeGrain,
+		usage,
+		uninstall,
 		issueTicket,
 		grainVisitor,
-		shareFromToken,
 		housekeeping,
 		close() {
 			clearInterval(timer);

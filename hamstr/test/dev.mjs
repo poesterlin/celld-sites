@@ -51,7 +51,7 @@ const hamstr = createHamstr({
 });
 await hamstr.listen(PORT, "127.0.0.1");
 
-// Seed as Ada: install both apps and make a board with a couple of notes.
+// Seed as Ada: install both apps, pin a few notes and make two draws.
 {
 	const shell = "hamstr.localhost";
 	const b = new Browser(PORT);
@@ -61,8 +61,10 @@ await hamstr.listen(PORT, "127.0.0.1");
 	const api = (method, path, json) => b.request(method, path, { host: shell, headers: { origin: `http://${shell}:${PORT}` }, json });
 	await api("POST", "/api/apps", { slug: "pinboard" });
 	await api("POST", "/api/apps", { slug: "secret-santa" });
-	const board = (await api("POST", "/api/grains", { slug: "pinboard", title: "Kitchen board" })).json.grain;
+	// Pinboard is single-instance: Home opens (and on first use, makes) Ada's one board.
+	const board = (await api("POST", "/api/apps/pinboard/open", {})).json.grain;
 	await api("POST", "/api/grains", { slug: "secret-santa", title: "Wichteln 2026" });
+	await api("POST", "/api/grains", { slug: "secret-santa", title: "Office party" });
 	const enter = new URL((await api("POST", `/api/grains/${board.id}/open`, { path: "/" })).json.url);
 	const host = enter.hostname;
 	await b.request("GET", enter.pathname + enter.search, { host });

@@ -29,6 +29,17 @@ export default {
 		const url = new URL(request.url);
 		if (url.pathname === "/health") return new Response("ok\n", { headers: { "content-type": "text/plain" } });
 
+		// Hamstr's "Download data" (cubby.json "export"). The pairs are the secret,
+		// so only the owner gets them.
+		if (url.pathname === "/export") {
+			if (request.headers.get("x-hamstr-role") !== "owner") return new Response("owner only\n", { status: 403 });
+			const [people, pairs] = await Promise.all([env.OBJECTS.call("Draw", "main", "list"), env.OBJECTS.call("Draw", "main", "pairs")]);
+			return Response.json(
+				{ app: "secret-santa", exportedAt: new Date().toISOString(), people, pairs: pairs.map(([giver, receiver]) => ({ giver, receiver })) },
+				{ headers: { "content-disposition": 'attachment; filename="secret-santa.json"' } },
+			);
+		}
+
 		if (request.method === "POST") {
 			let form;
 			try {

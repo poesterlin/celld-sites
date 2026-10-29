@@ -109,6 +109,12 @@ try {
 	assert.match(board.text, /Ada Lovelace · owner/);
 	assert.match(board.text, /Pin it/);
 
+	// Download data: Pinboard's export path, called by Hamstr as the owner.
+	const exported = await ada.request("GET", `/api/grains/${kitchen.id}/export`, { host: SHELL, headers: { "sec-fetch-site": "same-origin" } });
+	assert.equal(exported.status, 200, exported.text);
+	assert.match(exported.headers["content-disposition"], /filename="Kitchen \d{4}-\d{2}-\d{2}\.json"/);
+	assert.deepEqual(exported.json.pins.map((p) => [p.text, p.author]), [["Buy oat milk", "Ada Lovelace"]]);
+
 	t = performance.now();
 	const N = 50;
 	for (let i = 0; i < N; i++) assert.equal((await ada.request("GET", "/whoami", { host: host(kitchen.id) })).status, 200);
@@ -122,22 +128,10 @@ try {
 	await go(ada, (await api(ada, "POST", `/api/grains/${garage.id}/open`, { path: "/" })).json.url);
 	assert.match((await ada.request("GET", "/", { host: host(garage.id) })).text, /Nothing pinned yet/);
 
-	// A view-only link: the guest sees the board but cannot pin.
-	const share = await api(ada, "POST", `/api/grains/${kitchen.id}/shares`, { role: "viewer", label: "Neighbours" });
-	const guest = new Browser(port);
-	const open = await guest.request("POST", `${new URL(share.json.url).pathname}/open`, { host: SHELL, headers: ORIGIN });
-	assert.equal((await go(guest, open.headers.location)).status, 303);
-	const view = await guest.request("GET", "/", { host: host(kitchen.id) });
-	assert.match(view.text, /Buy oat milk/);
-	assert.match(view.text, /Guest · viewer/);
-	assert.doesNotMatch(view.text, /Pin it/);
-	assert.equal((await guest.request("POST", "/pin", { host: host(kitchen.id), headers: FORM, body: "text=spam" })).status, 403);
-	assert.equal((await guest.request("POST", "/remove", { host: host(kitchen.id), headers: FORM, body: "id=1" })).status, 403);
-	assert.doesNotMatch((await ada.request("GET", "/", { host: host(kitchen.id) })).text, /spam/);
-
-	// Revoke: the guest is out immediately.
-	assert.equal((await api(ada, "DELETE", `/api/shares/${share.json.share.id}`)).status, 200);
-	assert.equal((await guest.request("GET", "/", { host: host(kitchen.id) })).status, 401);
+	// Nobody else gets in: another signed-in person cannot open the board.
+	const eve = await signIn({ sub: "u-eve", email: "eve@example.com", name: "Eve" });
+	assert.equal((await api(eve, "POST", `/api/grains/${kitchen.id}/open`, { path: "/" })).status, 404);
+	assert.equal((await eve.request("GET", "/", { host: host(kitchen.id) })).status, 401);
 
 	// Delete forever: the celld site and its objects are gone.
 	await api(ada, "POST", `/api/grains/${garage.id}/trash`, {});
@@ -151,7 +145,12 @@ try {
 	assert.ok(overview.objects.some((o) => o.site === host(kitchen.id) && o.className === "Board"), "the kitchen board has its object");
 	assert.ok(!overview.objects.some((o) => o.site === host(garage.id)), "deleted grain left no objects");
 	assert.ok(!overview.deploys.some((d) => d.site === host(garage.id) || d.site.includes("probe")), "no deploy history left behind");
-	console.log("e2e: install, grains, identity, roles, sharing, revocation and deletion — OK");
+
+	// Pinboard is single-instance: Home opens the one board that is left.
+	const opened = await api(ada, "POST", "/api/apps/pinboard/open", {});
+	assert.equal(opened.status, 200, opened.text);
+	assert.equal(opened.json.grain.id, kitchen.id);
+	console.log("e2e: install, grains, identity, export, privacy and deletion — OK");
 } finally {
 	await hamstr?.close();
 	await node.stop();

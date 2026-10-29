@@ -1,5 +1,5 @@
 // One process answers two kinds of hostname:
-//   HAMSTR_HOST            the shell: UI, JSON API, sign-in, share links
+//   HAMSTR_HOST            the shell: UI, JSON API, sign-in
 //   grain-<id>.<domain>    a grain: /.hamstr/enter, then everything is proxied
 // Anything else is not ours. This hook routes on the Host header before
 // SvelteKit's router, and adds the shell's security headers to every answer.
@@ -13,7 +13,7 @@ function withShellHeaders(c, response) {
 	const headers = new Headers(response.headers);
 	headers.set("x-content-type-options", "nosniff");
 	// Chromium sends `Origin: null` on form posts under no-referrer, which would
-	// defeat the same-origin checks. Share links opt out with their own value.
+	// defeat the same-origin checks.
 	if (!headers.has("referrer-policy")) headers.set("referrer-policy", "same-origin");
 	headers.set("x-frame-options", "DENY");
 	const existing = headers.get("content-security-policy");

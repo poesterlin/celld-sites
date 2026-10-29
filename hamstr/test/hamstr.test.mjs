@@ -143,8 +143,7 @@ describe("hosts and robustness", () => {
 		assert.equal(page.status, 200);
 		assert.match(page.headers["content-security-policy"], /frame-ancestors 'none'/);
 		assert.match(page.headers["content-security-policy"], /frame-src http:\/\/\*\.grains\.test/);
-		// Guest links POST and then redirect into a grain; Chromium checks the redirect too.
-		assert.match(page.headers["content-security-policy"], /form-action 'self' http:\/\/\*\.grains\.test/);
+		assert.match(page.headers["content-security-policy"], /form-action 'self'(;|$)/);
 		assert.equal((await b.request("GET", "/api/me", { host: SHELL })).status, 401);
 	});
 });
@@ -228,7 +227,6 @@ describe("apps and grains", () => {
 		celld.calls.length = 0;
 		const r = await apiCall(ada, "POST", "/api/apps", { slug: "board" });
 		assert.equal(r.status, 200, r.text);
-		assert.deepEqual(r.json.app.roles.map((x) => x.id), ["editor", "viewer"]);
 		const seq = celld.calls.map((c) => `${c.method} ${c.path}`);
 		assert.deepEqual(seq.slice(0, 2), ["POST /blobs/missing", "PUT /blob"]);
 		assert.ok(seq.includes("PUT /code"));
@@ -277,6 +275,105 @@ describe("apps and grains", () => {
 		assert.equal(fetchSite.status, 403);
 		const form = await bob.request("POST", "/api/grains", { host: SHELL, headers: { ...ORIGIN, "content-type": "text/plain" }, body: "{}" });
 		assert.equal(form.status, 415);
+	});
+	it("opens a single-instance app's one grain, making it on first open", async () => {
+		await publish({ slug: "family", name: "Family", instances: "single" }, "eeeeeeeeeeee");
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { slug: "family" })).status, 200);
+		const apps = (await bob.request("GET", "/api/apps", { host: SHELL })).json.apps;
+		assert.equal(apps.find((a) => a.slug === "family").instances, "single");
+		assert.equal(apps.find((a) => a.slug === "board").instances, "many");
+		// Two taps at once still make one grain.
+		const [a, b] = await Promise.all([apiCall(bob, "POST", "/api/apps/family/open", {}), apiCall(bob, "POST", "/api/apps/family/open", {})]);
+		assert.equal(a.status, 201, a.text);
+		assert.equal(b.json.grain.id, a.json.grain.id);
+		assert.equal(a.json.grain.title, "Family");
+		const again = await apiCall(bob, "POST", "/api/apps/family/open", {});
+		assert.equal(again.status, 200);
+		assert.equal(again.json.grain.id, a.json.grain.id);
+		// Everyone gets their own; the trash does not count.
+		const ada1 = (await apiCall(ada, "POST", "/api/apps/family/open", {})).json.grain;
+		assert.notEqual(ada1.id, a.json.grain.id);
+		await apiCall(ada, "POST", `/api/grains/${ada1.id}/trash`, {});
+		const ada2 = await apiCall(ada, "POST", "/api/apps/family/open", {});
+		assert.equal(ada2.status, 201);
+		assert.notEqual(ada2.json.grain.id, ada1.id);
+		// Many-instance apps are opened from their own page instead.
+		assert.equal((await apiCall(bob, "POST", "/api/apps/board/open", {})).status, 409);
+		assert.equal((await apiCall(bob, "POST", "/api/apps/nope/open", {})).status, 404);
+		assert.equal((await bob.request("POST", "/api/apps/family/open", { host: SHELL, headers: { origin: "http://evil.test" }, json: {} })).status, 403);
+		for (const g of [ada1, ada2.json.grain]) {
+			await apiCall(ada, "POST", `/api/grains/${g.id}/trash`, {});
+			assert.equal((await apiCall(ada, "DELETE", `/api/grains/${g.id}`)).status, 200);
+		}
+	});
+	it("names a new grain after its app and shows it on the app's page", async () => {
+		const r = await apiCall(bob, "POST", "/api/grains", { slug: "plain" });
+		assert.equal(r.json.grain.title, "Untitled Plain");
+		const home = await bob.request("GET", "/", { host: SHELL });
+		assert.match(home.text, /href="\/a\/plain"/);
+		assert.match(home.text, /href="\/a\/family"/);
+		const appPage = await bob.request("GET", "/a/plain", { host: SHELL });
+		assert.equal(appPage.status, 200);
+		assert.ok(appPage.text.includes(`/g/${r.json.grain.id}`));
+		assert.equal((await bob.request("GET", "/apps", { host: SHELL })).headers.location, "/store");
+		await apiCall(bob, "POST", `/api/grains/${r.json.grain.id}/trash`, {});
+		assert.equal((await apiCall(bob, "DELETE", `/api/grains/${r.json.grain.id}`)).status, 200);
+	});
+	it("downloads a grain's data from the app's export path, as the owner only", async () => {
+		await publish({ slug: "notes", name: "Notes", export: "/export?all=1" }, "ffffffffffff");
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { slug: "notes" })).status, 200);
+		const apps = (await bob.request("GET", "/api/apps", { host: SHELL })).json.apps;
+		assert.equal(apps.find((a) => a.slug === "notes").canExport, true);
+		assert.equal(apps.find((a) => a.slug === "plain").canExport, false);
+		const g = (await apiCall(bob, "POST", "/api/grains", { slug: "notes", title: "Trip: plans/ideas" })).json.grain;
+		const r = await bob.request("GET", `/api/grains/${g.id}/export`, { host: SHELL, headers: sameOrigin });
+		assert.equal(r.status, 200, r.text);
+		assert.match(r.headers["content-disposition"], /^attachment; filename="Trip- plans-ideas \d{4}-\d{2}-\d{2}\.json"; filename\*=UTF-8''/);
+		assert.equal(r.headers["x-content-type-options"], "nosniff");
+		// What the app saw: its own path, the owner's identity, and the proxy token.
+		assert.equal(r.json.host, grainHost(g.id));
+		assert.equal(r.json.path, "/export?all=1");
+		assert.equal(r.json.headers["x-hamstr-role"], "owner");
+		assert.equal(r.json.headers["x-hamstr-export"], "1");
+		assert.match(r.json.headers["x-hamstr-user-id"], /^[a-f0-9]{32}$/);
+		assert.equal(r.headers["x-celld-proxy-token"], undefined);
+		// Nobody else, not from another site, and not from an app without export.
+		assert.equal((await ada.request("GET", `/api/grains/${g.id}/export`, { host: SHELL })).status, 404);
+		assert.equal((await bob.request("GET", `/api/grains/${g.id}/export`, { host: SHELL, headers: { "sec-fetch-site": "cross-site" } })).status, 403);
+		const p = (await apiCall(bob, "POST", "/api/grains", { slug: "plain" })).json.grain;
+		const none = await bob.request("GET", `/api/grains/${p.id}/export`, { host: SHELL });
+		assert.equal(none.status, 404);
+		assert.match(none.json.error, /can't export/);
+		await apiCall(bob, "POST", `/api/grains/${g.id}/trash`, {});
+		assert.equal((await bob.request("GET", `/api/grains/${g.id}/export`, { host: SHELL })).status, 404);
+		for (const id of [g.id, p.id]) {
+			await apiCall(bob, "POST", `/api/grains/${id}/trash`, {});
+			assert.equal((await apiCall(bob, "DELETE", `/api/grains/${id}`)).status, 200);
+		}
+	});
+	it("shows an app's items and trash on its page", async () => {
+		const g = (await apiCall(bob, "POST", "/api/grains", { slug: "plain", title: "Old list" })).json.grain;
+		await apiCall(bob, "POST", `/api/grains/${g.id}/trash`, {});
+		const html = (await bob.request("GET", "/a/plain?tab=trash", { host: SHELL })).text;
+		assert.match(html, /Old list/);
+		assert.match(html, /Trash <span class="count">1<\/span>/);
+		assert.equal((await bob.request("GET", "/a/nope", { host: SHELL })).status, 200);
+		assert.match((await bob.request("GET", "/a/nope", { host: SHELL })).text, /not installed/);
+		assert.equal((await apiCall(bob, "DELETE", `/api/grains/${g.id}`)).status, 200);
+	});
+	it("shows an app's store details, versions and what it can do", async () => {
+		const page = await bob.request("GET", "/store/board", { host: SHELL });
+		assert.equal(page.status, 200);
+		assert.match(page.text, /<h1>Board<\/h1>/);
+		assert.match(page.text, /Installed/);
+		const caps = (await bob.request("GET", "/store/board?tab=permissions", { host: SHELL })).text;
+		assert.match(caps, /Can pin/);
+		assert.match(caps, /No internet access/);
+		assert.match((await bob.request("GET", "/store/fetcher?tab=permissions", { host: SHELL })).text, /api\.example\.com/);
+		assert.match((await bob.request("GET", "/store/board?tab=versions", { host: SHELL })).text, /v1\.0\.0/);
+		assert.match((await bob.request("GET", "/store/nope", { host: SHELL })).text, /not in the store/);
+		assert.match((await bob.request("GET", "/store?q=fetch", { host: SHELL })).text, /Fetcher/);
+		assert.doesNotMatch((await bob.request("GET", "/store?q=fetch", { host: SHELL })).text, /data-slug="plain"/);
 	});
 	it("refuses to remove an app that still has grains", async () => {
 		const r = await apiCall(ada, "DELETE", "/api/apps/board");
@@ -360,78 +457,23 @@ describe("the grain proxy", () => {
 	});
 });
 
-describe("sharing", () => {
-	let viewerLink;
-	let editorLink;
-	let viewerShareId;
-	it("lets only the owner share, with the app's roles", async () => {
-		assert.equal((await apiCall(ada, "POST", `/api/grains/${board.id}/shares`, { role: "viewer" })).status, 404);
-		assert.equal((await apiCall(bob, "POST", `/api/grains/${board.id}/shares`, { role: "admin" })).status, 400);
-		const v = await apiCall(bob, "POST", `/api/grains/${board.id}/shares`, { role: "viewer", label: "Grandma" });
-		assert.equal(v.status, 201);
-		viewerLink = new URL(v.json.url);
-		viewerShareId = v.json.share.id;
-		assert.match(viewerLink.pathname, /^\/s\/[A-Za-z0-9_-]{32}$/);
-		const e = await apiCall(bob, "POST", `/api/grains/${board.id}/shares`, {});
-		assert.equal(e.json.share.role, "editor", "the app's default role");
-		editorLink = new URL(e.json.url);
-		const list = await bob.request("GET", `/api/grains/${board.id}/shares`, { host: SHELL });
-		assert.equal(list.json.shares.length, 2);
-		assert.equal(JSON.stringify(list.json).includes(viewerLink.pathname.slice(3)), false, "links are not stored or shown again");
-	});
-	it("lets a guest open a link with exactly its role", async () => {
-		const guest = new Browser(port);
-		const landing = await guest.request("GET", viewerLink.pathname, { host: SHELL });
-		assert.equal(landing.status, 200);
-		assert.match(landing.text, /Family board/);
-		assert.match(landing.text, /Can view/);
-		assert.equal(landing.headers["referrer-policy"], "no-referrer");
-		const crossOpen = await guest.request("POST", `${viewerLink.pathname}/open`, { host: SHELL, headers: { "sec-fetch-site": "cross-site" } });
-		assert.equal(crossOpen.status, 403);
-		const open = await guest.request("POST", `${viewerLink.pathname}/open`, { host: SHELL, headers: ORIGIN });
-		assert.equal(open.status, 303);
-		assert.equal((await follow(guest, open.headers.location)).status, 303);
-		const r = await guest.request("GET", "/", { host: grainHost(board.id) });
-		assert.equal(r.json.headers["x-hamstr-role"], "viewer");
-		assert.equal(r.json.headers["x-hamstr-permissions"], "");
-		assert.equal(r.json.headers["x-hamstr-username"], "Guest");
-		assert.equal(r.json.headers["x-hamstr-user-id"], undefined);
-		guestBrowser = guest;
-	});
-	let guestBrowser;
-	it("keeps a link for signed-in people and combines roles", async () => {
+describe("privacy", () => {
+	it("keeps an item to its owner: others cannot list, open, change or download it", async () => {
 		const eve = await signIn(EVE);
-		const landing = await eve.request("GET", viewerLink.pathname, { host: SHELL });
-		assert.equal(landing.status, 303);
-		assert.equal(landing.headers.location, `/g/${board.id}`);
-		const shared = (await eve.request("GET", "/api/grains", { host: SHELL })).json.shared;
-		assert.deepEqual(shared.map((g) => [g.title, g.role]), [["Family board", "viewer"]]);
-		await eve.request("GET", editorLink.pathname, { host: SHELL });
-		const g = (await eve.request("GET", `/api/grains/${board.id}`, { host: SHELL })).json.grain;
-		assert.equal(g.role, "editor");
-		assert.deepEqual(g.permissions, ["pin"]);
-		assert.equal(g.isOwner, false);
-		await enter(eve, board.id);
-		const r = await eve.request("GET", "/", { host: grainHost(board.id) });
-		assert.equal(r.json.headers["x-hamstr-permissions"], "pin");
-		assert.equal(decodeURIComponent(r.json.headers["x-hamstr-username"]), "Eve");
-		// Not the owner: no renaming, trashing or sharing.
-		assert.equal((await apiCall(eve, "PATCH", `/api/grains/${board.id}`, { title: "Mine now" })).status, 403);
-		assert.equal((await apiCall(eve, "POST", `/api/grains/${board.id}/trash`, {})).status, 403);
-		assert.equal((await apiCall(eve, "POST", `/api/grains/${board.id}/shares`, {})).status, 403);
-		// Leaving removes it from the list and the access.
-		assert.equal((await apiCall(eve, "POST", `/api/grains/${board.id}/leave`, {})).status, 200);
-		assert.equal((await eve.request("GET", "/api/grains", { host: SHELL })).json.shared.length, 0);
+		assert.equal((await eve.request("GET", "/api/grains", { host: SHELL })).json.mine.length, 0);
+		assert.equal((await eve.request("GET", `/api/grains/${board.id}`, { host: SHELL })).status, 404);
+		assert.equal((await apiCall(eve, "POST", `/api/grains/${board.id}/open`, { path: "/" })).status, 404);
+		assert.equal((await apiCall(eve, "PATCH", `/api/grains/${board.id}`, { title: "Mine now" })).status, 404);
+		assert.equal((await apiCall(eve, "POST", `/api/grains/${board.id}/trash`, {})).status, 404);
+		assert.equal((await eve.request("GET", `/api/grains/${board.id}/export`, { host: SHELL })).status, 404);
 		assert.equal((await eve.request("GET", "/", { host: grainHost(board.id) })).status, 401);
+		assert.match((await eve.request("GET", `/g/${board.id}`, { host: SHELL })).text, /Nothing here/);
 	});
-	it("turns a revoked link off everywhere at once", async () => {
-		assert.equal((await guestBrowser.request("GET", "/", { host: grainHost(board.id) })).status, 200);
-		assert.equal((await apiCall(ada, "DELETE", `/api/shares/${viewerShareId}`)).status, 404, "only the owner revokes");
-		assert.equal((await apiCall(bob, "DELETE", `/api/shares/${viewerShareId}`)).status, 200);
-		assert.equal((await guestBrowser.request("GET", "/", { host: grainHost(board.id) })).status, 401);
-		const dead = await new Browser(port).request("GET", viewerLink.pathname, { host: SHELL });
-		assert.equal(dead.status, 404);
-		assert.match(dead.text, /doesn't work anymore/);
+	it("has no share links any more", async () => {
+		assert.equal((await apiCall(bob, "POST", `/api/grains/${board.id}/shares`, { role: "viewer" })).status, 404);
+		assert.equal((await new Browser(port).request("GET", `/s/${"a".repeat(32)}`, { host: SHELL })).status, 404);
+		assert.equal((await bob.request("GET", "/shared", { host: SHELL })).status, 404);
+		assert.equal((await bob.request("GET", "/api/grains", { host: SHELL })).json.shared, undefined);
 	});
 });
 
@@ -466,5 +508,28 @@ describe("trash and updates", () => {
 		const r = await apiCall(bob, "PATCH", `/api/grains/${board.id}`, { title: "  Kitchen board  " });
 		assert.equal(r.json.grain.title, "Kitchen board");
 		assert.equal((await apiCall(bob, "PATCH", `/api/grains/${board.id}`, { title: " " })).status, 400);
+	});
+	it("uninstalls an app for everyone, deleting its items only when told to", async () => {
+		const bobs = (await apiCall(bob, "POST", "/api/apps/family/open", {})).json.grain;
+		const adas = (await apiCall(ada, "POST", "/api/apps/family/open", {})).json.grain;
+		await apiCall(ada, "POST", `/api/grains/${adas.id}/trash`, {});
+		const info = await ada.request("GET", "/api/apps/family", { host: SHELL });
+		assert.deepEqual(info.json.usage, { items: 2, mine: 1, others: 1, people: 2 });
+		assert.equal((await apiCall(bob, "DELETE", "/api/apps/family?items=delete")).status, 403, "admins only");
+		assert.equal((await ada.request("DELETE", "/api/apps/family?items=delete", { host: SHELL, headers: { origin: "http://evil.test" } })).status, 403);
+		const kept = await apiCall(ada, "DELETE", "/api/apps/family");
+		assert.equal(kept.status, 409);
+		assert.match(kept.json.error, /2 items/);
+		assert.ok(celld.sites.has(grainHost(bobs.id)));
+		const r = await apiCall(ada, "DELETE", "/api/apps/family?items=delete");
+		assert.equal(r.status, 200, r.text);
+		assert.equal(r.json.deleted, 2);
+		for (const g of [bobs, adas]) assert.equal(celld.sites.has(grainHost(g.id)), false);
+		assert.equal((await bob.request("GET", `/api/grains/${bobs.id}`, { host: SHELL })).status, 404);
+		assert.equal((await bob.request("GET", "/api/apps/family", { host: SHELL })).status, 404);
+		assert.doesNotMatch((await bob.request("GET", "/", { host: SHELL })).text, /href="\/a\/family"/);
+		assert.equal((await apiCall(ada, "DELETE", "/api/apps/family")).status, 404);
+		// Bob's Feeds goes with Fetcher.
+		assert.equal((await apiCall(ada, "DELETE", "/api/apps/fetcher?items=delete")).status, 200);
 	});
 });

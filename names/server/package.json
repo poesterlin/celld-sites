@@ -1,0 +1,12 @@
+{
+	"name": "hamstr-names",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Hostnames and DNS-01 challenges for Hamstr installs",
+	"engines": { "node": ">=24" },
+	"scripts": {
+		"start": "node server.mjs",
+		"test": "node --test test/*.test.mjs"
+	}
+}

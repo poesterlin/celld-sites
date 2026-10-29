@@ -1,20 +1,29 @@
 {
 	"slug": "pinboard",
 	"name": "Pinboard",
-	"summary": "A shared board of notes that knows who pinned what.",
-	"description": "Each Pinboard grain is its own board. Share it with a link: editors can pin notes, viewers can only read, and the owner can tidy up anything.\n\nA Hamstr demo app: it never asks anyone to log in. The platform tells it who is visiting (X-Hamstr-Username) and what they may do (X-Hamstr-Permissions).",
-	"version": "1.0.0",
+	"summary": "A board of notes that remembers who pinned what.",
+	"description": "One board for you: tap Pinboard on your Hamstr home screen and it opens. Pin notes, remove them, and download the whole board as JSON.\n\nA Hamstr demo app: it never asks anyone to log in. The platform tells it who is visiting (X-Hamstr-Username) and what they may do (X-Hamstr-Permissions).",
+	"version": "1.1.0",
+	"instances": "single",
+	"export": "/export",
 	"license": "MIT",
 	"icon": "📌",
-	"tags": ["family", "notes", "demo"],
+	"tags": [
+		"family",
+		"notes",
+		"demo"
+	],
 	"egress": [],
 	"permissions": [
-		{ "id": "pin", "title": "Pin notes", "description": "Add notes and remove your own." },
-		{ "id": "moderate", "title": "Moderate", "description": "Remove anyone's notes." }
-	],
-	"roles": [
-		{ "id": "editor", "title": "Can pin", "description": "Read the board and pin notes.", "permissions": ["pin"], "default": true },
-		{ "id": "moderator", "title": "Can moderate", "description": "Pin notes and remove anyone's.", "permissions": ["pin", "moderate"] },
-		{ "id": "viewer", "title": "Can view", "description": "Read the board only.", "permissions": [] }
+		{
+			"id": "pin",
+			"title": "Pin notes",
+			"description": "Add notes and remove your own."
+		},
+		{
+			"id": "moderate",
+			"title": "Moderate",
+			"description": "Remove anyone's notes."
+		}
 	]
 }

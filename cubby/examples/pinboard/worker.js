@@ -65,6 +65,15 @@ export default {
 		if (url.pathname === "/health") return new Response("ok\n", { headers: { "content-type": "text/plain" } });
 		const me = visitor(request);
 
+		// Hamstr's "Download data" (cubby.json "export"): the whole board as JSON.
+		if (url.pathname === "/export") {
+			const pins = await env.OBJECTS.call("Board", "board", "list");
+			return Response.json(
+				{ app: "pinboard", exportedAt: new Date().toISOString(), pins: pins.map(({ text, color, author, at }) => ({ text, color, author, at })) },
+				{ headers: { "content-disposition": 'attachment; filename="pinboard.json"' } },
+			);
+		}
+
 		if (url.pathname === "/whoami") {
 			return Response.json({ id: me.id, name: me.name, role: me.role, pin: me.can("pin"), moderate: me.can("moderate") });
 		}

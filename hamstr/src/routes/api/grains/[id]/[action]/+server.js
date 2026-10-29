@@ -15,10 +15,6 @@ export const POST = guard(async (event) => {
 		const body = await readJson(event.request);
 		return json(c, 200, { url: c.issueTicket(grain, { userId: me.id, parent: event.locals.session.hash, path: body.path }) });
 	}
-	if (action === "leave") {
-		c.db.prepare("DELETE FROM members WHERE user_id = ? AND share_id IN (SELECT id FROM shares WHERE grain_id = ?)").run(me.id, grain.id);
-		return json(c, 200, { ok: true });
-	}
 	if (!owner) return json(c, grain.trashed_at || !access ? 404 : 403, { error: "only the owner can do that" });
 
 	if (action === "trash") {

@@ -43,7 +43,7 @@
 		<div class="page-head">
 			<div>
 				<h1>Trash</h1>
-				<p class="dim">Grains here are deleted for good after 30 days. Nobody can open them meanwhile.</p>
+				<p class="dim">Things here are deleted for good after 30 days. Nobody can open them meanwhile.</p>
 			</div>
 		</div>
 		{#if data.trash.length}

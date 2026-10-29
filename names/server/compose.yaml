@@ -1,0 +1,27 @@
+# Hamstr names on a public server (a small VPS is enough). DNS must be reachable
+# on port 53 from the internet; the API should sit behind TLS (a reverse proxy
+# or a Cloudflare tunnel) at https://names.<zone>.
+name: hamstr-names
+
+services:
+  names:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    ports:
+      - "53:5353/udp"
+      - "53:5353/tcp"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - names-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  names-data:
