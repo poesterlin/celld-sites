@@ -238,6 +238,9 @@ async function openInstall(app, options = {}) {
 		},
 		h("h2", { id: "modalTitle", text: `${options.update ? "Update" : "Install"} ${app.name}` }),
 		h("p", { class: "dim", text: app.summary || "" }),
+		options.update
+			? null
+			: h("p", { class: "dim", text: "Heads up: this app runs on the same celld node as your own sites. It cannot read their data, but it shares the process, memory and disk, so only install apps you trust." }),
 		h("label", { class: "field" }, h("span", { text: "Site hostname" }), hostInput),
 		h("label", { class: "field" }, h("span", { text: "Version" }), versionSelect),
 		h(

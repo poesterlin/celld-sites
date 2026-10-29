@@ -433,6 +433,9 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 	if (prior && prior.slug !== slug && opts.replace) {
 		console.log(`warning: replacing ${prior.slug} on ${host}; ${slug} will run against the same Durable Objects and data`);
 	}
+	if (!prior && !opts.replace && (await currentEgress(host)) !== null) {
+		die(`${host} is already a site on this node that Cubby did not install; pick a free --host, or --replace to overwrite it (the app would run against its data)`);
+	}
 	if (opts.watch !== undefined) {
 		if (typeof opts.watch !== "string" || !/^\d+$/.test(opts.watch)) die("--watch needs a number of seconds");
 	}
@@ -472,7 +475,8 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 	}
 	const bundle = Buffer.from(await res.arrayBuffer());
 	const digest = createHash("sha256").update(bundle).digest("hex");
-	if (release.bundleSha256 && digest !== release.bundleSha256) die("downloaded bundle does not match the catalog SHA-256");
+	if (!release.bundleSha256) die("the store did not publish a SHA-256 for this release; refusing to install an unpinned bundle");
+	if (digest !== release.bundleSha256) die("downloaded bundle does not match the catalog SHA-256");
 
 	const tmp = mkdtempSync(join(tmpdir(), "cubby-install-"));
 	const file = join(tmp, "bundle.tgz");
