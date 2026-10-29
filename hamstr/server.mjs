@@ -119,7 +119,12 @@ export function createHamstr(options = {}) {
 					return;
 				}
 
-				runWithCore(core, () => handle(req, res)).catch((err) => {
+				// adapter-node's handler returns nothing for its own static assets
+				// and a promise for everything it hands to SvelteKit, so always
+				// await it inside the context.
+				runWithCore(core, async () => {
+					await handle(req, res);
+				}).catch((err) => {
 					console.error("hamstr: request failed", err);
 					if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain; charset=utf-8" }).end("internal error\n");
 					else res.destroy();

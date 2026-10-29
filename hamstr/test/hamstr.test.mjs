@@ -122,6 +122,21 @@ describe("hosts and robustness", () => {
 		assert.equal((await b.request("GET", "/api/health", { host: `${SHELL}:abc` })).status, 200, "no crash");
 		assert.equal((await b.request("GET", "/api/health", { host: SHELL })).status, 200);
 	});
+	it("serves its own static assets without taking the server down", async () => {
+		// adapter-node answers these itself (it returns nothing), while pages go
+		// through SvelteKit (it returns a promise). Both must stay in the context.
+		const b = new Browser(port);
+		const css = await b.request("GET", "/style.css", { host: SHELL });
+		assert.equal(css.status, 200);
+		assert.match(css.headers["content-type"], /text\/css/);
+		assert.match(css.text, /\.grain-frame/);
+		assert.equal((await b.request("GET", "/favicon.svg", { host: SHELL })).status, 200);
+		const page = await b.request("GET", "/", { host: SHELL });
+		const asset = /\/_app\/immutable\/[^"' ]+\.js/.exec(page.text);
+		assert.ok(asset, "the page references its JS bundle");
+		assert.equal((await b.request("GET", asset[0], { host: SHELL })).status, 200);
+		assert.equal((await b.request("GET", "/api/health", { host: SHELL })).status, 200, "still alive");
+	});
 	it("serves the shell to signed-out visitors but no data", async () => {
 		const b = new Browser(port);
 		const page = await b.request("GET", "/", { host: SHELL });
