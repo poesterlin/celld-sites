@@ -26,9 +26,10 @@ export function csp(core) {
 }
 
 /** Directives that depend on runtime config and are not known at build time.
- *  Appended to the policy SvelteKit builds for rendered pages. */
+ *  Appended to the policy SvelteKit builds for rendered pages (which already
+ *  carries frame-ancestors from the static directives). */
 export function cspExtras(core) {
-	return [`frame-src ${core.grainSources}`, `form-action 'self' ${core.grainSources}`, "frame-ancestors 'none'"];
+	return [`frame-src ${core.grainSources}`, `form-action 'self' ${core.grainSources}`];
 }
 
 export function shellHeaders(core, extra = {}) {
