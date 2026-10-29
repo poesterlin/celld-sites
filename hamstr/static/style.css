@@ -278,7 +278,7 @@ body.grain-mode { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* --- sign-in and plain server pages --- */
-body.plain, .welcome { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
+body.plain, .plain-page, .welcome { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
 .center-card, .welcome-card {
 	width: min(400px, 100%); text-align: center; background: var(--glass); border: 1px solid var(--glass-line); border-radius: 24px;
 	backdrop-filter: saturate(1.8) blur(24px); -webkit-backdrop-filter: saturate(1.8) blur(24px);

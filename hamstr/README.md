@@ -118,11 +118,20 @@ links). The grains' data is in the celld bucket like any site's. Back up both.
 
 ### Develop and test
 
+The UI and the JSON API are a SvelteKit app in `hamstr/src` (SSR, Svelte 5
+runes). `hamstr/server.mjs` is the HTTP entrypoint: it routes on the Host
+header, proxies the grain hosts, and hands everything else to adapter-node. The
+plain-Node modules in `hamstr/lib` hold the platform core, the celld and OIDC
+clients and the proxy, so the tests drive them without a browser.
+
 ```sh
-npm test --prefix hamstr        # 27 tests: mock IdP, mock celld, real Cubby store
-npm run e2e --prefix hamstr     # real celld dev node, real `cubby publish`, Pinboard
-node hamstr/test/dev.mjs        # playground at http://hamstr.localhost:8795 (seeded)
+npm test --prefix hamstr            # 28 tests: mock IdP, mock celld, real Cubby store
+npm run e2e --prefix hamstr         # real celld dev node, real `cubby publish`, Pinboard
+npm run playground --prefix hamstr  # http://hamstr.localhost:8795, seeded
 ```
+
+`test`, `e2e` and `playground` build the app first; `server.mjs` then loads
+`build/handler.js`.
 
 ## Security model
 
