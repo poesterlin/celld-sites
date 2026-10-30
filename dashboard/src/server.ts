@@ -1,5 +1,7 @@
-// Read-only dashboard for celld-sites. No authentication (LAN-only via Traefik),
-// so it serves GET/HEAD only and has no route that changes anything.
+// Read-only dashboard for celld-sites. Every route except /health needs HTTP
+// Basic auth (DASHBOARD_PASSWORD), and it serves GET/HEAD only: no route changes
+// anything. It also reads the bucket (read-only mount) for storage sizes.
+import { createHash, timingSafeEqual } from "node:crypto";
 import { config, getModel } from "./data";
 import { notFoundPage, overviewPage, sitePage } from "./ui";
 
@@ -12,6 +14,20 @@ const HEADERS = {
 const html = (body: string, status = 200) =>
 	new Response(body, { status, headers: { ...HEADERS, "content-type": "text/html; charset=utf-8" } });
 
+// Compare digests, so the check takes the same time wherever the guess differs.
+const digest = (s: string) => createHash("sha256").update(s).digest();
+const passwordDigest = digest(config.password);
+function authorized(req: Request): boolean {
+	const m = /^Basic ([A-Za-z0-9+/=]+)$/.exec(req.headers.get("authorization") ?? "");
+	if (!m) return false;
+	const given = Buffer.from(m[1]!, "base64").toString("utf8");
+	const colon = given.indexOf(":");
+	if (colon < 0) return false;
+	const userOk = timingSafeEqual(digest(given.slice(0, colon)), digest(config.user));
+	const passOk = timingSafeEqual(digest(given.slice(colon + 1)), passwordDigest);
+	return userOk && passOk;
+}
+
 Bun.serve({
 	port: config.port,
 	async fetch(req) {
@@ -20,6 +36,14 @@ Bun.serve({
 		}
 		const { pathname } = new URL(req.url);
 		if (pathname === "/health") return new Response("ok");
+		if (!authorized(req)) {
+			// Slow down guessing; the page itself is only a few bytes.
+			await Bun.sleep(500);
+			return new Response("Authentication required", {
+				status: 401,
+				headers: { "www-authenticate": 'Basic realm="celld-sites", charset="UTF-8"', "cache-control": "no-store", ...HEADERS },
+			});
+		}
 
 		const model = await getModel();
 		if (pathname === "/") return html(overviewPage(model));

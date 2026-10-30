@@ -3,7 +3,7 @@ name: images
 # Builds the two images the production stack pulls:
 #   ghcr.io/<owner>/celld-sites-node         (node/Dockerfile, target "hosting")
 #   ghcr.io/<owner>/celld-sites-dashboard    (dashboard/Dockerfile)
-# The hosting image bundles no example sites; sites are deployed at runtime.
+# The node image bundles no sites; sites are deployed at runtime.
 #
 # Tags: :latest on main, :X.Y.Z / :X.Y on v* tags, :main on main, :sha-<short>
 # for every build. Pull requests only build (no push), to catch breakage.

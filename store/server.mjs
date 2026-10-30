@@ -115,9 +115,7 @@ export function createStore(options = {}) {
 			if (Date.now() - statSync(file).mtimeMs > 60 * 60 * 1000) rmSync(file, { recursive: true, force: true });
 		} catch {}
 	}
-	// store.db; a store that ran under the old name keeps its cubby.db.
-	const legacyDb = join(config.dataDir, "cubby.db");
-	const db = new DatabaseSync(existsSync(legacyDb) ? legacyDb : join(config.dataDir, "store.db"));
+	const db = new DatabaseSync(join(config.dataDir, "store.db"));
 	db.exec("PRAGMA journal_mode=WAL");
 	db.exec("PRAGMA synchronous=NORMAL");
 	db.exec("PRAGMA foreign_keys=ON");

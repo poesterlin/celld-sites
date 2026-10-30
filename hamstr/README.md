@@ -69,8 +69,8 @@ with `hamstr publish`. Inside a grain, read who is visiting from request headers
 
 The owner holds every permission the app declares in `hamstr.json`
 (`"permissions": [{ "id": "pin", "title": "Pin notes" }]`), so an app written
-for several roles still works. `roles` are still accepted in manifests but
-Hamstr ignores them.
+for several roles still works. The retired `roles` field is still accepted in
+manifests and ignored.
 
 Add `"instances": "single"` for an app people only need one of (a family
 board, a settings page): Home opens it straight away. The default, `"many"`,

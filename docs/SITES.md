@@ -216,8 +216,9 @@ dashboard lists a site's objects.
 ```sh
 tools/preview.sh sites/<name>                    # local preview, http://localhost:8790/
 node tools/seed.mjs --preview sites/<name> sites/<name>/seed.json
-tools/deploy.sh sites/<name> <hostname>          # production: npm run build, pack, upload, activate
+tools/deploy.sh sites/<name> <hostname>          # production: pack, upload, activate (build first, or add --build)
 node tools/seed.mjs <hostname> sites/<name>/seed.json
+tools/update.sh sites/<name> <hostname> [--rehearse <copy>]   # live site with data: dump, rehearse, deploy
 ```
 
 A preview runs the production router under `celld dev` with the site

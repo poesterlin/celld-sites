@@ -121,8 +121,8 @@ never pass through the router.
    one object can write unlimited SQLite data (a single SQL value is 2 MB; one
    object wrote 40 MB), and celld 0.6.3 never compacts Durable Object facet
    write logs (~4-6 KB per write, and 1000 empty objects cost ~236 MB of disk).
-   A chatty app can fill the bucket. The only stop today is monitoring (`sizer`,
-   the dashboard) plus `DELETE /__admin/site`, which stops serving and deletes
+   A chatty app can fill the bucket. The only stop today is monitoring (the
+   dashboard) plus `DELETE /__admin/site`, which stops serving and deletes
    data — a kill switch, not a quota.
 3. **The deploy path is operator-trusted.** `tools/deploy.sh` runs
    `npm run build` on the host as the operator, so a third-party site's
@@ -146,7 +146,7 @@ never pass through the router.
    VersityGW stores objects as files in a Docker volume; VM backups cover them.
    Disk encryption and backup access are host-level concerns. Object names are
    site-chosen and stored in plaintext in the index; `/__admin/overview`
-   returns them to `READ_TOKEN`, and the unauthenticated LAN dashboard shows
+   returns them to `READ_TOKEN`, and the LAN dashboard (behind a password) shows
    them. Do not put secrets or unnecessary user identifiers in object names.
 
 ## Proxy-only sites (Hamstr grains)
@@ -168,7 +168,7 @@ Before running untrusted apps on a shared node:
 - Keep egress off per app by default; allowlist only what the app declares, on
   names you control. Prefer apps that bundle their dependencies.
 - Set `SITE_MAX_OBJECTS`, `SITE_MAX_INFLIGHT` and `SITE_MAX_SUBREQUESTS` to the
-  smallest values the app works with, and watch bucket growth (`sizer`, the
+  smallest values the app works with, and watch bucket growth (the
   dashboard) rather than trusting the quotas to bound bytes. The in-flight cap
   is per router isolate (celld keeps a pool of ~10), so the effective ceiling is
   roughly ten times the value.

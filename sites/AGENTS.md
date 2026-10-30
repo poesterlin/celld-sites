@@ -166,7 +166,10 @@ The production node holds production sites only. Preview and test locally.
    The packer prints the version, the asset count and the server code size;
    check them. Requests are plain `http://`, so origin-checked POSTs need
    `-H 'Origin: http://localhost:<port>'`.
-5. **Deploy to production** only when asked: `tools/deploy.sh sites/<name> <hostname>`.
+5. **Deploy to production** only when asked (for a site that holds data use
+   `tools/update.sh`, which dumps first): build the site (`npm run build` in
+   its folder), then `tools/deploy.sh sites/<name> <hostname>`. The deploy does
+   not build; `--build` does it for you.
    The deploy requests the `check` path (default `/`) on the new version before
    activating it, with empty Durable Objects, and probes it on the live site for
    10 s after, rolling back on a 5xx. Make that path work on empty data; if the

@@ -48,13 +48,12 @@ export async function grainRequest(event, grainId) {
 		const sessionValue = core.token(32);
 		core.db
 			.prepare(
-				"INSERT INTO grain_sessions (hash, grain_id, user_id, share_id, parent, public_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				"INSERT INTO grain_sessions (hash, grain_id, user_id, parent, public_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			)
 			.run(
 				core.sha256(sessionValue),
 				grain.id,
 				ticket.user_id,
-				ticket.share_id,
 				ticket.parent,
 				core.randomId(16),
 				Date.now(),

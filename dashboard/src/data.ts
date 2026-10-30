@@ -1,7 +1,7 @@
 // Everything the dashboard shows, gathered read-only:
 //  - the router's admin API (GET only, READ_TOKEN): sites, deploys, versions, object index
 //  - celld's node counters, fetched by the router from its operator API (GET /state)
-//  - bucket storage sizes from the sizer, which alone has the bucket mounted
+//  - bucket storage sizes, scanned from the read-only bucket mount by a worker
 
 export const config = {
 	port: Number(process.env.PORT ?? 3000),
@@ -9,12 +9,14 @@ export const config = {
 	// admin hostname the router expects. Traefik never routes it.
 	routerAdmin: process.env.ROUTER_ADMIN_URL ?? "http://admin.internal:8080",
 	readToken: process.env.READ_TOKEN ?? "",
+	user: process.env.DASHBOARD_USER ?? "admin",
+	password: process.env.DASHBOARD_PASSWORD ?? "",
 	healthUrl: process.env.CELLD_HEALTH_URL ?? "http://celld:8080/.well-known/celld/health",
 	s3Url: process.env.S3_URL ?? "http://s3:7070/",
-	sizerUrl: process.env.SIZER_URL ?? "http://sizer:3001",
 	cacheMs: Number(process.env.CACHE_SECONDS ?? 15) * 1000,
 };
 if (!config.readToken) throw new Error("READ_TOKEN is required");
+if (config.password.length < 12) throw new Error("DASHBOARD_PASSWORD is required (at least 12 characters)");
 
 export interface Deploy { site: string; at: string; version: string; assets?: number; sourceBytes?: number; pruned?: boolean }
 export interface SiteObject { site: string; className: string; name: string; id?: string; firstSeen?: string; bytes: number; files: number; resident: boolean }
@@ -93,12 +95,23 @@ type BucketSizes = {
 	volumeSizeBytes: number;
 };
 
-/** Bucket usage from the sizer (src/sizer.ts), the only container with the bucket mounted. */
-async function bucketSizes(): Promise<BucketSizes> {
-	const res = await fetch(`${config.sizerUrl}/sizes`, { signal: AbortSignal.timeout(5000) });
-	const body = (await res.json()) as any;
-	if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-	return { ...body, perObject: new Map(Object.entries(body.perObject ?? {})) };
+/** Latest bucket scan, from the worker (bucket-worker.ts). */
+let sizes: BucketSizes | undefined;
+let sizesError: string | undefined = "no scan yet";
+const worker = new Worker(new URL("./bucket-worker.ts", import.meta.url));
+worker.onmessage = ({ data }) => {
+	if (data.ok) {
+		sizes = { ...data.sizes, perObject: new Map(Object.entries(data.sizes.perObject ?? {})) };
+		sizesError = undefined;
+	} else sizesError = data.error;
+};
+worker.onerror = (e) => {
+	sizesError = e.message;
+};
+
+function bucketSizes(): BucketSizes {
+	if (!sizes) throw new Error(sizesError ?? "no scan yet");
+	return sizes;
 }
 
 const ZERO: Usage = { bytes: 0, files: 0 };
@@ -135,7 +148,7 @@ async function build(): Promise<Model> {
 
 	let bucket: BucketSizes | undefined;
 	try {
-		bucket = await bucketSizes();
+		bucket = bucketSizes();
 	} catch (e) {
 		errors.push(`bucket sizes: ${(e as Error).message}`);
 	}

@@ -15,8 +15,7 @@ with the same code ([`packages/app-format`](../packages/app-format)).
 
 This directory is a working prototype: the catalog UI, publisher API, CLI and
 the demo apps all run, and the test suites cover the store, the bundle format
-and the installer path. It was called Cubby before; old `cubby.json` manifests,
-`~/.config/cubby` CLI configs and `#/app/<slug>` links still work.
+and the installer path.
 
 ---
 
@@ -321,10 +320,9 @@ downloads per IP. Limits are in-memory for the prototype and reset on restart.
 ```
 
 Optional, for apps that run as [Hamstr](../hamstr/README.md) grains:
-`permissions` (`[{ "id", "title", "description"? }]`, at most 16) and `roles`
-(`[{ "id", "title", "description"?, "permissions": [ids], "default"? }]`, at
-most 8, `owner` is reserved). The grain's owner holds every permission; Hamstr
-no longer has share links, so `roles` are validated but unused. `instances` is `"many"` (the default: people make as many
+`permissions` (`[{ "id", "title", "description"? }]`, at most 16; the grain's
+owner holds every one). The retired `roles` field is still accepted and
+ignored. `instances` is `"many"` (the default: people make as many
 grains as they like, one per document) or `"single"` (one grain per person,
 opened straight from the Hamstr home screen, like Pinboard). `export` is a
 path in the app (`"/export"`) that answers with one grain's data as a file;
@@ -401,8 +399,8 @@ open https://store.example.com
 ```
 
 The image is `store/Dockerfile` (build context: the repo root); it builds the
-web UI and ships it with the server. Data lives in the store's volume (still
-named `celld-sites_cubby-data` from the old name: `cubby.db` + `blobs/`); back
+web UI and ships it with the server. Data lives in the store's volume (the Docker volume is
+still named `celld-sites_cubby-data`, from an old name: `store.db` + `blobs/`); back
 it up like any other service. The container is read-only except that volume,
 runs as the `node` user, drops all capabilities and joins only `traefik_web`.
 

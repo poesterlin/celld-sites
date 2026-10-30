@@ -384,8 +384,10 @@ async function withTimeout(promise, ms, what) {
 const indexed = new Set();
 const MAX_INDEXED = 10_000;
 
-/** Path prefixes of content-hashed build output: SvelteKit, Nuxt, Vite. */
-const DEFAULT_IMMUTABLE = ["_app/immutable/", "_nuxt/", "assets/"];
+/** Path prefixes of content-hashed build output: SvelteKit, Nuxt. tools/pack.mjs
+ *  adds assets/ (Vite) to the record itself when every file there is hashed; a
+ *  code record without "immutable" never treats assets/ as immutable. */
+const DEFAULT_IMMUTABLE = ["_app/immutable/", "_nuxt/"];
 
 /** File bytes. Blobs never change and an old-format version's files don't either,
  *  so any file can be cached; small ones are kept in memory (LRU, bounded) per
@@ -1054,7 +1056,9 @@ async function check(env, ctx, url) {
 			await env.SITE_OBJECTS.getByName(key).destroy(key.split("|")[1]);
 			await env.CODE.delete(k.name);
 		} catch (e) {
-			cleanup.push(`${key}: ${String(e?.message ?? e).slice(0, 200)}`);
+			const message = `${key}: ${String(e?.message ?? e).slice(0, 200)}`;
+			console.warn(`deploy check cleanup failed: ${message}`);
+			cleanup.push(message);
 		}
 	}
 	return json({

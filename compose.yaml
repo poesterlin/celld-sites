@@ -3,8 +3,8 @@
 # the Host header.
 # Site code, assets and Durable Object data live in the S3 bucket below.
 #
-# This is the development stack: it builds the images locally, bundles the
-# example site and uses the default `celld-sites-node` image tag. Production
+# This is the development stack: it builds the images locally and uses the
+# default `celld-sites-node` image tag. Production
 # runs the pull-only compose file in the celld-sites-deploy repo, which uses the
 # same project name so volumes carry over; see README, "Development vs hosting".
 # Both must not run at the same time.
@@ -52,15 +52,12 @@ services:
 
   # One celld node running the host-header router (router/index.js). On every
   # start it creates the bucket if needed, deploys the router and starts the
-  # node; the bundled example is deployed to ${HOST_DOMAIN} only if that site
-  # has no active version yet.
+  # node. No site is bundled: deploy them with tools/deploy.sh.
   celld:
     build:
       context: .
       dockerfile: node/Dockerfile
-      # The dev target bundles sites/example; the hosting image built by CI does
-      # not (node/Dockerfile).
-      target: dev
+      target: hosting
     image: celld-sites-node
     restart: unless-stopped
     init: true
@@ -79,7 +76,6 @@ services:
       READ_TOKEN: ${READ_TOKEN:?Set READ_TOKEN in .env}
       # The admin API answers only on this hostname, which Traefik never routes.
       ADMIN_HOST: admin.internal
-      EXAMPLE_HOST: ${HOST_DOMAIN:?Set HOST_DOMAIN in .env}
       # Delete write-log epochs no restore needs once they are this old (epoch GC,
       # a pass at most every 5 min). Covers the router's KV (site code and assets)
       # and its root objects. celld 0.6.3 skips Durable Object facets, so site
@@ -210,10 +206,10 @@ services:
       - 'traefik.http.routers.celld-demo.priority=10'
       - 'traefik.http.services.celld-demo.loadbalancer.server.port=8080'
 
-  # Read-only dashboard, no authentication: LAN-only (not in the Cloudflare
-  # tunnel). It can't change anything: GET routes only, a read-only token for the
-  # router's admin API. It has no access to the bucket (site code and data);
-  # storage sizes come from the sizer below.
+  # Read-only dashboard behind HTTP Basic auth (DASHBOARD_PASSWORD); LAN-only
+  # (not in the Cloudflare tunnel). It can't change anything: GET routes only, a
+  # read-only token for the router's admin API. It mounts the bucket read-only
+  # to measure storage sizes, which is why it needs the login.
   dashboard:
     build: ./dashboard
     image: celld-sites-dashboard
@@ -221,10 +217,13 @@ services:
     init: true
     depends_on:
       - celld
-      - sizer
     environment:
       READ_TOKEN: ${READ_TOKEN}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env (openssl rand -hex 24)}
+      BUCKET_DIR: /bucket/celld
       PORT: 3000
+    volumes:
+      - s3-data:/bucket:ro
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -250,39 +249,6 @@ services:
       - 'traefik.docker.network=traefik_web'
       - 'traefik.http.routers.celld-sites-dashboard.rule=Host(`${DASHBOARD_HOST:?Set DASHBOARD_HOST in .env}`)'
       - 'traefik.http.services.celld-sites-dashboard.loadbalancer.server.port=3000'
-
-  # Bucket disk usage for the dashboard: the only container with the bucket volume
-  # (read-only). Serves sizes only (GET /sizes), on the project network; no Traefik
-  # route, no token, no file contents.
-  sizer:
-    # Built by the dashboard service (same image, other entry point).
-    image: celld-sites-dashboard
-    pull_policy: never
-    restart: unless-stopped
-    init: true
-    command: ["bun", "src/sizer.ts"]
-    environment:
-      PORT: 3001
-    volumes:
-      - s3-data:/bucket:ro
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m
-    mem_limit: 256m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 20s
-      start_interval: 2s
-    logging: *logging
-    networks:
-      - default
 
   # Hamstr Store: the hosted app catalog (see store/README.md). It is not part
   # of a personal Hamstr: personal nodes point HAMSTR_STORE at a store instead.
@@ -412,7 +378,8 @@ services:
 volumes:
   s3-data:
   celld-state:
-  # The store's catalog and bundles. It keeps the volume it had as "cubby".
+  # The store's catalog and bundles. The volume keeps its original name, which
+  # is only a label: renaming it would mean copying the data.
   store-data:
     name: celld-sites_cubby-data
   demo-state:

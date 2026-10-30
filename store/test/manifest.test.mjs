@@ -17,28 +17,22 @@ describe("manifest validation", () => {
 		assert.deepEqual(m.egress, ["api.example.com"]);
 		assert.equal(m.schema, 1);
 	});
-	it("accepts a sharing model of permissions and roles", () => {
+	it("accepts permissions, and ignores the retired roles", () => {
 		const m = validateManifest({
 			...manifest(),
 			permissions: [{ id: "edit", title: "Edit" }, { id: "comment" }],
-			roles: [
-				{ id: "editor", title: "Can edit", permissions: ["edit", "comment"], default: true },
-				{ id: "viewer", title: "Can view", permissions: [] },
-			],
+			roles: [{ id: "editor", permissions: ["edit"] }],
 		});
 		assert.deepEqual(m.permissions.map((p) => p.id), ["edit", "comment"]);
 		assert.equal(m.permissions[1].title, "comment");
-		assert.deepEqual(m.roles[0], { id: "editor", title: "Can edit", permissions: ["edit", "comment"], default: true });
-		assert.deepEqual(validateManifest(manifest()).roles, []);
+		assert.equal("roles" in m, false);
+		assert.deepEqual(validateManifest(manifest()).permissions, []);
 	});
-	it("rejects broken sharing models", () => {
+	it("rejects broken permissions", () => {
 		const bad = [
-			{ roles: [{ id: "editor", permissions: ["edit"] }] }, // undeclared permission
-			{ roles: [{ id: "owner", permissions: [] }] }, // reserved
 			{ permissions: [{ id: "Edit" }] },
 			{ permissions: [{ id: "edit" }, { id: "edit" }] },
 			{ permissions: [{ id: "edit", sudo: true }] },
-			{ roles: [{ id: "a", default: true }, { id: "b", default: true }] },
 		];
 		for (const over of bad) assert.throws(() => validateManifest({ ...manifest(), ...over }), ManifestError, JSON.stringify(over));
 	});

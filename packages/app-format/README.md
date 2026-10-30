@@ -5,7 +5,7 @@ through: the Hamstr Store when a publisher uploads, the `hamstr` CLI before it
 uploads or installs, and Hamstr before it installs.
 
 - `manifest.mjs`: the `hamstr.json` manifest (name, version, egress hosts,
-  Hamstr permissions, roles, instances, export) and the slug, version and
+  Hamstr permissions, instances, export) and the slug, version and
   publisher name rules. Strict: unknown fields are rejected.
 - `bundle.mjs`: reading and validating a packed celld bundle (the tar.gz
   `tools/pack.mjs` writes): safe paths, regular files only, size caps, every

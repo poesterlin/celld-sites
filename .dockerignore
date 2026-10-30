@@ -1,5 +1,4 @@
-# The celld node image only needs the router, the node scripts and the example
-# site. Everything else stays out of the build context.
+# The celld node image only needs the router and the node scripts. Everything else stays out of the build context.
 **/node_modules
 **/.svelte-kit
 **/.celld-preview

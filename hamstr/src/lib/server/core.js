@@ -169,24 +169,31 @@ export function createCore(options = {}) {
 			owner_id TEXT NOT NULL REFERENCES users(id), code_version TEXT NOT NULL,
 			created_at TEXT NOT NULL, opened_at TEXT, trashed_at TEXT);
 		CREATE INDEX IF NOT EXISTS grains_owner ON grains(owner_id);
-		-- shares and members held share links, a feature that was removed; the
-		-- tables stay so existing databases open unchanged, but nothing reads them.
-		CREATE TABLE IF NOT EXISTS shares (
-			id TEXT PRIMARY KEY, hash TEXT UNIQUE NOT NULL, grain_id TEXT NOT NULL REFERENCES grains(id) ON DELETE CASCADE,
-			role TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
-			created_at TEXT NOT NULL, revoked_at TEXT);
-		CREATE TABLE IF NOT EXISTS members (
-			share_id TEXT NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
-			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			joined_at TEXT NOT NULL, PRIMARY KEY (share_id, user_id));
 		CREATE TABLE IF NOT EXISTS tickets (
-			hash TEXT PRIMARY KEY, grain_id TEXT NOT NULL, user_id TEXT, share_id TEXT, parent TEXT,
+			hash TEXT PRIMARY KEY, grain_id TEXT NOT NULL, user_id TEXT, parent TEXT,
 			path TEXT NOT NULL, expires_at INTEGER NOT NULL);
 		CREATE TABLE IF NOT EXISTS grain_sessions (
 			hash TEXT PRIMARY KEY, grain_id TEXT NOT NULL REFERENCES grains(id) ON DELETE CASCADE,
-			user_id TEXT, share_id TEXT, parent TEXT, public_id TEXT NOT NULL,
+			user_id TEXT, parent TEXT, public_id TEXT NOT NULL,
 			created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 	`);
+	// Share links were removed: drop their tables and columns from databases that
+	// still have them (new databases never create them). Tickets are short-lived,
+	// so dropping share_id from them and from grain_sessions loses nothing.
+	if (db.prepare("PRAGMA user_version").get().user_version < 1) {
+		db.exec("BEGIN IMMEDIATE");
+		try {
+			db.exec("DROP TABLE IF EXISTS members; DROP TABLE IF EXISTS shares;");
+			for (const table of ["tickets", "grain_sessions"]) {
+				if (db.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = 'share_id'`).get()) db.exec(`ALTER TABLE ${table} DROP COLUMN share_id`);
+			}
+			db.exec("PRAGMA user_version = 1");
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
 	const tx = (fn) => {
 		db.exec("BEGIN IMMEDIATE");
 		try {
@@ -541,11 +548,10 @@ export function createCore(options = {}) {
 	// --- tickets and grain sessions ----------------------------------------------------
 	function issueTicket(grain, { userId, parent = null, path = "/" }) {
 		const value = token();
-		db.prepare("INSERT INTO tickets (hash, grain_id, user_id, share_id, parent, path, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+		db.prepare("INSERT INTO tickets (hash, grain_id, user_id, parent, path, expires_at) VALUES (?, ?, ?, ?, ?, ?)").run(
 			sha256(value),
 			grain.id,
 			userId,
-			null,
 			parent,
 			safePath(path),
 			Date.now() + TICKET_MS,

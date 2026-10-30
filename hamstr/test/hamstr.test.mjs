@@ -371,7 +371,7 @@ describe("apps and grains", () => {
 		assert.match(page.text, /<h1>Board<\/h1>/);
 		assert.match(page.text, /Installed/);
 		const caps = (await bob.request("GET", "/store/board?tab=permissions", { host: SHELL })).text;
-		assert.match(caps, /Can pin/);
+		assert.match(caps, /Private to you/);
 		assert.match(caps, /No internet access/);
 		assert.match((await bob.request("GET", "/store/fetcher?tab=permissions", { host: SHELL })).text, /api\.example\.com/);
 		assert.match((await bob.request("GET", "/store/board?tab=versions", { host: SHELL })).text, /v1\.0\.0/);
@@ -497,7 +497,7 @@ describe("trash and updates", () => {
 		assert.equal(celld.sites.has(grainHost(g.id)), false);
 		assert.equal((await bob.request("GET", `/api/grains/${g.id}`, { host: SHELL })).status, 404);
 	});
-	it("moves every grain to a new release and keeps roles working", async () => {
+	it("moves every grain to a new release and ignores retired roles", async () => {
 		await publish({ slug: "board", name: "Board", icon: "📌", version: "1.1.0", ...ROLES }, "dddddddddddd");
 		const updates = await ada.request("GET", "/api/apps/updates", { host: SHELL });
 		assert.equal(updates.json.updates.board.version, "1.1.0");

@@ -10,7 +10,6 @@
 //
 // Tokens live in ~/.config/hamstr/config.json (0600). HAMSTR_PUBLISHER_TOKEN overrides the
 // stored token, HAMSTR_STORE the store, HAMSTR_CLI_CONFIG the config path.
-// A config left by the CLI's old name (~/.config/cubby) is still read.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -35,7 +34,7 @@ const IN_REPO = existsSync(join(REPO, "compose.yaml")) && existsSync(join(REPO, 
 const PACK = [join(HERE, "pack.mjs"), join(REPO, "tools", "pack.mjs")].find(existsSync);
 const VERSION = "0.2.0";
 const configDir = (name) => (process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, name) : join(homedir(), ".config", name));
-const CONFIG_DIR = existsSync(join(configDir("cubby"), "config.json")) && !existsSync(join(configDir("hamstr"), "config.json")) ? configDir("cubby") : configDir("hamstr");
+const CONFIG_DIR = configDir("hamstr");
 const CONFIG_PATH = process.env.HAMSTR_CLI_CONFIG ?? join(CONFIG_DIR, "config.json");
 const INSTALLED_PATH = join(dirname(CONFIG_PATH), "installed.json");
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -361,8 +360,7 @@ async function whoami(opts) {
 
 async function publishRelease(dir, opts) {
 	const site = resolve(dir ?? ".");
-	// cubby.json is the manifest's old name.
-	const manifestPath = opts.manifest ? resolve(opts.manifest) : [join(site, "hamstr.json"), join(site, "cubby.json")].find(existsSync) ?? join(site, "hamstr.json");
+	const manifestPath = opts.manifest ? resolve(opts.manifest) : join(site, "hamstr.json");
 	if (!existsSync(manifestPath)) die(`missing ${manifestPath} (the app manifest; see store/README.md)`);
 	const manifest = parseManifest(readFileSync(manifestPath, "utf8"));
 	const slug = manifest.slug;

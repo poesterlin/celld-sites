@@ -1,6 +1,4 @@
 <script>
-	import { onMount } from "svelte";
-	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
 	import Toaster from "@hamstr/ui/components/Toaster.svelte";
 	import TopBar from "@hamstr/ui/components/TopBar.svelte";
@@ -9,12 +7,6 @@
 
 	const path = $derived(page.url.pathname);
 	const demo = $derived(path.startsWith("/demo/"));
-
-	// Links from the old hash-routed store (#/app/<slug>, #/demo/<id>, …).
-	onMount(() => {
-		const old = /^#\/(app|demo|about|publish)(?:\/([^/?#]+))?/.exec(location.hash);
-		if (old) goto(old[1] === "app" ? `/apps/${old[2]}` : old[2] ? `/${old[1]}/${old[2]}` : `/${old[1]}`, { replaceState: true });
-	});
 </script>
 
 {#if !demo}

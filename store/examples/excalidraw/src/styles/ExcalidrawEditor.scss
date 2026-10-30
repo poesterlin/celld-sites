@@ -1,0 +1,17 @@
+.excalidraw-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%; // Adjust for header and tab bar
+  width: 100%;
+
+  .excalidraw-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+
+    .excalidraw {
+      width: 100%;
+      height: 100%;
+    }
+  }
+}

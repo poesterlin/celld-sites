@@ -16,13 +16,14 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `sizer`, `hamstr` (profile `hamstr`), and `store` + `celld-demo` (profile `store`) |
-| `node/` | celld node image: entrypoint (bucket setup, router deploy, node, optional bundled sites), `push.sh` and `admin.sh`; `Dockerfile` targets `dev` and `hosting` |
+| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `hamstr` (profile `hamstr`), and `store` + `celld-demo` (profile `store`) |
+| `node/` | celld node image: entrypoint (bucket setup, router deploy, node), `push.sh` and `admin.sh`; `Dockerfile` (target `hosting`) |
 | `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
 | `.github/workflows/test.yml` | CI: unit suites, integration tests against `celld dev` (router API, the `hamstr` CLI from the repo and as a packed npm package, Hamstr end to end), the names service against Pebble, and the store, Hamstr and names image builds |
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
-| `tools/deploy.sh` | Builds a site and deploys it to the running router |
+| `tools/update.sh` | Updates a live site safely: dump its data, optionally rehearse on a copy site, deploy, drop the dump on success |
+| `tools/deploy.sh` | Deploys a built site to the running router (`--build` builds it first) |
 | `tools/deploy-emdash.sh` | Builds an EmDash (Astro) site for celld and deploys it, CMS editor included (see [EmDash sites](#emdash-sites)) |
 | `adapters/emdash/` | Entry and Durable Objects that give an EmDash build its database, media and session bindings on celld |
 | `tools/admin.sh` | Admin API from the host: aliases, egress allowlists, rollback, pruning |
@@ -30,7 +31,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
 | `tools/restore-drill.sh` | Restore drill: a throwaway node on a copy of a bucket volume, checked against live |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
-| `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
+| `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page, Basic auth) with the bucket size scan |
 | `store/` | Hamstr Store: the hosted app catalog, its web UI and the `hamstr` CLI; the store never runs or builds apps ([store/README.md](store/README.md)) |
 | `packages/ui/` | Hamstr's design system: styles, icons and Svelte components shared by Hamstr and the Hamstr Store |
 | `packages/app-format/` | The app format (`hamstr.json` manifests, packed bundles), validated the same way by the store, the CLI and Hamstr |
@@ -39,7 +40,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `docs/SECURITY.md` | Threat model: what a site can reach, what it can break, hostile-tenant checklist |
 | `sites/AGENTS.md` | Instructions for agents building sites (contract, limits, workflow, checklist) |
-| `sites/example/` | Test app: page views and a guestbook in Durable Objects, bundled into the dev image only |
+| `sites/example/` | Test app: page views and a guestbook in Durable Objects, deployed with `tools/deploy.sh` like any site |
 | `sites/sveltekit/`, `sites/nuxt/`, `sites/tanstack/` | Framework examples with Durable Objects, each with a `RECIPE.md` |
 | `sites/static/` | A plain static site (no build, no server code), with a `RECIPE.md` |
 
@@ -50,23 +51,19 @@ cp .env.example .env    # fill in random values, chmod 600
 docker compose up -d --build
 ```
 
-This builds both images locally and runs the **development** node image, which
-bundles the example site. The test app is served at `https://$HOST_DOMAIN` (set
-in `.env`). On every start the `celld` container creates the bucket if it is
-missing, deploys the router and starts the node, so a fresh or wiped bucket
-needs no manual steps. The bundled example is deployed only if its site has no
-active version yet: a restart never undoes a deploy or a rollback. To update the
-example after changing it, deploy it like any site
-(`tools/deploy.sh sites/example $HOST_DOMAIN`).
+This builds the images locally. On every start the `celld` container creates
+the bucket if it is missing, deploys the router and starts the node, so a fresh
+or wiped bucket needs no manual steps. No site is bundled: deploy the test app
+with `tools/deploy.sh sites/example $HOST_DOMAIN --build` (`HOST_DOMAIN` in
+`.env` is the hostname the default `SITES_RULE` routes).
 
 ## Development vs hosting
 
 The platform has two halves that share one codebase:
 
 - **Development (this checkout).** Examples, recipes, tests, previews and the
-  deploy tooling live here. `compose.yaml` builds images locally
-  (`node/Dockerfile` target `dev`) and bundles `sites/example` so a fresh bucket
-  has something to serve.
+  deploy tooling live here. `compose.yaml` builds the node image locally
+  (`node/Dockerfile`).
 - **Hosting (separate repo, `celld-sites-deploy`).** A pull-only compose file
   that runs the images CI publishes to GHCR and contains no examples or site
   sources. It pins `name: celld-sites`, the same project name as the dev stack,
@@ -76,8 +73,8 @@ The platform has two halves that share one codebase:
 
 | Image | Target | Notes |
 | --- | --- | --- |
-| `ghcr.io/poesterlin/celld-sites-node` | `node/Dockerfile` `hosting` | no bundled sites; `entrypoint.sh` deploys only what is in `/app/sites` |
-| `ghcr.io/poesterlin/celld-sites-dashboard` | `dashboard/Dockerfile` | dashboard and sizer |
+| `ghcr.io/poesterlin/celld-sites-node` | `node/Dockerfile` `hosting` | no bundled sites |
+| `ghcr.io/poesterlin/celld-sites-dashboard` | `dashboard/Dockerfile` | dashboard |
 
 Tags are `:latest` on `main`, `X.Y.Z`/`X.Y` on `v*` tags and `:main`; pull
 requests build without pushing. Build a target by hand with
@@ -102,7 +99,10 @@ the platform source.
 `https://$DASHBOARD_HOST` shows node health and memory, bucket disk usage by
 area, every site with its deploy history, and each site's Durable Objects with
 their disk usage and whether they are loaded. `/api/overview.json` returns the
-same data as JSON. It has **no authentication**, so keep the hostname LAN-only.
+same data as JSON. It sits behind HTTP Basic auth (user `admin` or
+`DASHBOARD_USER`, password `DASHBOARD_PASSWORD` from `.env`, required to start
+and at least 12 characters), and the hostname stays LAN-only. `/health`, for the
+container healthcheck, is the only open route.
 
 It cannot change anything:
 
@@ -111,12 +111,11 @@ It cannot change anything:
   `GET /__admin/overview` and `GET /__admin/state`; deploying needs
   `ADMIN_TOKEN`. `/__admin/state` is the router fetching celld's `/state`, the
   only operator call it makes.
-- It has no access to the bucket, which holds every site's code and Durable
-  Object data. Storage sizes come from the `sizer` service (same image,
-  `src/sizer.ts`): the only container with the bucket volume (read-only), on
-  the project network only, answering `GET /sizes` with sizes and nothing else.
-  It rescans every 60 s, so sizes can be up to a minute old. Both containers
-  have read-only filesystems and run as non-root.
+- It mounts the bucket read-only (`BUCKET_DIR`), which holds every site's code
+  and Durable Object data, to measure storage sizes. It reports sizes and never
+  reads file contents, but a bug in it could, which is why it needs the login. A
+  worker thread rescans every 60 s (`src/bucket-worker.ts`), so sizes can be up
+  to a minute old. The container has a read-only filesystem and runs as non-root.
 
 Object names only exist as hashes in storage, so the router keeps an index
 (`obj:` keys in KV) written the first time each object is used. Objects created
@@ -154,6 +153,16 @@ tools/preview.sh sites/blog --stop     # or --reset to delete the local data
 tools/deploy.sh sites/blog blog.example.com
 ```
 
+To update a site that already holds data, use `tools/update.sh` instead: it
+dumps the site first (`backups/<host>-<time>.backup`, override with
+`CELLD_BACKUP_DIR`; `--no-dump` skips it), deploys, and deletes the dump once
+the deploy and its watch pass. A failed deploy keeps the dump and prints the
+restore command. `--rehearse blog-copy.example.com` first deploys the new
+version to a separate site, restores the dump into it (so the version's
+migrations run on real data) and requests `/`; the copy's data is replaced, and
+the live site is untouched if that fails. The copy hostname must match
+`SITES_RULE` to be reachable, but the rehearsal talks to the node directly.
+
 If production runs the separate pull-only stack (the normal setup here), prefix
 the command with `CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy` so
 the build and check target that stack instead of this checkout; without it the
@@ -173,8 +182,9 @@ the window, `--no-check` skips both, `"check": false` turns them off for a site.
 
 The site is live as soon as the deploy returns, provided Traefik routes its
 hostname to celld. `SITES_RULE` in `.env` is a pattern for all site hostnames
-(e.g. ``'HostRegexp(`^celld-[a-z0-9-]+\.example\.com$`)'``, single-quoted so
-the `$` survives), so names that match need no Traefik change and no restart.
+(e.g. ``'HostRegexp(`^celld-[a-z0-9-]+\.example\.com$`) && !Host(`celld-admin.example.com`)'``,
+single-quoted so the `$` survives; the `!Host()` keeps the dashboard host out of
+the pattern), so names that match need no Traefik change and no restart.
 A hostname outside the pattern has to be added to the rule
 (``... || Host(`blog.other.com`)``), and changing the rule recreates the
 `celld` container, which restarts every site.
@@ -302,8 +312,7 @@ threat model, API and deployment checklist.
 install apps from the Hamstr Store, and make **grains** (a board, a list, a
 draw), each its own site at `grain-<id>.<domain>` with its own data. Hamstr
 proxies every grain request, so apps get the visitor's identity and
-permissions as `X-Hamstr-*` headers and never implement login; owners share
-grains with revocable links whose roles the app declares. The router serves
+permissions as `X-Hamstr-*` headers and never implement login. The router serves
 `grain-*` sites only to Hamstr (`PROXY_TOKEN`). It is a compose profile
 (`COMPOSE_PROFILES=hamstr`) and LAN-only. See [hamstr/README.md](hamstr/README.md).
 
@@ -401,7 +410,7 @@ for more write throughput; then a VM crash (not a container restart) can lose
 the last seconds of confirmed writes. Measured costs are below.
 
 If the bucket is ever empty (first start, or a deleted volume), the `celld`
-container creates it and redeploys the router and the example by itself.
+container creates it and redeploys the router by itself.
 
 **Restore drill.** `tools/restore-drill.sh` proves a bucket volume alone brings
 every site back: it copies the volume into a throwaway one, starts a throwaway
@@ -461,7 +470,7 @@ rebuild the node image and check the examples.
 - The admin API answers only for the hostname `admin.internal`, which Traefik
   never routes. Writes need `ADMIN_TOKEN`; the dashboard's `READ_TOKEN` only
   allows the two read endpoints. The router gets only SHA-256 hashes of both
-  tokens, so the bucket (which stores deployments, and which the sizer can
+  tokens, so the bucket (which stores deployments, and which the dashboard can
   read) never holds a usable token. `tools/deploy.sh` and `tools/admin.sh`
   reach the API with `docker compose exec`.
 - Uploads are size-checked before they are read (413 above 20 MiB per file,

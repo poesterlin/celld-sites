@@ -115,7 +115,10 @@ export function validateManifest(input) {
 		egress = [...new Set(input.egress.map(validateEgressHost))];
 	}
 
-	const { permissions, roles } = validateSharing(input.permissions, input.roles);
+	// `roles` is still accepted so manifests written for the old sharing model
+	// publish; it is ignored and left out of the result (remove it from FIELDS in
+	// the next release).
+	const permissions = validatePermissions(input.permissions);
 
 	// Hamstr: "single" apps give each person one instance that opens directly
 	// (a family board); "many" (the default) lets people make as many as they like.
@@ -132,14 +135,12 @@ export function validateManifest(input) {
 	}
 	const exportPath = input.export === undefined ? {} : { export: input.export };
 
-	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, tags, egress, permissions, roles, ...instances, ...exportPath };
+	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, tags, egress, permissions, ...instances, ...exportPath };
 }
 
-/** Optional sharing model, read by Hamstr. `permissions` are what the app checks
- *  (sent in X-Hamstr-Permissions); `roles` are the named bundles a grain owner
- *  can share. The owner always holds every permission, so "owner" is reserved.
- *  An app without roles is shared all-or-nothing. */
-function validateSharing(permInput, roleInput) {
+/** Optional permissions, read by Hamstr: what the app checks (sent in
+ *  X-Hamstr-Permissions). The grain's owner holds every one. */
+function validatePermissions(permInput) {
 	const textOf = (v, field, max) => (v === undefined ? undefined : str(v, field, 1, max));
 	let permissions = [];
 	if (permInput !== undefined) {
@@ -154,26 +155,7 @@ function validateSharing(permInput, roleInput) {
 		const ids = permissions.map((p) => p.id);
 		if (new Set(ids).size !== ids.length) fail("permission ids must be unique");
 	}
-	let roles = [];
-	if (roleInput !== undefined) {
-		if (!Array.isArray(roleInput) || roleInput.length > 8) fail("roles must be an array of at most 8 entries");
-		const known = new Set(permissions.map((p) => p.id));
-		roles = roleInput.map((r, i) => {
-			if (!r || typeof r !== "object" || Array.isArray(r)) fail(`roles[${i}] must be an object`);
-			for (const key of Object.keys(r)) if (!["id", "title", "description", "permissions", "default"].includes(key)) fail(`unknown field roles[${i}].${key}`);
-			if (typeof r.id !== "string" || !PERMISSION_ID.test(r.id) || r.id === "owner") fail(`roles[${i}].id must be 1-31 characters (a-z, 0-9, dashes) and not "owner"`);
-			const perms = r.permissions ?? [];
-			if (!Array.isArray(perms)) fail(`roles[${i}].permissions must be an array`);
-			for (const p of perms) if (!known.has(p)) fail(`roles[${i}] uses undeclared permission ${JSON.stringify(p)}`);
-			if (r.default !== undefined && typeof r.default !== "boolean") fail(`roles[${i}].default must be true or false`);
-			const description = textOf(r.description, `roles[${i}].description`, 200);
-			return { id: r.id, title: str(r.title ?? r.id, `roles[${i}].title`, 1, 60), ...(description && { description }), permissions: [...new Set(perms)], ...(r.default && { default: true }) };
-		});
-		const ids = roles.map((r) => r.id);
-		if (new Set(ids).size !== ids.length) fail("role ids must be unique");
-		if (roles.filter((r) => r.default).length > 1) fail("at most one role may be the default");
-	}
-	return { permissions, roles };
+	return permissions;
 }
 
 /** Parse and validate manifest text (used by the CLI). */

@@ -17,3 +17,4 @@ data/
 !/sites/sveltekit/
 !/sites/tanstack/
 !/sites/static/
+backups/

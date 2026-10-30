@@ -4,10 +4,7 @@
 #   1. wait for the object store, create the bucket if it is missing
 #   2. deploy the router app (cheap and idempotent, so on every start)
 #   3. start the node
-#   4. once it is healthy, deploy every bundled site in /app/sites
-#      (/app/sites/<name>/, packed at image build time) whose site has no
-#      active version yet. An existing site is left alone, so a restart never
-#      undoes a deploy or rollback; update it with tools/deploy.sh.
+#   No site is bundled: deploy them with tools/deploy.sh.
 set -eu
 
 : "${CELLD_BUCKET:?}" "${S3_ENDPOINT:?}" "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}"
@@ -16,13 +13,18 @@ case "${SITE_TIMEOUT_SECS:-30}" in *[!0-9]* | "") echo "entrypoint: SITE_TIMEOUT
 for knob in SITE_MAX_INFLIGHT SITE_MAX_OBJECTS SITE_MAX_SUBREQUESTS; do
 	eval "value=\${$knob:-}"
 	case "$value" in "" | *[!0-9]*) echo "entrypoint: $knob must be a whole number" >&2; exit 1 ;; esac
+	case $knob in SITE_MAX_OBJECTS) cap=1000 ;; *) cap=10000 ;; esac
+	if [ "$value" -gt "$cap" ]; then
+		echo "entrypoint: $knob=$value is above its hard cap of $cap; the node will use $cap" >&2
+	fi
 done
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 STORE="--bucket $CELLD_BUCKET --endpoint $S3_ENDPOINT --region $AWS_REGION"
 log() { echo "entrypoint: $*" >&2; }
 
-for token in "$ADMIN_TOKEN" "$READ_TOKEN"; do
-	case "$token" in *[!A-Za-z0-9_-]*) log "ADMIN_TOKEN and READ_TOKEN may only contain A-Z a-z 0-9 _ -"; exit 1 ;; esac
+for name in ADMIN_TOKEN READ_TOKEN; do
+	eval "token=\$$name"
+	case "$token" in *[!A-Za-z0-9_-]*) log "$name may only contain A-Z a-z 0-9 _ - (generate one with: openssl rand -hex 32)"; exit 1 ;; esac
 done
 
 umask 077
@@ -70,30 +72,6 @@ rm -rf "$work"
 celld $STORE --listen 0.0.0.0:8080 --internal-listen 127.0.0.1:8081 &
 node=$!
 trap 'kill -TERM "$node" 2>/dev/null' TERM INT
-
-# 4. Bundled sites --------------------------------------------------------------
-(
-	until curl -sf -o /dev/null http://127.0.0.1:8080/.well-known/celld/health; do
-		kill -0 "$node" 2>/dev/null || exit 0
-		sleep 1
-	done
-	for bundle in /app/sites/*/; do
-		[ -d "$bundle" ] || continue
-		host=$(basename "$bundle")
-		[ "$host" = example ] && host="${EXAMPLE_HOST:-}"
-		[ -n "$host" ] || continue
-		for attempt in 1 2 3 4 5; do
-			if out=$(tar -C "$bundle" -cf - . | /app/push.sh "$host" --if-new); then
-				case "$out" in
-				*'"skipped":true'*) log "$host already has an active version; bundled version not deployed" ;;
-				*) log "deployed $host" ;;
-				esac
-				break
-			fi
-			log "deploying $host failed (attempt $attempt), retrying"; sleep 2
-		done
-	done
-) &
 
 # Wait for the node. `wait` returns early when the trap forwards a signal, so
 # keep waiting until the node has actually exited and report its status.
