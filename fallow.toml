@@ -14,8 +14,8 @@ entry = [
 	"tests/**/*.ts",                # API and security suites
 	"**/test/**/*.ts",              # e2e drivers and fixtures
 	"sites/*/src/objects.ts",       # celld.json / adapter convention
-	"sites/*/server/objects.ts",
-	"sites/*/server/utils/objects.ts",
+	"sites/**/server/objects.ts",
+	"sites/**/server/utils/objects.ts",
 	"hamstr/static/shell.css",      # served by adapter-node, linked from app.html
 ]
 
