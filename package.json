@@ -8,5 +8,8 @@
     "fallow": "^3.37.0",
     "svelte": "^5.57.3",
     "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "typecheck": "tsc -p packages/app-format && tsc -p packages/ui && tsc -p store && tsc -p store/cli && tsc -p store/web && tsc -p hamstr && tsc -p names/server && tsc -p names/agent && tsc -p tools && tsc -p router && tsc -p adapters/emdash && tsc -p dashboard"
   }
 }

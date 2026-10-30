@@ -39,9 +39,12 @@ jobs:
           cache-dependency-path: "**/package-lock.json"
       - name: Install dependencies
         run: |
+          npm ci --no-audit --no-fund
           for dir in packages/app-format store store/cli store/web hamstr; do
             npm ci --prefix "$dir" --no-audit --no-fund
           done
+      - name: Typecheck every package
+        run: npm run typecheck
       - name: Store (API, bundles, manifests, web serving)
         run: npm test --prefix store
       - name: Store web UI builds
@@ -82,9 +85,9 @@ jobs:
       - name: Router API suite (celld dev)
         run: npm test --prefix tools
       - name: CLI install from the repo (celld dev)
-        run: node store/test/e2e-install.mjs
+        run: node store/test/e2e-install.ts
       - name: CLI as a packed npm package, from an empty directory (celld dev)
-        run: node store/test/e2e-cli-package.mjs
+        run: node store/test/e2e-cli-package.ts
       - name: Hamstr end to end (celld dev, real store, real CLI)
         run: npm run e2e --prefix hamstr
 

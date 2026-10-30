@@ -21,14 +21,14 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
 | `.github/workflows/test.yml` | CI: unit suites, integration tests against `celld dev` (router API, the `hamstr` CLI from the repo and as a packed npm package, Hamstr end to end), the names service against Pebble, and the store, Hamstr and names image builds |
 | `router/` | The host-header router Worker and its config template |
-| `tools/pack.mjs` | Packs a built site into a deploy bundle |
+| `tools/pack.ts` | Packs a built site into a deploy bundle |
 | `tools/update.sh` | Updates a live site safely: dump its data, optionally rehearse on a copy site, deploy, drop the dump on success |
 | `tools/deploy.sh` | Deploys a built site to the running router (`--build` builds it first) |
 | `tools/deploy-emdash.sh` | Builds an EmDash (Astro) site for celld and deploys it, CMS editor included (see [EmDash sites](#emdash-sites)) |
 | `adapters/emdash/` | Entry and Durable Objects that give an EmDash build its database, media and session bindings on celld |
 | `tools/admin.sh` | Admin API from the host: aliases, egress allowlists, rollback, pruning |
 | `tools/preview.sh` | Local preview: the production router under `celld dev` with one site |
-| `tools/seed.mjs` | Seed or export a site's Durable Objects through the admin API |
+| `tools/seed.ts` | Seed or export a site's Durable Objects through the admin API |
 | `tools/restore-drill.sh` | Restore drill: a throwaway node on a copy of a bucket volume, checked against live |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page, Basic auth) with the bucket size scan |
@@ -167,7 +167,7 @@ If production runs the separate pull-only stack (the normal setup here), prefix
 the command with `CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy` so
 the build and check target that stack instead of this checkout; without it the
 deploy goes to the local development stack. The same applies to `admin.sh`,
-`seed.mjs`, `deploy-emdash.sh` and `restore-drill.sh`.
+`seed.ts`, `deploy-emdash.sh` and `restore-drill.sh`.
 
 Before activating, the deploy **checks** the new version: the router runs it
 without activating it, with its Durable Objects in an empty scratch namespace
@@ -204,9 +204,9 @@ and `export()` in `sites/sveltekit/src/objects.ts`) and call them through the
 admin API:
 
 ```sh
-node tools/seed.mjs blog.example.com sites/blog/seed.json            # production
-node tools/seed.mjs --preview sites/blog sites/blog/seed.json         # local preview
-node tools/seed.mjs blog.example.com --call Notes main export > notes.json
+node tools/seed.ts blog.example.com sites/blog/seed.json            # production
+node tools/seed.ts --preview sites/blog sites/blog/seed.json         # local preview
+node tools/seed.ts blog.example.com --call Notes main export > notes.json
 ```
 
 **Back up and restore** a whole site's objects without any methods of your
@@ -450,7 +450,7 @@ URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site bindings
 (`OBJECTS` validation, plain-data rule, errors, CPU and wall-clock limits;
 `ASSETS`; blocked network, and the egress allowlist), static-file validators
 and caching, and the packer's refusals and defaults, and upgrading from
-per-version files. `tests/security.test.mjs` adds the request-context surface,
+per-version files. `tests/security.test.ts` adds the request-context surface,
 admin-host isolation, path traversal, the atomic object quota and the in-flight
 cap; backups (dump, restore, copies, broken backups) run against a fixture
 class with foreign keys, blobs, FTS5, a trigger and typed key-value pairs.
@@ -462,6 +462,18 @@ its `celld` binary on `PATH` and run the suite: it runs the real router under
 `celld dev`, so it exercises the loader, the facet and SQLite APIs, service
 bindings, `globalOutbound` and the admin API the platform depends on. Then
 rebuild the node image and check the examples.
+
+## Typechecking
+
+The source is TypeScript; every package has a `tsconfig.json` and
+`npm run typecheck` at the repo root checks all of them (`tsc` and the shared
+types are root devDependencies, resolved upward, and `types/celld.d.ts` is the
+small `cloudflare:workers` surface the router, adapters and fixtures rely on).
+The configs are deliberately non-strict: the code is JavaScript that grew a
+`.ts` extension, so `strict`, `noImplicitAny` and `strictNullChecks` are off
+until each file is annotated. Node runs `.ts` directly (type stripping, Node
+24+), which is why no build step is involved; the CLI is the exception and
+still ships compiled `.mjs` because it targets Node 20.
 
 ## Security
 
@@ -477,7 +489,7 @@ rebuild the node image and check the examples.
   16 MiB for code), so a big deploy cannot exhaust the router's memory. A file
   is stored only if its bytes match the hash it is uploaded under, so no upload
   can change a file that other versions use.
-- `tools/pack.mjs` refuses symlinks in a site's static directory, so a link in
+- `tools/pack.ts` refuses symlinks in a site's static directory, so a link in
   a build folder cannot publish files from elsewhere on the machine.
 - Sites are isolated from each other and from the router (separate isolates,
   only `ASSETS` and `OBJECTS`), and each request, including a Durable Object
