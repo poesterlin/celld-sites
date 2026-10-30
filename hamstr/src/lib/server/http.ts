@@ -30,7 +30,7 @@ export function cspExtras(core) {
 	return [`frame-src ${core.grainSources}`, "form-action 'self'"];
 }
 
-export function shellHeaders(core, extra = {}) {
+function shellHeaders(core, extra = {}) {
 	return {
 		"x-content-type-options": "nosniff",
 		// Chromium sends `Origin: null` on form posts under no-referrer, which would
@@ -63,7 +63,6 @@ export function html(core, status, body, extra = {}) {
 	});
 }
 
-export const LOGO = `<img src="/favicon.svg" width="64" height="64" alt="">`;
 
 /** A plain centred card, as the server renders for sign-in errors and links. */
 export function page(title, body, name = "Hamstr") {
@@ -80,7 +79,7 @@ export function sameOrigin(event, core) {
 	return origin === null || origin === core.shellOrigin;
 }
 
-export async function readBody(request, limit = 64 * 1024) {
+async function readBody(request, limit = 64 * 1024) {
 	const chunks = [];
 	let size = 0;
 	for await (const chunk of request.body ?? []) {

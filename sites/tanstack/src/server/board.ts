@@ -3,7 +3,6 @@
 import { env } from "cloudflare:workers";
 import type { Note } from "../objects";
 
-export type Views = { count: number };
 
 export function listNotes(): Promise<Note[]> {
 	return env.OBJECTS.call("Notes", "main", "list") as Promise<Note[]>;

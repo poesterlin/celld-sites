@@ -16,7 +16,7 @@ export async function openApp(app) {
 	}
 }
 
-export async function newItem(app) {
+async function newItem(app) {
 	try {
 		const { grain } = await api("/api/grains", { method: "POST", body: { slug: app.slug } });
 		await goto(`/g/${grain.id}`);

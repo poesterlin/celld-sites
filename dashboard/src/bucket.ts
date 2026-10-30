@@ -4,7 +4,7 @@
 import { readdirSync, lstatSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 
-export interface Usage { bytes: number; files: number }
+interface Usage { bytes: number; files: number }
 
 /** Disk usage (allocated blocks, like `du`) and file count of a directory tree.
  *  celld's logs are thousands of small files, so this is several times their

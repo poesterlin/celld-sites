@@ -17,7 +17,7 @@ const UDP_MAX = 512;
 
 // Returns { id, flags, name, type, qclass, questionEnd } or null if the
 // message is too broken to answer at all.
-export function parseQuery(msg) {
+function parseQuery(msg) {
 	if (msg.length < 12) return null;
 	const id = msg.readUInt16BE(0);
 	const flags = msg.readUInt16BE(2);
@@ -95,7 +95,7 @@ function encodeRecord(record) {
 	return Buffer.concat([owner, fixed, rdata]);
 }
 
-export function buildResponse(msg, query, result, maxSize = Infinity) {
+function buildResponse(msg, query, result, maxSize = Infinity) {
 	const opcode = (query.flags >> 11) & 0xf;
 	const rd = query.flags & 0x0100;
 	const header = Buffer.alloc(12);
@@ -117,7 +117,7 @@ export function buildResponse(msg, query, result, maxSize = Infinity) {
 	return Buffer.concat([header, body]);
 }
 
-export function answer(msg, lookup, maxSize) {
+function answer(msg, lookup, maxSize) {
 	const query = parseQuery(msg);
 	if (!query) return null;
 	let result;

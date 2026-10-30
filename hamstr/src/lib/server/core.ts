@@ -13,7 +13,7 @@ import { createOidc } from "../../../lib/oidc.ts";
 import { safePath } from "../../../lib/path.ts";
 import { siteOf } from "../../../lib/site.ts";
 
-export { CelldError, ManifestError, BundleError, safePath, siteOf };
+export { CelldError, ManifestError, BundleError, safePath };
 
 const NAME = "Hamstr";
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -29,7 +29,7 @@ const BACKUP_EXTENSION = "hamstr-backup";
 
 /** -1, 0 or 1 as semver a is older, the same or newer than b (pre-releases
  *  sort before their release). */
-export function compareVersions(a, b) {
+function compareVersions(a, b) {
 	const parse = (v) => {
 		const [core, pre = ""] = String(v).split("+")[0].split(/-(.*)/s);
 		return { nums: core.split(".").map((n) => Number(n) || 0), pre };
@@ -73,7 +73,7 @@ function randomId(length = 12) {
 	return out + randomId(length - out.length);
 }
 
-export function parseCookies(header) {
+function parseCookies(header) {
 	const out = {};
 	for (const part of String(header ?? "").split(";")) {
 		const i = part.indexOf("=");

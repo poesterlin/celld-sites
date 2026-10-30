@@ -86,7 +86,7 @@ async function ok(promise, what) {
 }
 
 /** The files of a bundle (tar.gz, already validated): version, code.json, blobs. */
-export async function readEntries(tgz) {
+async function readEntries(tgz) {
 	const files = new Map();
 	const ex = extract();
 	const done = new Promise<void>((resolvePromise, rejectPromise) => {

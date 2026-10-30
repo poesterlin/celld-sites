@@ -5,7 +5,6 @@ import { createCore } from "./core.ts";
 
 registerCoreFactory(createCore);
 
-export { createInstanceCore, runWithCore } from "../../../lib/instance.ts";
 
 export function core() {
 	const found = state.storage.getStore();

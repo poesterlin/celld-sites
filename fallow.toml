@@ -1,0 +1,42 @@
+# fallow: dead code, duplication, complexity and styling for this repo.
+#
+# The hook (.git/hooks/pre-commit) runs `fallow audit --base origin/main`, so
+# only findings introduced by the change under review fail the commit.
+
+# Runtime roots that nothing imports: files celld, Docker or an editor runs
+# directly, plus the fixtures a test deploys and the .ts files under test/.
+entry = [
+	"router/index.ts",              # deployed as the router Worker
+	"tools/pack.ts",                # tools/deploy.sh, node/push.sh
+	"tools/seed.ts",
+	"adapters/emdash/entry.ts",     # copied into a site as celld-adapter/
+	"adapters/emdash/objects.ts",
+	"tests/**/*.ts",                # API and security suites
+	"**/test/**/*.ts",              # e2e drivers and fixtures
+	"sites/*/src/objects.ts",       # celld.json / adapter convention
+	"sites/*/server/objects.ts",
+	"sites/*/server/utils/objects.ts",
+	"hamstr/static/shell.css",      # served by adapter-node, linked from app.html
+]
+
+# Deployed static files and generated output, not source.
+ignorePatterns = [
+	"sites/*/public/**",
+	"tests/fixtures/**/public/**",
+]
+
+# Specifiers resolved where the code is deployed, not by Node here: the EmDash
+# adapter imports the site's Astro build, and app.html links /shell.css.
+ignoreUnresolvedImports = [
+	"../dist/server/entry.mjs",
+	"/shell.css",
+]
+
+# @emdash-cms/cloudflare is installed in the site checkout the adapter is
+# copied into. fallow is the tool itself. esbuild is required at runtime by
+# tools/pack.ts through createRequire, which fallow cannot see.
+ignoreDependencies = [
+	"@emdash-cms/cloudflare",
+	"fallow",
+	"esbuild",
+]

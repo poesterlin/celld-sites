@@ -3,7 +3,7 @@ import type { Model, Site, Usage } from "./data";
 const esc = (s: unknown) =>
 	String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-export function bytes(n: number) {
+function bytes(n: number) {
 	if (!n) return "0 B";
 	const units = ["B", "KB", "MB", "GB", "TB"];
 	const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));

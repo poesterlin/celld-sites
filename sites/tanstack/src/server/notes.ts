@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { Note } from "../objects";
 import { addNote as addNoteToBoard, countView, listNotes } from "./board";
 
-export const MAX_NOTE_LENGTH = 280;
+const MAX_NOTE_LENGTH = 280;
 
 // Page load: counts this view and returns the notes, both from Durable Objects.
 export const getBoard = createServerFn({ method: "GET" }).handler(async () => {

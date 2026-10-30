@@ -1,6 +1,6 @@
 // Note validation shared by the Durable Object (storage boundary) and the
 // form action. Plain TypeScript, no runtime imports, so the object module can use it too.
-export const NOTE_MAX = 280;
+const NOTE_MAX = 280;
 
 export type Note = { id: number; text: string; at: string };
 
