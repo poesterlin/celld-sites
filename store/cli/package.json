@@ -15,8 +15,8 @@
 		"node": ">=20"
 	},
 	"scripts": {
-		"build": "node build.mjs",
-		"prepack": "node build.mjs"
+		"build": "node build.ts",
+		"prepack": "node build.ts"
 	},
 	"dependencies": {
 		"esbuild": "0.28.2"

@@ -20,18 +20,18 @@ import { createInterface } from "node:readline/promises";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { once } from "node:events";
 import { pack as tarPack } from "tar-stream";
-import { readBundle } from "../../packages/app-format/bundle.mjs";
-import { adminClient, deploy } from "./deploy.mjs";
-import { parseManifest, validatePublisherName, validateSlug, validateVersion } from "../../packages/app-format/manifest.mjs";
+import { readBundle } from "../../packages/app-format/bundle.ts";
+import { adminClient, deploy } from "./deploy.ts";
+import { parseManifest, validatePublisherName, validateSlug, validateVersion } from "../../packages/app-format/manifest.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Inside a checkout of celld-sites, the CLI can also deploy through the local
 // compose stack. A packaged CLI (npm) never needs the repo.
 const REPO = resolve(process.env.HAMSTR_REPO ?? join(HERE, "..", ".."));
 const IN_REPO = existsSync(join(REPO, "compose.yaml")) && existsSync(join(REPO, "node", "push.sh"));
-// tools/pack.mjs ships next to the bundled CLI (dist/pack.mjs); in the repo it
-// is used where it is.
-const PACK = [join(HERE, "pack.mjs"), join(REPO, "tools", "pack.mjs")].find(existsSync);
+// tools/pack.mjs ships next to the bundled CLI (dist/pack.mjs, built from
+// tools/pack.ts); in the repo the TypeScript source is used where it is.
+const PACK = [join(HERE, "pack.mjs"), join(REPO, "tools", "pack.ts")].find(existsSync);
 const VERSION = "0.2.0";
 const configDir = (name) => (process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, name) : join(homedir(), ".config", name));
 const CONFIG_DIR = configDir("hamstr");
@@ -39,19 +39,19 @@ const CONFIG_PATH = process.env.HAMSTR_CLI_CONFIG ?? join(CONFIG_DIR, "config.js
 const INSTALLED_PATH = join(dirname(CONFIG_PATH), "installed.json");
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
-const die = (message) => {
+const die = (message: string): never => {
 	throw new Error(message);
 };
 
-function readJson(path, fallback) {
+function readJson(path: string, fallback?: any): any {
 	try {
 		return JSON.parse(readFileSync(path, "utf8"));
 	} catch (err) {
-		if (err.code === "ENOENT") return fallback;
-		throw new Error(`${path}: ${err.message}`);
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return fallback;
+		throw new Error(`${path}: ${(err as Error).message}`);
 	}
 }
-function writePrivate(path, value) {
+function writePrivate(path: string, value: unknown): void {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	writeFileSync(path, `${JSON.stringify(value, null, "\t")}\n`, { mode: 0o600 });
 	chmodSync(path, 0o600);
@@ -59,14 +59,14 @@ function writePrivate(path, value) {
 
 const config = () => readJson(CONFIG_PATH, {});
 const installed = () => readJson(INSTALLED_PATH, {});
-function saveConfig(next) {
+function saveConfig(next: Record<string, unknown>): void {
 	writePrivate(CONFIG_PATH, { ...config(), ...next });
 }
-function saveInstalled(next) {
+function saveInstalled(next: unknown): void {
 	writePrivate(INSTALLED_PATH, next);
 }
 
-function requireStore(opts) {
+function requireStore(opts: any): string {
 	const raw = opts.store ?? process.env.HAMSTR_STORE ?? config().store;
 	if (!raw) die("no store configured: pass --store <url> or run `hamstr login` first");
 	let url;
@@ -78,13 +78,21 @@ function requireStore(opts) {
 	if (url.protocol !== "https:" && url.protocol !== "http:") die("store URL must be http(s)");
 	return url.origin + url.pathname.replace(/\/+$/, "");
 }
-function requireToken(opts) {
+function requireToken(opts: any): string {
 	const token = process.env.HAMSTR_PUBLISHER_TOKEN ?? config().token;
 	if (!token) die("no publisher token: run `hamstr login <name> --store <url>` or set HAMSTR_PUBLISHER_TOKEN");
 	return token;
 }
 
-async function call(url, { method = "GET", json, token, body, headers = {} } = {}) {
+interface CallOptions {
+	method?: string;
+	json?: unknown;
+	token?: string;
+	body?: string | Buffer;
+	headers?: Record<string, string>;
+}
+
+async function call(url: string, { method = "GET", json, token, body, headers = {} }: CallOptions = {}): Promise<any> {
 	const res = await fetch(url, {
 		method,
 		headers: {
@@ -97,7 +105,7 @@ async function call(url, { method = "GET", json, token, body, headers = {} } = {
 		signal: AbortSignal.timeout(120_000),
 	});
 	const text = await res.text();
-	let parsed = {};
+	let parsed: any = {};
 	try {
 		parsed = JSON.parse(text);
 	} catch {}
@@ -105,7 +113,7 @@ async function call(url, { method = "GET", json, token, body, headers = {} } = {
 	return parsed;
 }
 
-async function hiddenPrompt(question) {
+async function hiddenPrompt(question: string): Promise<string> {
 	if (process.env.HAMSTR_PUBLISHER_PASSWORD !== undefined) return process.env.HAMSTR_PUBLISHER_PASSWORD;
 	if (!process.stdin.isTTY) return readFileSync(0, "utf8").split("\n")[0] ?? "";
 	process.stdout.write(question);
@@ -151,9 +159,9 @@ async function ask(question) {
 	}
 }
 
-function parseArgs(argv) {
-	const positional = [];
-	const opts = {};
+function parseArgs(argv: string[]): { positional: string[]; opts: Record<string, any> } {
+	const positional: string[] = [];
+	const opts: Record<string, any> = {};
 	const booleans = new Set(["all", "no-build", "allow-egress", "yes", "replace", "forget", "version"]);
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -173,7 +181,7 @@ function parseArgs(argv) {
 
 // --- bundle creation --------------------------------------------------------
 
-/** Pack the directory tools/pack.mjs wrote into a deterministic .tgz. */
+/** Pack the directory tools/pack.ts wrote into a deterministic .tgz. */
 async function makeBundle(dir) {
 	const names = ["version", "code.json", ...readdirSync(join(dir, "blobs")).map((f) => `blobs/${f}`)].sort();
 	const packer = tarPack();
@@ -192,7 +200,7 @@ async function makeBundle(dir) {
 function packSite(siteDir) {
 	const out = mkdtempSync(join(tmpdir(), "hamstr-pack-"));
 	try {
-		if (!PACK) die("cannot find pack.mjs; reinstall the hamstr CLI");
+		if (!PACK) die("cannot find pack.ts; reinstall the hamstr CLI");
 		const result = spawnSync(process.execPath, [PACK, siteDir, out], { stdio: "inherit", env: process.env });
 		if (result.status !== 0) die("packing the site failed");
 		return out;
@@ -239,7 +247,7 @@ function nodeTarget(opts) {
 }
 
 /** An admin call on the target node: { status, text } with HTTP-like statuses. */
-async function adminCall(opts, method, path, body) {
+async function adminCall(opts: any, method: string, path: string, body?: string): Promise<{ status: number; text: string }> {
 	const node = nodeTarget(opts);
 	if (node.kind === "http") return node.client.admin(method, path, body);
 	const args = ["compose", "--project-directory", node.dir, "exec", "-T", "celld", "/app/admin.sh", method, path];
@@ -253,7 +261,7 @@ async function adminCall(opts, method, path, body) {
 	return { status, text };
 }
 
-async function currentEgress(opts, host) {
+async function currentEgress(opts: any, host: string): Promise<string[] | null> {
 	const result = await adminCall(opts, "GET", `/egress?host=${host}`);
 	if (result.status === 404) return null;
 	if (result.status !== 200) die(`could not read the egress allowlist: ${result.text}`);
@@ -266,7 +274,7 @@ async function currentEgress(opts, host) {
 
 // Whether host already serves a site, as its own id or as an alias. The egress
 // endpoint answers for any hostname, so it cannot tell.
-async function siteExists(opts, host) {
+async function siteExists(opts: any, host: string): Promise<boolean> {
 	const result = await adminCall(opts, "GET", "/overview");
 	if (result.status !== 200) die(`could not list the node's sites: ${result.text}`);
 	try {
@@ -277,7 +285,7 @@ async function siteExists(opts, host) {
 	}
 }
 
-async function setEgress(opts, host, allow) {
+async function setEgress(opts: any, host: string, allow: string[]): Promise<void> {
 	const result = await adminCall(opts, "PUT", `/egress?host=${host}`, JSON.stringify(allow));
 	if (result.status === 200) return;
 	// Nodes older than the installer's pre-seed support refuse an allowlist for a
@@ -286,7 +294,7 @@ async function setEgress(opts, host, allow) {
 	die(`could not set the egress allowlist: ${result.text}`);
 }
 
-async function pushBundle(opts, bundle, host, watch) {
+async function pushBundle(opts: any, bundle: Buffer, host: string, watch?: number | string): Promise<void> {
 	const node = nodeTarget(opts);
 	if (node.kind === "http") {
 		await deploy(node.client, bundle, host, { watch: watch === undefined ? 10 : Number(watch) });
@@ -299,7 +307,7 @@ async function pushBundle(opts, bundle, host, watch) {
 }
 
 /** `hamstr node <admin-url>`: remember the node to install into. */
-async function useNode(api, opts) {
+async function useNode(api: string | undefined, opts: any): Promise<void> {
 	if (!api) {
 		const saved = config().node;
 		console.log(saved ? `node: ${saved.api} (admin host ${saved.adminHost ?? "admin.internal"}, token from ${saved.tokenFile ?? "ADMIN_TOKEN"})` : "no node saved; see `hamstr help`");
@@ -322,7 +330,7 @@ async function useNode(api, opts) {
 
 // --- commands ---------------------------------------------------------------
 
-async function register(name, opts) {
+async function register(name: string, opts: any): Promise<void> {
 	validatePublisherName(name);
 	const store = requireStore(opts);
 	let password = await hiddenPrompt("Password (10+ characters): ");
@@ -338,7 +346,7 @@ async function register(name, opts) {
 	console.log(`token (shown once, also saved in ${CONFIG_PATH}): ${body.token}`);
 }
 
-async function login(name, opts) {
+async function login(name: string, opts: any): Promise<void> {
 	const store = requireStore(opts);
 	const password = await hiddenPrompt("Password: ");
 	const body = await call(`${store}/api/v1/tokens`, { method: "POST", json: { name, password } });
@@ -346,7 +354,7 @@ async function login(name, opts) {
 	console.log(`signed in as ${name} at ${store}`);
 }
 
-async function whoami(opts) {
+async function whoami(opts: any): Promise<void> {
 	const store = requireStore(opts);
 	const token = requireToken(opts);
 	const body = await call(`${store}/api/v1/me`, { token });
@@ -487,7 +495,7 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 	if (!res.ok) {
 		let message = `${res.status} ${res.statusText}`;
 		try {
-			message = (await res.json()).error ?? message;
+			message = ((await res.json()) as any).error ?? message;
 		} catch {}
 		die(`download failed: ${message}`);
 	}
@@ -530,7 +538,7 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 
 async function update(target, opts) {
 	const all = installed();
-	const entries = Object.entries(all).filter(([, value]) => opts.all || value.slug === target);
+	const entries = (Object.entries(all ?? {}) as [string, any][]).filter(([, value]) => opts.all || value.slug === target);
 	if (!entries.length) die(opts.all ? "nothing installed" : `no installed app called ${target}`);
 	for (const [host, value] of entries) {
 		const store = requireStore(opts);

@@ -60,8 +60,8 @@ publisher token and the saved node. Installed apps are recorded next to it in
 
 ## Development
 
-`hamstr.mjs` and `deploy.mjs` are the source and run as they are from the repo
-(`node store/cli/hamstr.mjs`). `npm run build` bundles them, the shared app
-format (`packages/app-format`) and tar-stream into `dist/hamstr.mjs`, and copies
-`tools/pack.mjs` next to it; `npm pack` runs the build first.
-`store/test/e2e-cli-package.mjs` tests the packed CLI from an empty directory.
+`hamstr.ts` and `deploy.ts` are the source and run as they are from the repo
+(`node store/cli/hamstr.ts`). `npm run build` bundles them, the shared app
+format (`packages/app-format`) and tar-stream into `dist/hamstr.mjs`, and bundles
+`tools/pack.ts` into `dist/pack.mjs`; `npm pack` runs the build first.
+`store/test/e2e-cli-package.ts` tests the packed CLI from an empty directory.

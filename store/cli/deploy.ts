@@ -15,14 +15,28 @@ import { extract } from "tar-stream";
 const UPLOADS_AT_ONCE = 6;
 
 /** An admin API client. `api` is the node's base URL, e.g. http://127.0.0.1:8080. */
-export function adminClient({ api, token, adminHost = "admin.internal", timeoutMs = 120_000 }) {
+export interface AdminClient {
+	origin: string;
+	admin(method: string, path: string, body?: string, type?: string): Promise<{ status: number; text: string }>;
+	visit(host: string, path: string): Promise<{ status: number; text: string }>;
+}
+
+export interface AdminClientOptions {
+	api: string;
+	token: string;
+	adminHost?: string;
+	timeoutMs?: number;
+}
+
+export function adminClient({ api, token, adminHost = "admin.internal", timeoutMs = 120_000 }: AdminClientOptions): AdminClient {
 	const base = new URL(api);
 	if (base.protocol !== "http:" && base.protocol !== "https:") throw new Error(`the node's admin URL must be http(s): ${api}`);
 	const request = base.protocol === "https:" ? httpsRequest : httpRequest;
 
 	// fetch() cannot set the Host header, and the router picks the admin API by it.
-	function send(method, path, { body, type = "application/json", host = adminHost, auth = true, accept } = {}) {
-		return new Promise((resolvePromise, rejectPromise) => {
+	interface SendOptions { body?: string; type?: string; host?: string; auth?: boolean; accept?: string }
+	function send(method: string, path: string, { body, type = "application/json", host = adminHost, auth = true, accept }: SendOptions = {}): Promise<{ status: number; text: string }> {
+		return new Promise<{ status: number; text: string }>((resolvePromise, rejectPromise) => {
 			const req = request(
 				{
 					hostname: base.hostname,
@@ -39,7 +53,7 @@ export function adminClient({ api, token, adminHost = "admin.internal", timeoutM
 					},
 				},
 				(res) => {
-					const chunks = [];
+					const chunks: Buffer[] = [];
 					res.on("data", (chunk) => chunks.push(chunk));
 					res.on("end", () => resolvePromise({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") }));
 					res.on("error", rejectPromise);
@@ -75,7 +89,7 @@ async function ok(promise, what) {
 export async function readEntries(tgz) {
 	const files = new Map();
 	const ex = extract();
-	const done = new Promise((resolvePromise, rejectPromise) => {
+	const done = new Promise<void>((resolvePromise, rejectPromise) => {
 		ex.on("entry", (header, stream, next) => {
 			const chunks = [];
 			stream.on("data", (chunk) => chunks.push(chunk));
@@ -85,7 +99,7 @@ export async function readEntries(tgz) {
 			});
 			stream.on("error", rejectPromise);
 		});
-		ex.on("finish", resolvePromise);
+		ex.on("finish", () => resolvePromise());
 		ex.on("error", rejectPromise);
 	});
 	ex.end(gunzipSync(tgz));
@@ -126,7 +140,7 @@ export async function deploy(client, tgz, host, { watch = 10, check = true, log 
 	let path = "/";
 	if (check) {
 		const res = await client.admin("POST", `/check?${q({ host, version })}`);
-		let result = {};
+		let result: any = {};
 		try {
 			result = JSON.parse(res.text);
 		} catch {}
