@@ -2,9 +2,9 @@
 	// The shell's "Manage data" dialog: any page calls askManage(grain, app). It
 	// gathers what you can do with an item's data in one place; restoring and
 	// resetting continue in their own dialogs.
-	import { backupItem, downloadItem } from "#lib/client/actions.js";
-	import { askReset, askRestore, manageState } from "#lib/client/ui.svelte.js";
-	import { ICON } from "@hamstr/ui/icons.js";
+	import { backupItem, downloadItem } from "#lib/client/actions.ts";
+	import { askReset, askRestore, manageState } from "#lib/client/ui.svelte.ts";
+	import { ICON } from "@hamstr/ui/icons.ts";
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 

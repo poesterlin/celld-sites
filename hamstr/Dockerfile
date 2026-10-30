@@ -4,7 +4,7 @@
 #
 # The UI and the JSON API are a SvelteKit app, so the image is built in two
 # stages: compile the app, then ship only the build and the plain-Node modules
-# the entrypoint (server.mjs) imports at runtime.
+# the entrypoint (server.ts) imports at runtime.
 FROM node:24-bookworm-slim AS build
 
 WORKDIR /src
@@ -21,7 +21,7 @@ COPY packages/app-format ./packages/app-format
 COPY hamstr/src ./hamstr/src
 COPY hamstr/static ./hamstr/static
 COPY hamstr/lib ./hamstr/lib
-COPY hamstr/vite.config.js hamstr/server.mjs ./hamstr/
+COPY hamstr/vite.config.ts hamstr/server.ts ./hamstr/
 RUN cd hamstr && npm run build
 
 FROM node:24-bookworm-slim
@@ -29,11 +29,11 @@ FROM node:24-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
 
-# adapter-node's build is self-contained; server.mjs only needs the app's plain
+# adapter-node's build is self-contained; server.ts only needs the app's plain
 # modules (proxy, instance state, celld/OIDC clients).
 COPY --from=build /src/hamstr/build ./hamstr/build
 COPY --from=build /src/hamstr/lib ./hamstr/lib
-COPY --from=build /src/hamstr/server.mjs /src/hamstr/package.json ./hamstr/
+COPY --from=build /src/hamstr/server.ts /src/hamstr/package.json ./hamstr/
 
 RUN mkdir -p /data && chown node:node /data
 USER node
@@ -42,4 +42,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 	CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "hamstr/server.mjs"]
+CMD ["node", "hamstr/server.ts"]

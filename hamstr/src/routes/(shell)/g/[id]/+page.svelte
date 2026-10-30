@@ -2,12 +2,12 @@
 	import { onMount } from "svelte";
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { askManage, oops, toast } from "#lib/client/ui.svelte.js";
-	import { ICON } from "@hamstr/ui/icons.js";
+	import { api } from "#lib/client/api.ts";
+	import { askManage, oops, toast } from "#lib/client/ui.svelte.ts";
+	import { ICON } from "@hamstr/ui/icons.ts";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
-	import { downloadGrain } from "#lib/client/download.js";
+	import { downloadGrain } from "#lib/client/download.ts";
 
 	let { data } = $props();
 

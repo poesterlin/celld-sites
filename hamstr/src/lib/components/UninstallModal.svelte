@@ -4,9 +4,9 @@
 	// an extra tick when other people's items would be deleted too.
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { oops, toast, uninstallState } from "#lib/client/ui.svelte.js";
-	import { plural } from "@hamstr/ui/format.js";
+	import { api } from "#lib/client/api.ts";
+	import { oops, toast, uninstallState } from "#lib/client/ui.svelte.ts";
+	import { plural } from "@hamstr/ui/format.ts";
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 

@@ -1,11 +1,11 @@
 <script>
 	import { invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { install, latestRelease, newHosts } from "#lib/client/install.js";
-	import { askUninstall, oops, toast } from "#lib/client/ui.svelte.js";
-	import { appMenu, openApp } from "#lib/client/actions.js";
-	import { ICON, sized } from "@hamstr/ui/icons.js";
-	import { plural, shortDate, size } from "@hamstr/ui/format.js";
+	import { install, latestRelease, newHosts } from "#lib/client/install.ts";
+	import { askUninstall, oops, toast } from "#lib/client/ui.svelte.ts";
+	import { appMenu, openApp } from "#lib/client/actions.ts";
+	import { ICON, sized } from "@hamstr/ui/icons.ts";
+	import { plural, shortDate, size } from "@hamstr/ui/format.ts";
 	import ConsentModal from "#lib/components/ConsentModal.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
 	import AppHero from "@hamstr/ui/components/AppHero.svelte";

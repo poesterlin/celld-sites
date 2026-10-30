@@ -2,11 +2,11 @@
 	import { onMount } from "svelte";
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { appMenu, downloadItem as download, grainAction, grainMenu } from "#lib/client/actions.js";
-	import { askUninstall, contextMenu, oops, toast } from "#lib/client/ui.svelte.js";
-	import { ICON, sized } from "@hamstr/ui/icons.js";
-	import { shortDate, timeAgo } from "@hamstr/ui/format.js";
+	import { api } from "#lib/client/api.ts";
+	import { appMenu, downloadItem as download, grainAction, grainMenu } from "#lib/client/actions.ts";
+	import { askUninstall, contextMenu, oops, toast } from "#lib/client/ui.svelte.ts";
+	import { ICON, sized } from "@hamstr/ui/icons.ts";
+	import { shortDate, timeAgo } from "@hamstr/ui/format.ts";
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";

@@ -1,6 +1,6 @@
 <script>
 	import { page } from "$app/state";
-	import { initials } from "@hamstr/ui/format.js";
+	import { initials } from "@hamstr/ui/format.ts";
 	import Toaster from "@hamstr/ui/components/Toaster.svelte";
 	import TopBar from "@hamstr/ui/components/TopBar.svelte";
 	import ContextMenu from "@hamstr/ui/components/ContextMenu.svelte";

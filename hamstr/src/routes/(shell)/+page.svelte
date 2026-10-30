@@ -2,10 +2,10 @@
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { contextMenu, oops } from "#lib/client/ui.svelte.js";
-	import { appMenu, grainMenu } from "#lib/client/actions.js";
-	import { greeting, today } from "@hamstr/ui/format.js";
+	import { api } from "#lib/client/api.ts";
+	import { contextMenu, oops } from "#lib/client/ui.svelte.ts";
+	import { appMenu, grainMenu } from "#lib/client/actions.ts";
+	import { greeting, today } from "@hamstr/ui/format.ts";
 	import GrainTile from "#lib/components/GrainTile.svelte";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 

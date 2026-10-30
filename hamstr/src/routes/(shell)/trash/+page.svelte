@@ -1,9 +1,9 @@
 <script>
 	import { invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { oops, toast } from "#lib/client/ui.svelte.js";
-	import { timeAgo } from "@hamstr/ui/format.js";
+	import { api } from "#lib/client/api.ts";
+	import { oops, toast } from "#lib/client/ui.svelte.ts";
+	import { timeAgo } from "@hamstr/ui/format.ts";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 

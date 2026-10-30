@@ -1,6 +1,6 @@
 <script>
-	import { timeAgo } from "@hamstr/ui/format.js";
-	import { contextMenu } from "#lib/client/ui.svelte.js";
+	import { timeAgo } from "@hamstr/ui/format.ts";
+	import { contextMenu } from "#lib/client/ui.svelte.ts";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
 	let { grain, meta: label = "", menu = () => [] } = $props();

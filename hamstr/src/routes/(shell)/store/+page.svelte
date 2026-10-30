@@ -2,12 +2,12 @@
 	import { onMount } from "svelte";
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { askUninstall, oops } from "#lib/client/ui.svelte.js";
-	import { appMenu, openApp } from "#lib/client/actions.js";
+	import { api } from "#lib/client/api.ts";
+	import { askUninstall, oops } from "#lib/client/ui.svelte.ts";
+	import { appMenu, openApp } from "#lib/client/actions.ts";
 	import AppCard from "@hamstr/ui/components/AppCard.svelte";
 	import ConsentModal from "#lib/components/ConsentModal.svelte";
-	import { install as installApp, latestRelease, newHosts } from "#lib/client/install.js";
+	import { install as installApp, latestRelease, newHosts } from "#lib/client/install.ts";
 
 	let { data } = $props();
 

@@ -145,7 +145,7 @@ Data: `hamstr-data` holds Hamstr's SQLite (users, sessions, grains). The grains'
 ### Develop and test
 
 The UI and the JSON API are a SvelteKit app in `hamstr/src` (SSR, Svelte 5
-runes). `hamstr/server.mjs` is the HTTP entrypoint: it routes on the Host
+runes). `hamstr/server.ts` is the HTTP entrypoint: it routes on the Host
 header, proxies the grain hosts, and hands everything else to adapter-node. The
 plain-Node modules in `hamstr/lib` hold the platform core, the celld and OIDC
 clients and the proxy, so the tests drive them without a browser.
@@ -156,7 +156,7 @@ npm run e2e --prefix hamstr         # real celld dev node, real `hamstr publish`
 npm run playground --prefix hamstr  # http://hamstr.localhost:8795, seeded
 ```
 
-`test`, `e2e` and `playground` build the app first; `server.mjs` then loads
+`test`, `e2e` and `playground` build the app first; `server.ts` then loads
 `build/handler.js`.
 
 ## Security model

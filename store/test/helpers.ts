@@ -105,7 +105,7 @@ export async function call(base: string, path: string, { method = "GET", json, b
 			...(token ? { authorization: `Bearer ${token}` } : {}),
 			...headers,
 		},
-		body: json !== undefined ? JSON.stringify(json) : body,
+		body: (json !== undefined ? JSON.stringify(json) : body) as any,
 	});
 	const text = await res.text();
 	let parsed = null;

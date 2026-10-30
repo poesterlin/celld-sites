@@ -3,8 +3,8 @@
 	// item's data and starts it empty, keeping the item (id, title, place on Home).
 	import { invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { api } from "#lib/client/api.js";
-	import { oops, resetState, toast } from "#lib/client/ui.svelte.js";
+	import { api } from "#lib/client/api.ts";
+	import { oops, resetState, toast } from "#lib/client/ui.svelte.ts";
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
