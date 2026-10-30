@@ -40,7 +40,15 @@ async function api(request, env, parts) {
 		return reply(await call(env, "deleteBoard", id), { message: "Board deleted" });
 	} else if (sub === "elements") {
 		const body = await json(request);
-		if (method === "GET") return reply(await call(env, "scene", id));
+		if (method === "GET") {
+			const scene = await call(env, "scene", id);
+			if (!scene) return fail("Board not found", 404);
+			// Assemble the JSON by hand: the pieces are already serialized.
+			const files = scene.files.map(([fileId, text]) => `${JSON.stringify(fileId)}:${text}`).join(",");
+			return new Response(`{"success":true,"data":{"elements":[${scene.elements.join(",")}],"files":{${files}}}}`, {
+				headers: { "content-type": "application/json" },
+			});
+		}
 		if (method === "PUT") {
 			// The client sends { elements, files }; the original also took a bare array.
 			const elements = Array.isArray(body) ? body : body?.elements;

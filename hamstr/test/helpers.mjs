@@ -130,6 +130,7 @@ export async function mockCelld({ adminToken = "admin-token", proxyToken = "prox
 		}
 		// A grain request through the proxy.
 		if (req.headers["x-celld-proxy-token"] !== proxyToken || !node.sites.has(req.headers.host)) return send(404, { error: "no site" });
+		if (url.pathname === "/not-modified") return res.writeHead(304, { etag: '"v1"' }).end();
 		if (url.pathname === "/setcookie") {
 			return res
 				.writeHead(200, {

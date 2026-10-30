@@ -143,12 +143,17 @@ export async function grainRequest(event, grainId) {
 			const policy = out.get("content-security-policy");
 			out.set("content-security-policy", [...(policy === null ? [] : [policy]), `frame-ancestors ${core.shellOrigin}`].join(", "));
 			out.set("x-robots-tag", "noindex");
-			resolveUpstream(
-				new Response(request.method === "HEAD" ? null : Readable.toWeb(up), {
-					status: up.statusCode ?? 502,
-					headers: out,
-				}),
-			);
+			const status = up.statusCode ?? 502;
+			// 101/204/205/304 must not carry a body: `new Response` throws for one,
+			// and a throw here is outside any handler (it would end the process).
+			const bodyless = request.method === "HEAD" || status === 101 || status === 204 || status === 205 || status === 304;
+			try {
+				if (bodyless) up.resume();
+				resolveUpstream(new Response(bodyless ? null : Readable.toWeb(up), { status, headers: out }));
+			} catch (err) {
+				up.destroy();
+				rejectUpstream(err);
+			}
 		},
 	);
 

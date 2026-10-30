@@ -12,7 +12,11 @@ const MIGRATIONS = [
 			"CREATE TABLE elements (id TEXT NOT NULL, board_id TEXT NOT NULL, data TEXT NOT NULL, element_index TEXT NOT NULL, type TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (id, board_id))",
 		);
 		sql.exec("CREATE INDEX elements_board ON elements (board_id)");
-		sql.exec("CREATE TABLE files (id TEXT NOT NULL, board_id TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (id, board_id))");
+		// A value over ~2 MB fails ("string or blob too big"), and a pasted image is a
+		// data URL, so a file is stored in CHUNK-sized pieces.
+		sql.exec(
+			"CREATE TABLE files (id TEXT NOT NULL, board_id TEXT NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (id, board_id, seq))",
+		);
 		sql.exec("CREATE INDEX files_board ON files (board_id)");
 		sql.exec("CREATE TABLE libraries (board_id TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '[]', updated_at INTEGER NOT NULL)");
 	},
@@ -33,6 +37,8 @@ function migrate(storage) {
 		});
 	}
 }
+
+const CHUNK = 1_000_000;
 
 const stamp = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
@@ -90,26 +96,16 @@ export class Workspace extends DurableObject {
 		return { ok: true };
 	}
 
+	/** The scene as ready-made JSON text, not parsed and re-serialized: a board
+	 *  with big images would otherwise burn the request's 1 s of CPU. */
 	scene(id) {
 		if (!this.board(id)) return null;
-		const parse = (row) => {
-			try {
-				return JSON.parse(row.data);
-			} catch {
-				return null;
-			}
-		};
-		const elements = this.sql
-			.exec("SELECT data FROM elements WHERE board_id = ? AND is_deleted = 0 ORDER BY element_index ASC", id)
-			.toArray()
-			.map(parse)
-			.filter(Boolean);
-		const files = {};
-		for (const row of this.sql.exec("SELECT id, data FROM files WHERE board_id = ?", id).toArray()) {
-			const file = parse(row);
-			if (file) files[row.id] = { ...file, id: file.id || row.id };
+		const rows = this.sql.exec("SELECT data FROM elements WHERE board_id = ? AND is_deleted = 0 ORDER BY element_index ASC", id).toArray();
+		const pieces = new Map();
+		for (const row of this.sql.exec("SELECT id, data FROM files WHERE board_id = ? ORDER BY id, seq", id).toArray()) {
+			pieces.set(row.id, (pieces.get(row.id) ?? "") + row.data);
 		}
-		return { elements, files };
+		return { elements: rows.map((row) => row.data), files: [...pieces] };
 	}
 	putElements(id, elements) {
 		const now = Date.now();
@@ -131,13 +127,12 @@ export class Workspace extends DurableObject {
 		const now = Date.now();
 		for (const [key, file] of Object.entries(files)) {
 			const fileId = file.id || key;
-			this.sql.exec(
-				"INSERT INTO files (id, board_id, data, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (id, board_id) DO NOTHING",
-				fileId,
-				id,
-				JSON.stringify({ ...file, id: fileId }),
-				now,
-			);
+			// Files are content-addressed: one that exists is never rewritten.
+			if (this.sql.exec("SELECT 1 FROM files WHERE board_id = ? AND id = ? LIMIT 1", id, fileId).toArray().length) continue;
+			const text = JSON.stringify({ ...file, id: fileId });
+			for (let seq = 0, at = 0; at < text.length; seq++, at += CHUNK) {
+				this.sql.exec("INSERT INTO files (id, board_id, seq, data, created_at) VALUES (?, ?, ?, ?, ?)", fileId, id, seq, text.slice(at, at + CHUNK), now);
+			}
 		}
 	}
 	replaceScene(id, elements, files) {
@@ -161,7 +156,7 @@ export class Workspace extends DurableObject {
 		return { ok: true };
 	}
 	missingFiles(id, fileIds) {
-		const have = new Set(this.sql.exec("SELECT id FROM files WHERE board_id = ?", id).toArray().map((row) => row.id));
+		const have = new Set(this.sql.exec("SELECT DISTINCT id FROM files WHERE board_id = ?", id).toArray().map((row) => row.id));
 		return fileIds.filter((fileId) => !have.has(fileId));
 	}
 	addFiles(id, files) {
@@ -197,6 +192,14 @@ export class Workspace extends DurableObject {
 		return this.sql
 			.exec("SELECT id, name, status, created_at AS createdAt, updated_at AS updatedAt FROM boards ORDER BY created_at")
 			.toArray()
-			.map((board) => ({ ...board, ...this.scene(board.id), library: this.library(board.id).libraryItems }));
+			.map((board) => {
+				const scene = this.scene(board.id);
+				return {
+					...board,
+					elements: scene.elements.map((text) => JSON.parse(text)),
+					files: Object.fromEntries(scene.files.map(([fileId, text]) => [fileId, JSON.parse(text)])),
+					library: this.library(board.id).libraryItems,
+				};
+			});
 	}
 }

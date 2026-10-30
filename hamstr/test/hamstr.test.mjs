@@ -408,6 +408,15 @@ describe("the grain proxy", () => {
 		assert.equal(h["x-forwarded-proto"], "http");
 		assert.equal(r.headers["content-security-policy"], `frame-ancestors http://${SHELL}`);
 	});
+	it("passes a grain's 304 through without dying", async () => {
+		await enter(bob, board.id);
+		const host = grainHost(board.id);
+		const r = await bob.request("GET", "/not-modified", { host, headers: { cookie: bob.cookieHeader(host), "if-none-match": '"v1"' } });
+		assert.equal(r.status, 304);
+		assert.equal(r.headers.etag, '"v1"');
+		const again = await bob.request("GET", "/notes", { host, headers: { cookie: bob.cookieHeader(host) } });
+		assert.equal(again.status, 200, "the server is still up");
+	});
 	it("does not accept a ticket twice, or on another grain", async () => {
 		const r = await apiCall(bob, "POST", `/api/grains/${board.id}/open`, { path: "/" });
 		const url = new URL(r.json.url);
