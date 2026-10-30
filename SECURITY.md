@@ -39,7 +39,7 @@ Please report privately, not in a public issue or pull request.
 - Use GitHub's **private vulnerability reporting**: the "Report a
   vulnerability" button under the repository's *Security* tab.
 - Include what you tested (commit, celld version), the steps to reproduce, and
-  what an attacker gains. A failing test against `tests/security.test.mjs` is
+  what an attacker gains. A failing test against `tests/security.test.ts` is
   ideal.
 
 You can expect an acknowledgement within 7 days and a status update within 30.

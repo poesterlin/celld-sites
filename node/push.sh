@@ -1,5 +1,5 @@
 #!/bin/sh
-# Deploy a site bundle (from tools/pack.mjs) to the router, tar'ed on stdin:
+# Deploy a site bundle (from tools/pack.ts) to the router, tar'ed on stdin:
 #   tar -C <bundle> -cf - . | push.sh <hostname> [--if-new] [--no-check] [--watch SECS]
 #  1. upload the files the router doesn't have yet (files are stored once by
 #     content hash, shared by all versions), then the code;

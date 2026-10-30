@@ -1,7 +1,7 @@
 # Site contract
 
 What a site must look like to run on celld-sites, whatever the framework. The
-router (`router/index.js`) loads each site into its own Dynamic Worker isolate,
+router (`router/index.ts`) loads each site into its own Dynamic Worker isolate,
 picked by the `Host` header.
 
 ## Build output
@@ -10,7 +10,7 @@ A site is two things, both optional (but not both absent):
 
 - **A worker module**: an ES module with `export default { fetch(request, env, ctx) }`,
   the Cloudflare Workers module format. Its imports are bundled into one file
-  by `tools/pack.mjs` (esbuild); `cloudflare:*` and `node:*` stay external.
+  by `tools/pack.ts` (esbuild); `cloudflare:*` and `node:*` stay external.
 - **A static directory**: files served as-is.
 
 Describe them in `celld.json` next to the site's `package.json` (paths are
@@ -208,16 +208,16 @@ write; the old version kept working on the migrated table.
 
 **Objects that are never called stay on the old schema**, which is fine:
 they migrate on their next call. To migrate one now, call any method on it
-(`node tools/seed.mjs <hostname> --call <Class> <name> <method>`); the
+(`node tools/seed.ts <hostname> --call <Class> <name> <method>`); the
 dashboard lists a site's objects.
 
 ## Preview, deploy, seed
 
 ```sh
 tools/preview.sh sites/<name>                    # local preview, http://localhost:8790/
-node tools/seed.mjs --preview sites/<name> sites/<name>/seed.json
+node tools/seed.ts --preview sites/<name> sites/<name>/seed.json
 tools/deploy.sh sites/<name> <hostname>          # production: pack, upload, activate (build first, or add --build)
-node tools/seed.mjs <hostname> sites/<name>/seed.json
+node tools/seed.ts <hostname> sites/<name>/seed.json
 tools/update.sh sites/<name> <hostname> [--rehearse <copy>]   # live site with data: dump, rehearse, deploy
 ```
 
@@ -238,7 +238,7 @@ must keep its `ctx` (extend `DurableObject`, or store `state` as `this.state`)
 for its storage to be reachable.
 
 **Seeding.** Sites have no secrets, so they can't guard a seed route. Put
-`seed()`/`export()` methods on the object classes; `tools/seed.mjs` calls them
+`seed()`/`export()` methods on the object classes; `tools/seed.ts` calls them
 through the admin endpoint `POST /__admin/call?host=&class=&name=&method=`
 (body: JSON array of arguments, deploy token required). The calls file is a
 JSON array of `{ "class", "name", "method", "args" }`; add `"version"` to seed

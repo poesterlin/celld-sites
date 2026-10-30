@@ -50,7 +50,7 @@ services:
     networks:
       - default
 
-  # One celld node running the host-header router (router/index.js). On every
+  # One celld node running the host-header router (router/index.ts). On every
   # start it creates the bucket if needed, deploys the router and starts the
   # node. No site is bundled: deploy them with tools/deploy.sh.
   celld:

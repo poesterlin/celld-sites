@@ -2,7 +2,7 @@
 
 What a site can reach, what it can break, and what an operator has to decide
 before running someone else's code. This is the reasoning behind the
-"Security" section of the README and the limits in `router/index.js`; treat the
+"Security" section of the README and the limits in `router/index.ts`; treat the
 code as authoritative when they disagree.
 
 ## Trust levels
@@ -126,7 +126,7 @@ never pass through the router.
    data — a kill switch, not a quota.
 3. **The deploy path is operator-trusted.** `tools/deploy.sh` runs
    `npm run build` on the host as the operator, so a third-party site's
-   `postinstall` or build script is code execution on the VM. `tools/pack.mjs`
+   `postinstall` or build script is code execution on the VM. `tools/pack.ts`
    refuses symlinks and large files, but it runs after the build. The admin
    token is one global secret: anyone who can deploy can deploy any site. The
    invariants above keep an individual call from crossing sites, but there is no
@@ -189,10 +189,10 @@ Before running untrusted apps on a shared node:
 The API and security regression suites run against a throwaway local node:
 
 ```sh
-npm test --prefix tools     # tests/api.test.mjs and tests/security.test.mjs
+npm test --prefix tools     # tests/api.test.ts and tests/security.test.ts
 ```
 
-`tests/security.test.mjs` covers the request-context surface, admin API
+`tests/security.test.ts` covers the request-context surface, admin API
 hostname isolation, path traversal, object quotas and the in-flight cap. A red
 team report from an adversarial pass lives outside the repo; when a finding is
 fixed, add a regression test here rather than only in the report.

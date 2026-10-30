@@ -47,7 +47,7 @@ rm -f "$s3auth"
 
 # 2. Router app ---------------------------------------------------------------
 work=$(mktemp -d)
-cp /app/router/index.js "$work/"
+cp /app/router/index.ts "$work/"
 # The router gets only SHA-256 hashes of the tokens: deployments are stored in
 # the bucket, which the dashboard can read.
 admin_hash=$(printf '%s' "$ADMIN_TOKEN" | sha256sum | cut -d' ' -f1)
