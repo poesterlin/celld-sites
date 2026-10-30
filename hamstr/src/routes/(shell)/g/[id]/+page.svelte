@@ -3,7 +3,7 @@
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
-	import { askRestore, oops, toast } from "#lib/client/ui.svelte.js";
+	import { askReset, askRestore, oops, toast } from "#lib/client/ui.svelte.js";
 	import { backupItem } from "#lib/client/actions.js";
 	import { ICON } from "@hamstr/ui/icons.js";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
@@ -67,7 +67,8 @@
 		{ label: "Download backup", icon: "download", onclick: () => backupItem(grain) },
 		{ label: "Restore from backup…", icon: "upload", hidden: !app, onclick: () => askRestore(grain, app) },
 		{ label: `About ${app?.name ?? "this app"}`, icon: "info", hidden: !app, onclick: () => goto(`/a/${app.slug}`) },
-		{ label: "Move to trash", icon: "trash", danger: true, separator: true, onclick: trash },
+		{ label: "Reset data…", icon: "restore", danger: true, separator: true, onclick: () => askReset(grain, app) },
+		{ label: "Move to trash", icon: "trash", danger: true, onclick: trash },
 	]);
 
 	async function trash() {

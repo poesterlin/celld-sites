@@ -26,5 +26,12 @@ export const POST = guard(async (event) => {
 		c.db.prepare("UPDATE grains SET trashed_at = NULL WHERE id = ?").run(grain.id);
 		return json(c, 200, { ok: true });
 	}
+	if (action === "reset") {
+		// Wipes the item's data for good: the body has to name the item.
+		if (grain.trashed_at) return json(c, 404, { error: "no such grain" });
+		if ((await readJson(event.request)).confirm !== grain.id) return json(c, 400, { error: "say which item to reset (confirm: its id)" });
+		await c.resetGrain(grain);
+		return json(c, 200, { ok: true });
+	}
 	return json(c, 404, { error: "no such endpoint" });
 });

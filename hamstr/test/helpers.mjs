@@ -120,11 +120,16 @@ export async function mockCelld({ adminToken = "admin-token", proxyToken = "prox
 				return send(200, { site: host, objects: 0, rows: 0, keys: 0, removed: 0 });
 			}
 			if (path === "/check") return send(200, node.failCheck ? { ok: false, status: 500, path: "/", error: "boom" } : { ok: true, status: 200, path: "/" });
+			if (path === "/activate" && node.failActivate === url.searchParams.get("host")) {
+				node.failActivate = null;
+				return send(500, { error: "boom" });
+			}
 			if (path === "/activate") node.sites.set(url.searchParams.get("host"), url.searchParams.get("version"));
 			if (path === "/site" && req.method === "DELETE") {
 				const id = url.searchParams.get("id");
 				if (!node.sites.has(id)) return send(404, { error: "no site" });
 				node.sites.delete(id);
+				node.data.delete(id);
 			}
 			return send(200, { ok: true });
 		}

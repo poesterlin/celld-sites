@@ -3,7 +3,7 @@
 import { goto, invalidateAll } from "$app/navigation";
 import { api } from "./api.js";
 import { downloadBackup, downloadGrain } from "./download.js";
-import { askImport, askRestore, askUninstall, oops, toast } from "./ui.svelte.js";
+import { askImport, askReset, askRestore, askUninstall, oops, toast } from "./ui.svelte.js";
 
 /** Open an app: a single-instance app goes straight into its one item. */
 export async function openApp(app) {
@@ -76,6 +76,7 @@ export function grainMenu(grain, { canExport = false, rename, app } = {}) {
 		{ label: "Download data", icon: "download", separator: !rename, hidden: !canExport, onclick: () => downloadItem(grain) },
 		{ label: "Download backup", icon: "download", separator: !rename && !canExport, onclick: () => backupItem(grain) },
 		{ label: "Restore from backup…", icon: "upload", hidden: !app, onclick: () => askRestore(grain, app) },
-		{ label: "Move to trash", icon: "trash", danger: true, separator: true, onclick: () => grainAction(grain, "trash", "Moved to the trash") },
+		{ label: "Reset data…", icon: "restore", danger: true, separator: true, onclick: () => askReset(grain, app) },
+		{ label: "Move to trash", icon: "trash", danger: true, onclick: () => grainAction(grain, "trash", "Moved to the trash") },
 	];
 }

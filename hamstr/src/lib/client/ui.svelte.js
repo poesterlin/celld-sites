@@ -11,3 +11,8 @@ export const askUninstall = (app) => (uninstallState.app = app);
 export const restoreState = $state({ grain: null, app: null });
 export const askRestore = (grain, app) => Object.assign(restoreState, { grain, app });
 export const askImport = (app) => Object.assign(restoreState, { grain: null, app });
+
+// Resetting an item: wiping its data and starting it empty. The layout's dialog
+// confirms.
+export const resetState = $state({ grain: null, app: null });
+export const askReset = (grain, app) => Object.assign(resetState, { grain, app });

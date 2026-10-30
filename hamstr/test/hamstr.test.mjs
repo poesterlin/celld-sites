@@ -522,6 +522,32 @@ describe("trash and updates", () => {
 		assert.equal(r.json.grain.title, "Kitchen board");
 		assert.equal((await apiCall(bob, "PATCH", `/api/grains/${board.id}`, { title: " " })).status, 400);
 	});
+	it("resets an item to empty, keeping the item, and puts the data back if that fails", async () => {
+		const host = grainHost(board.id);
+		const reset = (browser, body = { confirm: board.id }, headers = {}) => browser.request("POST", `/api/grains/${board.id}/reset`, { host: SHELL, headers: { ...ORIGIN, ...headers }, json: body });
+		celld.data.set(host, "precious");
+		// Refused before anything changes: not the owner, no confirmation, wrong item, cross-origin.
+		assert.equal((await reset(ada)).status, 404);
+		assert.equal((await reset(bob, {})).status, 400);
+		assert.equal((await reset(bob, { confirm: "someone-else" })).status, 400);
+		assert.equal((await reset(bob, { confirm: board.id }, { origin: "http://evil.test" })).status, 403);
+		assert.equal(celld.data.get(host), "precious");
+
+		// A reset that fails after the wipe puts the data back.
+		celld.failActivate = host;
+		const failed = await reset(bob);
+		assert.equal(failed.status, 502);
+		assert.match(failed.json.error, /put back as it was/);
+		assert.equal(celld.data.get(host), "precious");
+		assert.equal(celld.sites.has(host), true);
+
+		const ok = await reset(bob);
+		assert.equal(ok.status, 200, ok.text);
+		assert.equal(celld.data.has(host), false, "the data is gone");
+		assert.equal(celld.sites.has(host), true, "the item runs again, on its app's code");
+		const grains = (await bob.request("GET", "/api/grains", { host: SHELL })).json.mine;
+		assert.equal(grains.find((g) => g.id === board.id)?.title, "Kitchen board", "the item itself stays");
+	});
 	it("backs up any item and restores it, putting it back if a restore fails", async () => {
 		const host = grainHost(board.id);
 		const upload = (browser, path, body, headers = {}) =>

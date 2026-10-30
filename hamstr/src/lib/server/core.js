@@ -494,6 +494,43 @@ export function createCore(options = {}) {
 		}
 	}
 
+	/** Wipe a grain's data and start it empty again, on the app's current code.
+	 *  The item keeps its id, title and place; everything it stored is gone. Like
+	 *  a restore it takes a safety copy first and puts the data back if it fails. */
+	async function resetGrain(grain) {
+		const app = q.app.get(grain.slug);
+		if (!app) throw new HttpError(409, "the app of this item is not installed");
+		if (restoring.has(grain.id)) throw new HttpError(409, "this item is already being restored or reset");
+		const host = grainHost(grain.id);
+		const egress = manifestOf(app).egress ?? [];
+		restoring.add(grain.id);
+		const safety = tempFile("before-reset");
+		try {
+			try {
+				await celld.dumpTo(host, safety);
+			} catch (err) {
+				throw new HttpError(502, `could not take a safety copy of the current data first, so nothing was changed (${err.message})`);
+			}
+			try {
+				await celld.deleteSite(host);
+				await celld.deployGrain(host, app.code_version, egress);
+			} catch (err) {
+				try {
+					await celld.deployGrain(host, grain.code_version, egress);
+					const back = await celld.restoreFrom(host, safety);
+					if (back.status !== 200) throw new Error(back.json?.error ?? `status ${back.status}`);
+				} catch (backErr) {
+					throw new HttpError(502, `the reset failed (${err.message}), and putting the previous data back failed too (${backErr.message}); the item may be incomplete`);
+				}
+				throw new HttpError(502, `the reset failed (${err.message}); the item was put back as it was`);
+			}
+			db.prepare("UPDATE grains SET code_version = ? WHERE id = ?").run(app.code_version, grain.id);
+		} finally {
+			releaseTemp(safety);
+			restoring.delete(grain.id);
+		}
+	}
+
 	/** A new grain of `app` made from a backup file. */
 	async function importBackup(user, app, file) {
 		const { header } = readBackupHeader(file);
@@ -624,6 +661,7 @@ export function createCore(options = {}) {
 		releaseTemp,
 		backupGrain,
 		restoreGrain,
+		resetGrain,
 		importBackup,
 		isRestoring,
 		sha256,
