@@ -65,3 +65,20 @@
 		</div>
 	</Modal>
 {/if}
+
+<style>
+	/* The shared .rows grid sizes itself to its no-wrap text and pushes the buttons
+	 * out of the dialog: let the column shrink and the descriptions wrap. */
+	.rows {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.row .grow > * {
+		white-space: normal;
+		overflow: visible;
+	}
+	.row .button {
+		flex: none;
+		min-width: 7rem;
+		white-space: nowrap;
+	}
+</style>
