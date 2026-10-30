@@ -22,7 +22,8 @@ declare module "cloudflare:workers" {
 		put<T = unknown>(key: string, value: T): Promise<void>;
 		put(entries: Record<string, unknown>): Promise<void>;
 		delete(key: string): Promise<boolean>;
-		list<T = unknown>(options?: { prefix?: string; limit?: number }): Promise<Map<string, T>>;
+		deleteAll(): Promise<void>;
+		list<T = unknown>(options?: { prefix?: string; limit?: number; startAfter?: string }): Promise<Map<string, T>>;
 	}
 
 	interface DurableObjectId {
@@ -30,9 +31,43 @@ declare module "cloudflare:workers" {
 		name?: string;
 	}
 
+	export interface KVNamespaceListKey {
+		name: string;
+		expiration?: number;
+		metadata?: any;
+	}
+
+	export interface KVNamespace {
+		get<T = any>(key: string, type?: "text" | "json" | "arrayBuffer" | "stream"): Promise<T | null>;
+		getWithMetadata<T = any>(key: string, type?: "text" | "json" | "arrayBuffer" | "stream"): Promise<{ value: T | null; metadata: any }>;
+		put<T = unknown>(key: string, value: T, options?: Record<string, any>): Promise<void>;
+		delete(key: string): Promise<void>;
+		list<T = unknown>(options?: { limit?: number; prefix?: string; cursor?: string; startAfter?: string }): Promise<{
+			keys: KVNamespaceListKey[];
+			list_complete: boolean;
+			cursor?: string;
+		}>;
+	}
+
+	/** The bindings celld's router and sites are given; the router extends this. */
+	export interface CelldObjectNamespace {
+		idFromName(name: string): DurableObjectId;
+		get(id: DurableObjectId): any;
+		getByName(name: string): any;
+	}
+
+	export interface CelldWorkerLoader {
+		get(name: string, load: () => any): Promise<any>;
+	}
+
 	interface DurableObjectState {
 		id: DurableObjectId;
 		storage: DurableObjectStorage;
+		facets: {
+			abort(name: string, reason: Error): void;
+			get(name: string, init: () => any): any;
+			delete(name: string): void;
+		};
 		waitUntil(promise: Promise<unknown>): void;
 		blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
 	}

@@ -39,7 +39,25 @@
 //            every request against the list, refuses IP literals and internal
 //            names, and does not follow redirects (the site follows them, so
 //            the next hop is checked too). connect() stays unavailable.
-import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint, type CelldObjectNamespace, type CelldWorkerLoader, type KVNamespace } from "cloudflare:workers";
+
+/** Bindings the router gets from wrangler.template.json (site code gets OBJECTS/ASSETS). */
+interface Env {
+	CODE: KVNamespace;
+	LOADER: CelldWorkerLoader;
+	SITE_OBJECTS: CelldObjectNamespace;
+	ADMIN_HOST: string;
+	ADMIN_TOKEN_SHA256: string;
+	READ_TOKEN_SHA256: string;
+	DEFAULT_SITE: string;
+	OPERATOR_URL: string;
+	SITE_TIMEOUT_SECS: string;
+	SITE_MAX_INFLIGHT: string;
+	SITE_MAX_OBJECTS: string;
+	SITE_MAX_SUBREQUESTS: string;
+	PROXY_TOKEN_SHA256: string;
+	PROXY_SITE_PREFIX: string;
+}
 
 // Runs in each site isolate before the site's own code, papering over APIs that
 // celld 0.6.3 exposes but that throw "not implemented":
@@ -185,7 +203,7 @@ function attachData(site) {
 			return { rows, next };
 		},
 		async kv(storage, { after }) {
-			const options = { limit: KV_PAGE };
+			const options: { limit: number; startAfter?: string } = { limit: KV_PAGE };
 			if (after !== null && after !== undefined) options.startAfter = after;
 			const entries = [...(await storage.list(options))];
 			return { entries, next: entries.length === KV_PAGE ? entries[entries.length - 1][0] : null };
@@ -307,7 +325,7 @@ async function codeFor(env, version) {
  *  concurrent first requests waited on the load the first one started, and
  *  celld 0.6.3 dropped their responses (denoland/celld#258), so they hung until
  *  the 504. */
-async function loadSite(env, exports, site, version, egress) {
+async function loadSite(env: any, exports: any, site: string, version: string, egress?: { allow?: string[]; tag?: string }): Promise<any> {
 	const { allow, tag } = egress ?? (await egressFor(env, site));
 	const code = await codeFor(env, version);
 	return env.LOADER.get(`${site}@${version}${tag}`, () => {
@@ -384,7 +402,7 @@ async function withTimeout(promise, ms, what) {
 const indexed = new Set();
 const MAX_INDEXED = 10_000;
 
-/** Path prefixes of content-hashed build output: SvelteKit, Nuxt. tools/pack.mjs
+/** Path prefixes of content-hashed build output: SvelteKit, Nuxt. tools/pack.ts
  *  adds assets/ (Vite) to the record itself when every file there is hashed; a
  *  code record without "immutable" never treats assets/ as immutable. */
 const DEFAULT_IMMUTABLE = ["_app/immutable/", "_nuxt/"];
@@ -444,8 +462,9 @@ function notModified(request, etag) {
 /** One static file of a version, or null if it does not exist. `known` means the
  *  caller checked the version's file list, so a matching If-None-Match can be
  *  answered with 304 without reading the file. */
-async function assetResponse(env, version, path, meta, { head = false, status = 200, request, known = false } = {}) {
-	const headers = { "cache-control": isImmutable(meta, path) ? "public, immutable, max-age=31536000" : "no-cache" };
+interface AssetOptions { head?: boolean; status?: number; request?: Request; known?: boolean }
+async function assetResponse(env: any, version: string, path: string, meta: any, { head = false, status = 200, request, known = false }: AssetOptions = {}) {
+	const headers: Record<string, string> = { "cache-control": isImmutable(meta, path) ? "public, immutable, max-age=31536000" : "no-cache" };
 	if (status === 200) {
 		headers.etag = etagFor(meta, version, path);
 		if (known && notModified(request, headers.etag)) return new Response(null, { status: 304, headers });
@@ -463,7 +482,7 @@ async function assetResponse(env, version, path, meta, { head = false, status = 
 const safeContentType = (t) => (typeof t === "string" && t.length <= 200 && /^[\x20-\x7e]+$/.test(t) ? t : "application/octet-stream");
 
 /** The ASSETS binding handed to each site: serves only that version's files. */
-export class SiteAssets extends WorkerEntrypoint {
+export class SiteAssets extends WorkerEntrypoint<Env> {
 	async fetch(request) {
 		let path;
 		try {
@@ -527,7 +546,7 @@ const badAssetPath = (path) => path.split("/").includes("..") || path.includes("
 /** The OBJECTS binding handed to each site: `call(className, name, method, ...args)`
  *  runs an RPC method on that site's object. Arguments and results must be
  *  structured-cloneable (plain data). */
-export class SiteObjects extends WorkerEntrypoint {
+export class SiteObjects extends WorkerEntrypoint<Env> {
 	async call(className, name, method, ...args) {
 		const { site } = this.ctx.props;
 		const ident = /^[A-Za-z_$][\w$]*$/;
@@ -583,7 +602,7 @@ function internalHost(host, adminHost) {
 /** The outbound network handed to a site with an allowlist. fetch() reaches
  *  only the hosts on it, over HTTPS on 443; everything else gets a 403 the site
  *  can read. */
-export class SiteEgress extends WorkerEntrypoint {
+export class SiteEgress extends WorkerEntrypoint<Env> {
 	async fetch(request) {
 		const { site, allow } = this.ctx.props;
 		const deny = (why) => new Response(`egress blocked: ${why}\n`, { status: 403 });
@@ -627,7 +646,11 @@ async function claimObject(env, site, key) {
 }
 
 /** One per (site, class, name): runs the site's class as a facet. */
-export class SiteObject extends DurableObject {
+export class SiteObject extends DurableObject<Env> {
+	version?: string;
+	tag?: string;
+	state?: any;
+
 	/** Atomically claim a slot in `site`'s object quota. The instance is keyed
 	 *  `~quota~|site` (site ids are hostnames, so no site object can collide with
 	 *  it), and its SQLite database is the counter. On first use it seeds from the
@@ -731,8 +754,8 @@ async function bearerMatches(request, expectedHex) {
 	const auth = request.headers.get("authorization") ?? "";
 	if (!expectedHex || !/^[a-f0-9]{64}$/.test(expectedHex) || !auth.startsWith("Bearer ")) return false;
 	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(auth.slice(7))));
-	const expected = Uint8Array.from(expectedHex.match(/../g), (h) => parseInt(h, 16));
-	return crypto.subtle.timingSafeEqual(digest, expected);
+	const expected = Uint8Array.from(expectedHex.match(/../g) ?? [], (h) => parseInt(String(h), 16));
+	return (crypto.subtle as any).timingSafeEqual(digest, expected);
 }
 
 /** Reject a body before reading it if it is larger than `max` bytes. */
@@ -1168,7 +1191,7 @@ async function prune(env, url) {
 		if (kept.has(version)) {
 			remaining.add(version);
 			const code = await env.CODE.get(k.name, "json");
-			if (code?.files) for (const [hash] of Object.values(code.files)) used.add(hash);
+			if (code?.files) for (const [hash] of Object.values(code.files) as [string, any][]) used.add(hash);
 			else oldFormat.add(version);
 			continue;
 		}
@@ -1420,7 +1443,7 @@ async function liveSite(env, url) {
 }
 
 /** Runs one data operation on one of `site`'s objects (see attachData). */
-async function objectData(env, site, version, key, className, op, arg) {
+async function objectData(env: any, site: string, version: string, key: string, className: string, op: string, arg?: any): Promise<any> {
 	const { allow, tag } = await egressFor(env, site);
 	const call = env.SITE_OBJECTS.getByName(key).handle(site, version, tag, allow, className, "__celldData", [op, arg]);
 	return withTimeout(call, objectTimeoutMs(env), `${className} ${op}`);
@@ -1453,7 +1476,7 @@ async function dumpSite(env, ctx, url) {
 			await line({ type: "celld-dump", format: 1, site, version, at: new Date().toISOString(), objects: keys.length });
 			for (const key of keys) {
 				const { className, name } = splitKey(site, key);
-				const data = (op, arg) => objectData(env, site, version, key, className, op, arg);
+				const data = (op: string, arg?: any) => objectData(env, site, version, key, className, op, arg);
 				const schema = await data("schema");
 				await line({ type: "object", class: className, name });
 				for (const t of schema.tables) {
@@ -1534,7 +1557,7 @@ async function restoreSite(request, env, url) {
 	let changed = false;
 	let current = null; // { key, className, tables: Map, finished }
 	let ended = null;
-	const data = (op, arg) => objectData(env, site, version, current.key, current.className, op, arg);
+	const data = (op: string, arg?: any) => objectData(env, site, version, current.key, current.className, op, arg);
 	try {
 		let first = true;
 		for await (const line of jsonLines(request)) {
@@ -1828,8 +1851,8 @@ const proxyPrefix = (env) => (/^[a-z0-9][a-z0-9.-]*$/.test(env.PROXY_SITE_PREFIX
 async function tokenMatches(token, expectedHex) {
 	if (token === null || !expectedHex || !/^[a-f0-9]{64}$/.test(expectedHex)) return false;
 	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
-	const expected = Uint8Array.from(expectedHex.match(/../g), (h) => parseInt(h, 16));
-	return crypto.subtle.timingSafeEqual(digest, expected);
+	const expected = Uint8Array.from(expectedHex.match(/../g) ?? [], (h) => parseInt(String(h), 16));
+	return (crypto.subtle as any).timingSafeEqual(digest, expected);
 }
 
 /** Answer a request with one version of a site: static files first, then its worker. */
