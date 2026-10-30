@@ -5,12 +5,12 @@
 	"type": "module",
 	"description": "The Hamstr app format: hamstr.json manifests, packed bundles and .hamstr app files, validated the same way by the store, the CLI and Hamstr",
 	"exports": {
-		"./manifest.mjs": "./manifest.mjs",
-		"./bundle.mjs": "./bundle.mjs",
-		"./appfile.mjs": "./appfile.mjs"
+		"./manifest.ts": "./manifest.ts",
+		"./bundle.ts": "./bundle.ts",
+		"./appfile.ts": "./appfile.ts"
 	},
 	"engines": {
-		"node": ">=22.5"
+		"node": ">=22.18"
 	},
 	"dependencies": {
 		"tar-stream": "^3.2.2"

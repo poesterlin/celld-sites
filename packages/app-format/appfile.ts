@@ -12,8 +12,8 @@ import { createHash } from "node:crypto";
 import { createReadStream, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { extract, pack } from "tar-stream";
-import { BUNDLE_LIMITS, BundleError, readBundle } from "./bundle.mjs";
-import { ManifestError, parseManifest } from "./manifest.mjs";
+import { BUNDLE_LIMITS, BundleError, readBundle } from "./bundle.ts";
+import { ManifestError, parseManifest } from "./manifest.ts";
 
 export const APP_FILE_EXTENSION = ".hamstr";
 const MANIFEST_MAX = 64 * 1024;
@@ -27,13 +27,13 @@ const fail = (message) => {
 };
 
 /** The bytes of an app file for a manifest (object) and a bundle (tar.gz Buffer). */
-export async function writeAppFile(manifest, bundle) {
+export async function writeAppFile(manifest: Record<string, unknown>, bundle: Buffer): Promise<Buffer> {
 	const json = Buffer.from(`${JSON.stringify(manifest, null, "\t")}\n`);
 	const packer = pack();
-	const chunks = [];
-	packer.on("data", (chunk) => chunks.push(chunk));
-	const ended = new Promise((resolvePromise, rejectPromise) => {
-		packer.on("end", resolvePromise);
+	const chunks: Buffer[] = [];
+	packer.on("data", (chunk: Buffer) => chunks.push(chunk));
+	const ended = new Promise<void>((resolvePromise, rejectPromise) => {
+		packer.on("end", () => resolvePromise());
 		packer.on("error", rejectPromise);
 	});
 	packer.entry({ name: "hamstr.json", size: json.length, mode: 0o644, mtime: new Date(0) }, json);
@@ -48,17 +48,17 @@ export async function writeAppFile(manifest, bundle) {
  * Resolves { manifest, bundlePath, bundleSha256, bundleSize }; throws
  * AppFileError (bad container), ManifestError or BundleError.
  */
-export async function readAppFile(file, dir) {
+export async function readAppFile(file: string, dir: string) {
 	const size = statSync(file).size;
 	if (size > APP_FILE_MAX) fail(`an app file can be at most ${Math.floor(APP_FILE_MAX / 1024 / 1024)} MiB`);
 
 	const bundlePath = join(dir, "bundle.tgz");
-	let manifestText = null;
-	let bundleSha256 = null;
+	let manifestText: string | null = null;
+	let bundleSha256: string | null = null;
 	let bundleSize = 0;
-	const seen = [];
+	const seen: string[] = [];
 
-	await new Promise((resolvePromise, rejectPromise) => {
+	await new Promise<void>((resolvePromise, rejectPromise) => {
 		const ex = extract();
 		ex.on("entry", (header, stream, next) => {
 			const name = header.name.replace(/^\.\//, "");
@@ -73,9 +73,9 @@ export async function readAppFile(file, dir) {
 				stream.resume();
 				return rejectPromise(new AppFileError(`${name} is too large`));
 			}
-			const chunks = [];
+			const chunks: Buffer[] = [];
 			const hash = createHash("sha256");
-			stream.on("data", (chunk) => {
+			stream.on("data", (chunk: Buffer) => {
 				chunks.push(chunk);
 				hash.update(chunk);
 			});
@@ -91,7 +91,7 @@ export async function readAppFile(file, dir) {
 				next();
 			});
 		});
-		ex.on("finish", resolvePromise);
+		ex.on("finish", () => resolvePromise());
 		ex.on("error", (err) => rejectPromise(new AppFileError(`not an app file: ${err.message}`)));
 		const input = createReadStream(file);
 		input.on("error", rejectPromise);
