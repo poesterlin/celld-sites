@@ -1,14 +1,14 @@
 <script>
 	// Ask before an app may reach new hosts on the internet.
-	import Modal from "./Modal.svelte";
-	import TileIcon from "./TileIcon.svelte";
+	import Modal from "@hamstr/ui/components/Modal.svelte";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
 	let { consent, busy = false, onallow, onclose } = $props();
 </script>
 
 <Modal title="{consent.name} wants internet access" sub="v{consent.version}" {onclose}>
 	<div class="card-head gap-bottom">
-		<TileIcon app={consent.app} />
+		<AppIcon app={consent.app} />
 		<p class="dim flush">{consent.app.summary}</p>
 	</div>
 	<div class="callout">

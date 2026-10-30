@@ -1,6 +1,6 @@
 # Hamstr: the shell and grain proxy. It holds the celld ADMIN_TOKEN and the
-# PROXY_TOKEN, so it is LAN-only. Build context is the repo root: Hamstr reuses
-# Cubby's manifest and bundle validation.
+# PROXY_TOKEN, so it is LAN-only. Build context is the repo root: Hamstr uses
+# the shared app format (packages/app-format) and design system (packages/ui).
 #
 # The UI and the JSON API are a SvelteKit app, so the image is built in two
 # stages: compile the app, then ship only the build and the plain-Node modules
@@ -8,14 +8,16 @@
 FROM node:24-bookworm-slim AS build
 
 WORKDIR /src
-# Cubby's bundle validator is compiled into the app, so its dependency
-# (tar-stream) must be resolvable while Vite builds.
-COPY cubby/package.json cubby/package-lock.json ./cubby/
+# The bundle validator is compiled into the app, so its dependency
+# (tar-stream) must be resolvable while Vite builds. packages/ui is a file:
+# dependency of the app, so it has to be in place before npm ci links it.
+COPY packages/app-format/package.json packages/app-format/package-lock.json ./packages/app-format/
+COPY packages/ui ./packages/ui
 COPY hamstr/package.json hamstr/package-lock.json ./hamstr/
-RUN cd cubby && npm ci --no-audit --no-fund
+RUN cd packages/app-format && npm ci --no-audit --no-fund
 RUN cd hamstr && npm ci --no-audit --no-fund
 
-COPY cubby/lib ./cubby/lib
+COPY packages/app-format ./packages/app-format
 COPY hamstr/src ./hamstr/src
 COPY hamstr/static ./hamstr/static
 COPY hamstr/lib ./hamstr/lib

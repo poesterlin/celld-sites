@@ -96,10 +96,11 @@ cannot silently cross tenants:
 
 These are accepted for self-hosted, first-party sites. They matter for a store.
 
-Apps installed from Cubby land on the same node as your own sites, so every item
-below applies to them too. Mitigations in place: the CLI refuses to install over
-a site Cubby did not create (unless `--replace`), refuses a release without a
-published SHA-256, and the shelf warns before a first install. The hash comes
+Apps installed from the Hamstr Store land on the same node as your own sites, so
+every item below applies to them too. Mitigations in place: the CLI refuses to
+install over a site it did not create (unless `--replace`), both the CLI and
+Hamstr refuse a release without a published SHA-256, and Hamstr asks an admin
+before granting an app internet access. The hash comes
 from the same store as the bundle, so it detects corruption, not a malicious
 store. Real separation needs a second node (the `celld-demo` pattern). Router
 quotas cannot close items 1 and 2: Durable Object writes and isolate memory

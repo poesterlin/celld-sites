@@ -16,7 +16,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `sizer`, `cubby` and `cubby-shelf` |
+| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `sizer`, `hamstr` (profile `hamstr`), and `store` + `celld-demo` (profile `store`) |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node, optional bundled sites), `push.sh` and `admin.sh`; `Dockerfile` targets `dev` and `hosting` |
 | `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
 | `router/` | The host-header router Worker and its config template |
@@ -30,7 +30,9 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `tools/restore-drill.sh` | Restore drill: a throwaway node on a copy of a bucket volume, checked against live |
 | `tests/` | API validation suite against a local node: `npm test --prefix tools` |
 | `dashboard/` | Read-only dashboard (Bun, server-rendered, no JavaScript in the page) and the bucket sizer it reads storage sizes from |
-| `cubby/` | Cubby: a catalog/store, a CLI and the local Shelf UI for installing tiny sandboxed applets; the store never runs or builds them ([cubby/README.md](cubby/README.md)) |
+| `store/` | Hamstr Store: the hosted app catalog, its web UI and the `hamstr` CLI; the store never runs or builds apps ([store/README.md](store/README.md)) |
+| `packages/ui/` | Hamstr's design system: styles, icons and Svelte components shared by Hamstr and the Hamstr Store |
+| `packages/app-format/` | The app format (`hamstr.json` manifests, packed bundles), validated the same way by the store, the CLI and Hamstr |
 | `hamstr/` | Hamstr: a Sandstorm-style app shell: grains (one site per document), tsidp sign-in, identity headers for apps, revocable share links ([hamstr/README.md](hamstr/README.md)) |
 | `names/` | Hamstr names: hostnames `<id>.<zone>` with a wildcard and DNS-01 for installs, so a Hamstr install needs no domain or DNS setup ([names/README.md](names/README.md)) |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
@@ -244,33 +246,33 @@ SvelteKit sites should set `version: { name: <git commit> }` (see
 `sites/example/vite.config.ts`): the default is a build timestamp, which makes
 every rebuild a new version even with no changes.
 
-## Cubby app store (prototype)
+## Hamstr Store (prototype)
 
-`cubby/` is a small, self-hostable catalog for the "little tools" that are too
-small for Docker: publishers upload a packed celld bundle, users run
-`cubby install <app> --host <their-host>` and the app runs in their own node
-with its data in local SQLite. The store holds metadata and bytes only; it has
+`store/` is the hosted catalog for the "little tools" that are too small for
+Docker: publishers upload a packed celld bundle with `hamstr publish`; people
+press **Get** in their own Hamstr (developers can run `hamstr install <app>
+--host <their-host>`), and the app runs on their node with its data in local
+SQLite. The store is not part of a personal Hamstr: one store serves many
+Hamstrs, which point `HAMSTR_STORE` at it. The store holds metadata and bytes only; it has
 no route to the celld admin API or the bucket and never executes published
 code. Egress is the only permission an app can request, and the installer asks
 before granting it.
 
-The compose file adds the public-facing `cubby` catalog (`CUBBY_HOST`,
-`CUBBY_ADMIN_TOKEN`, `CUBBY_REQUIRE_REVIEW`) and the LAN-only `cubby-shelf`
-install UI (`CUBBY_SHELF_HOST`, `CUBBY_SHELF_PASSWORD`, `CUBBY_SHELF_SECRET`).
-For everyday use, open the shelf, search the store and press Install/Update;
-`cubby install` remains the scriptable fallback. App entries also have **Try it
-live**, which deploys the release to the disposable `celld-demo` node, iframes
-it for `CUBBY_DEMO_TTL_SECS` (default 15 min) and deletes it; that node has its
-own bucket/token, no egress and session limits. Making the catalog public is a
-Cloudflare tunnel entry plus `CUBBY_REQUIRE_REVIEW=1`; never expose the shelf,
-and public demos additionally need wildcard `demo-*` DNS/tunnel.
-See [cubby/README.md](cubby/README.md) for the architecture, threat model, API
-and deployment checklist.
+This compose file runs the store for the host that operates it, behind the
+`store` profile (`STORE_HOST`, `STORE_ADMIN_TOKEN`, `STORE_REQUIRE_REVIEW`).
+App entries also have **Try it**, which deploys the release to the disposable
+`celld-demo` node, iframes it for `STORE_DEMO_TTL_SECS` (default 15 min) and
+deletes it; that node has its own bucket/token, no egress and session limits.
+Making the catalog public is a Cloudflare tunnel entry plus
+`STORE_REQUIRE_REVIEW=1`; public demos additionally need wildcard `demo-*`
+DNS/tunnel. The store's UI and Hamstr's look the same: both are built from
+`packages/ui`. See [store/README.md](store/README.md) for the architecture,
+threat model, API and deployment checklist.
 
 ## Hamstr
 
 `hamstr/` turns the node into a small Sandstorm: people sign in with tsidp,
-install apps from the Cubby store, and make **grains** (a board, a list, a
+install apps from the Hamstr Store, and make **grains** (a board, a list, a
 draw), each its own site at `grain-<id>.<domain>` with its own data. Hamstr
 proxies every grain request, so apps get the visitor's identity and
 permissions as `X-Hamstr-*` headers and never implement login; owners share
@@ -534,5 +536,4 @@ migration at some point; sites are standard `adapter-cloudflare` builds.
 
 ## License
 
-[MIT](LICENSE). The bundled fonts in `cubby/public/fonts` keep their own
-license (SIL OFL 1.1, see `cubby/public/fonts/LICENSE.txt`).
+[MIT](LICENSE).

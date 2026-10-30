@@ -1,0 +1,49 @@
+/* Hamstr shell: what only the personal platform has, on top of the shared
+   design system (packages/ui/style.css, served as /ui.css): home-screen
+   tiles and their menus. */
+
+/* --- grains: home-screen icons with a label underneath --- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 10px 6px; }
+.tile {
+	position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
+	padding: 14px 8px 12px; border-radius: var(--radius); text-align: center;
+	text-decoration: none; color: var(--ink); transition: background 0.15s;
+}
+.tile:hover { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+.tile .tile-icon { width: 72px; height: 72px; border-radius: 20px; font-size: 2.1rem; margin-bottom: 8px; transition: transform 0.18s ease; }
+.tile:hover .tile-icon { transform: translateY(-2px) scale(1.03); }
+.tile:active .tile-icon { transform: scale(0.95); }
+.tile[aria-busy="true"] .tile-icon { opacity: 0.6; }
+.tile.new:disabled { opacity: 0.6; cursor: progress; }
+.tile-title { font-weight: 560; font-size: 0.9rem; line-height: 1.25; max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tile-meta { color: var(--dim); font-size: 0.75rem; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-badge {
+	position: absolute; top: 8px; left: calc(50% + 24px); width: 24px; height: 24px; display: grid; place-items: center;
+	border-radius: 50%; background: var(--surface); color: var(--accent); box-shadow: var(--shadow);
+}
+.tile-badge svg { width: 14px; height: 14px; }
+.tile.new { background: transparent; border: 0; cursor: pointer; font: inherit; color: var(--dim); }
+.tile.new .plus {
+	width: 72px; height: 72px; border-radius: 20px; margin-bottom: 8px; display: grid; place-items: center;
+	border: 1.5px dashed color-mix(in srgb, var(--dim) 45%, transparent); font-size: 1.9rem; font-weight: 300; line-height: 1;
+	transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.tile.new span:last-child { font-size: 0.9rem; font-weight: 540; }
+.tile.new:hover { color: var(--accent); background: transparent; }
+.tile.new:hover .plus { border-color: var(--accent); background: var(--accent-soft); }
+
+.tile-icon.ghosted { opacity: 0.35; filter: grayscale(0.4); margin: 0 auto 16px; }
+.tile-wrap { position: relative; }
+.tile-wrap > .tile { height: 100%; }
+.tile-more { position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity 0.12s; }
+.tile-more .icon-button { width: 28px; height: 28px; background: var(--surface); box-shadow: var(--shadow); }
+.tile-wrap:hover .tile-more, .tile-more.open, .tile-more:focus-within { opacity: 1; }
+@media (hover: none) { .tile-more { opacity: 1; } }
+.tile.trashed .tile-icon { filter: grayscale(0.7); opacity: 0.7; }
+
+@media (max-width: 640px) {
+	.tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px 2px; }
+	.tile .tile-icon, .tile.new .plus { width: 62px; height: 62px; border-radius: 17px; font-size: 1.8rem; }
+	.tile-badge { left: calc(50% + 18px); }
+	.grain-title { width: 40vw; }
+}

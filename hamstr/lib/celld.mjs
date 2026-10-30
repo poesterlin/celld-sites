@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
-import { readBundle } from "../../cubby/lib/bundle.mjs";
+import { readBundle } from "../../packages/app-format/bundle.mjs";
 
 export class CelldError extends Error {
 	constructor(status, message) {
@@ -111,13 +111,15 @@ export function createCelld({ api, adminHost, adminToken, tmpDir, timeoutMs = 12
 
 /** Download a release bundle from the store into `dir` and check its hash. */
 export async function downloadBundle(store, slug, version, expectedSha, dir) {
+	// Without a published hash there is nothing to check the download against.
+	if (!expectedSha) throw new CelldError(502, "the store published no SHA-256 for this release");
 	const res = await fetch(`${store}/api/v1/apps/${encodeURIComponent(slug)}/releases/${encodeURIComponent(version)}/download`, {
 		signal: AbortSignal.timeout(120_000),
 	});
 	if (!res.ok) throw new CelldError(502, `the store refused the download (${res.status})`);
 	const bytes = Buffer.from(await res.arrayBuffer());
 	const sha = createHash("sha256").update(bytes).digest("hex");
-	if (expectedSha && sha !== expectedSha) throw new CelldError(502, "the downloaded bundle does not match the catalog's SHA-256");
+	if (sha !== expectedSha) throw new CelldError(502, "the downloaded bundle does not match the catalog's SHA-256");
 	const file = join(dir, `${slug}-${randomBytes(6).toString("hex")}.tgz`);
 	writeFileSync(file, bytes, { mode: 0o600 });
 	return { file, sha };

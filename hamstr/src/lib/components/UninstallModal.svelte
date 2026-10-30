@@ -6,9 +6,9 @@
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
 	import { oops, toast, uninstallState } from "#lib/client/ui.svelte.js";
-	import { plural } from "#lib/format.js";
-	import Modal from "./Modal.svelte";
-	import TileIcon from "./TileIcon.svelte";
+	import { plural } from "@hamstr/ui/format.js";
+	import Modal from "@hamstr/ui/components/Modal.svelte";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
 	let usage = $state(null);
 	let confirmed = $state(false);
@@ -58,7 +58,7 @@
 {#if app}
 	<Modal title="Uninstall {app.name}?" onclose={close}>
 		<div class="card-head gap-bottom">
-			<TileIcon {app} />
+			<AppIcon {app} />
 			<p class="dim flush">It disappears from everyone's Home on this Hamstr. You can get it again from the Store.</p>
 		</div>
 		{#if !usage}

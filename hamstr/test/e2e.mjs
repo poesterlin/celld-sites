@@ -1,5 +1,5 @@
 // End to end against a throwaway local celld dev node (the repo's router under
-// `celld dev`), a real Cubby store, the real `cubby publish`, and a mock IdP.
+// `celld dev`), a real Hamstr Store, the real `hamstr publish`, and a mock IdP.
 //
 //   node hamstr/test/e2e.mjs      (needs celld on PATH and tools' npm deps)
 //
@@ -12,7 +12,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Node } from "../../tests/harness.mjs";
-import { createStore } from "../../cubby/server.mjs";
+import { createStore } from "../../store/server.mjs";
 import { createHamstr } from "../server.mjs";
 import { Browser, mockIdp } from "./helpers.mjs";
 
@@ -34,12 +34,12 @@ try {
 		body: JSON.stringify({ name: "e2e", password: "correct horse battery" }),
 	});
 	const { token } = await reg.json();
-	const config = join(dir, "cubby.json");
+	const config = join(dir, "cli-config.json");
 	writeFileSync(config, `${JSON.stringify({ store: storeBase, token, publisher: "e2e" })}\n`, { mode: 0o600 });
 	chmodSync(config, 0o600);
 	await new Promise((resolvePromise, rejectPromise) => {
-		const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "cubby", "cli", "cubby.mjs"), "publish", join(import.meta.dirname, "..", "..", "cubby", "examples", "pinboard")], {
-			env: { ...process.env, CUBBY_CONFIG: config, CUBBY_STORE: storeBase },
+		const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "store", "cli", "hamstr.mjs"), "publish", join(import.meta.dirname, "..", "..", "store", "examples", "pinboard")], {
+			env: { ...process.env, HAMSTR_CLI_CONFIG: config, HAMSTR_STORE: storeBase },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let out = "";
@@ -47,7 +47,7 @@ try {
 		child.stderr.on("data", (c) => (out += c));
 		child.on("close", (code) => (code === 0 ? resolvePromise() : rejectPromise(new Error(`publish failed:\n${out}`))));
 	});
-	console.log("published pinboard through the cubby CLI");
+	console.log("published pinboard through the hamstr CLI");
 
 	await node.start();
 	hamstr = createHamstr({

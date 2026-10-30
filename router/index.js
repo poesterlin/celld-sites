@@ -1222,7 +1222,7 @@ async function putEgress(request, env, url) {
 	if (!hostOk(env, host)) return fail(400, "bad host");
 	const refusal = await aliasRefusal(env, host);
 	if (refusal) return refusal;
-	// Allowed before the site exists: the Cubby installer grants the declared
+	// Allowed before the site exists: the store installer grants the declared
 	// hosts first, so the deploy check runs with the permissions the app needs.
 	const site = await siteFor(env, host);
 	let list;

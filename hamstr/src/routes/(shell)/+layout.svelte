@@ -1,8 +1,9 @@
 <script>
 	import { page } from "$app/state";
-	import { initials } from "#lib/format.js";
-	import Toaster from "#lib/components/Toaster.svelte";
-	import ContextMenu from "#lib/components/ContextMenu.svelte";
+	import { initials } from "@hamstr/ui/format.js";
+	import Toaster from "@hamstr/ui/components/Toaster.svelte";
+	import TopBar from "@hamstr/ui/components/TopBar.svelte";
+	import ContextMenu from "@hamstr/ui/components/ContextMenu.svelte";
 	import UninstallModal from "#lib/components/UninstallModal.svelte";
 
 	let { data, children } = $props();
@@ -14,7 +15,6 @@
 	const tab = $derived({ "": "home", a: "home" }[path.split("/")[1]] ?? path.split("/")[1]);
 
 	let menuOpen = $state(false);
-	let scrolled = $state(false);
 
 	$effect(() => {
 		document.body.className = grainMode ? "grain-mode" : "";
@@ -28,41 +28,40 @@
 
 <svelte:window
 	onclick={onWindowClick}
-	onscroll={() => (scrolled = window.scrollY > 4)}
 	onkeydown={(event) => event.key === "Escape" && (menuOpen = false)}
 />
 
 {#if me}
 	{#if !grainMode}
-		<header class="bar" class:scrolled>
-			<a class="brand" href="/">
-				<img src="/favicon.svg" width="30" height="30" alt="" />
-				<span>{data.name}</span>
-			</a>
-			<nav class="nav" aria-label="Main">
-				<a href="/" aria-current={tab === "home" ? "page" : undefined}>Home</a>
-				<a href="/store" aria-current={tab === "store" ? "page" : undefined}>Store</a>
-				<a href="/trash" aria-current={tab === "trash" ? "page" : undefined}>Trash</a>
-			</nav>
-			<div class="me">
-				<button
-					type="button"
-					class="avatar"
-					aria-haspopup="menu"
-					aria-expanded={menuOpen}
-					aria-label="Account: {me.name}"
-					onclick={() => (menuOpen = !menuOpen)}>{initials(me.name)}</button
-				>
-				{#if menuOpen}
-					<div class="menu" role="menu">
-						<div class="menu-head"><strong>{me.name}</strong><span class="dim small">{me.email ?? ""}</span></div>
-						<form method="post" action="/auth/logout">
-							<button type="submit" class="menu-item" role="menuitem">Sign out</button>
-						</form>
-					</div>
-				{/if}
-			</div>
-		</header>
+		<TopBar
+			name={data.name}
+			links={[
+				{ href: "/", label: "Home", current: tab === "home" },
+				{ href: "/store", label: "Store", current: tab === "store" },
+				{ href: "/trash", label: "Trash", current: tab === "trash" },
+			]}
+		>
+			{#snippet end()}
+				<div class="me">
+					<button
+						type="button"
+						class="avatar"
+						aria-haspopup="menu"
+						aria-expanded={menuOpen}
+						aria-label="Account: {me.name}"
+						onclick={() => (menuOpen = !menuOpen)}>{initials(me.name)}</button
+					>
+					{#if menuOpen}
+						<div class="menu" role="menu">
+							<div class="menu-head"><strong>{me.name}</strong><span class="dim small">{me.email ?? ""}</span></div>
+							<form method="post" action="/auth/logout">
+								<button type="submit" class="menu-item" role="menuitem">Sign out</button>
+							</form>
+						</div>
+					{/if}
+				</div>
+			{/snippet}
+		</TopBar>
 	{/if}
 
 	<main aria-live="polite">{@render children()}</main>

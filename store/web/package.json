@@ -1,0 +1,26 @@
+{
+	"name": "hamstr-store-web",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "The Hamstr Store's web UI: a SvelteKit single-page app on the shared Hamstr design system, served by ../server.mjs",
+	"scripts": {
+		"sync-ui": "node ../../packages/ui/sync.mjs static",
+		"predev": "npm run sync-ui",
+		"dev": "vite dev",
+		"prebuild": "npm run sync-ui",
+		"build": "vite build",
+		"prepare": "svelte-kit sync || echo ''"
+	},
+	"imports": {
+		"#lib/*": "./src/lib/*"
+	},
+	"devDependencies": {
+		"@hamstr/ui": "file:../../packages/ui",
+		"@sveltejs/adapter-static": "^4.0.0",
+		"@sveltejs/kit": "^3.1.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"svelte": "^5.57.1",
+		"vite": "^8.3.0"
+	}
+}

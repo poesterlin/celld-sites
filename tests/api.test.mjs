@@ -330,7 +330,7 @@ describe("egress allowlist", () => {
 		}
 		assert.equal((await allow("example.com")).status, 400); // not an array
 		assert.equal((await node.admin("PUT", `/egress?host=${W}`, { body: JSON.stringify(Array.from({ length: 21 }, (_, i) => `h${i}.example.com`)) })).status, 400);
-		// Egress may be set before the site exists: the Cubby installer grants the
+		// Egress may be set before the site exists: the store installer grants the
 		// declared hosts first, so the deploy check runs with the intended list.
 		assert.equal((await node.admin("PUT", "/egress?host=new.test", { body: '["example.com"]' })).status, 200);
 		assert.deepEqual((await node.admin("GET", "/egress?host=new.test")).json().allow, ["example.com"]);

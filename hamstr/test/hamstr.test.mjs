@@ -1,12 +1,12 @@
-// Hamstr against a mock IdP, a mock celld node and a real Cubby store.
+// Hamstr against a mock IdP, a mock celld node and a real Hamstr Store.
 // Run: npm test --prefix hamstr
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { createStore } from "../../cubby/server.mjs";
-import { bundle, call, manifest } from "../../cubby/test/helpers.mjs";
+import { createStore } from "../../store/server.mjs";
+import { bundle, call, manifest } from "../../store/test/helpers.mjs";
 import { createHamstr, siteOf } from "../server.mjs";
 import { Browser, mockCelld, mockIdp } from "./helpers.mjs";
 
@@ -126,10 +126,14 @@ describe("hosts and robustness", () => {
 		// adapter-node answers these itself (it returns nothing), while pages go
 		// through SvelteKit (it returns a promise). Both must stay in the context.
 		const b = new Browser(port);
-		const css = await b.request("GET", "/style.css", { host: SHELL });
+		// The shared design system (copied from packages/ui) and the shell's own styles.
+		const ui = await b.request("GET", "/ui.css", { host: SHELL });
+		assert.equal(ui.status, 200);
+		assert.match(ui.headers["content-type"], /text\/css/);
+		assert.match(ui.text, /\.grain-frame/);
+		const css = await b.request("GET", "/shell.css", { host: SHELL });
 		assert.equal(css.status, 200);
-		assert.match(css.headers["content-type"], /text\/css/);
-		assert.match(css.text, /\.grain-frame/);
+		assert.match(css.text, /\.tiles/);
 		assert.equal((await b.request("GET", "/favicon.svg", { host: SHELL })).status, 200);
 		const page = await b.request("GET", "/", { host: SHELL });
 		const asset = /\/_app\/immutable\/[^"' ]+\.js/.exec(page.text);

@@ -14,6 +14,8 @@ const appVersion = (() => {
 })();
 
 export default defineConfig({
+	// The design system (packages/ui) and the app format live outside this app.
+	server: { fs: { allow: [".."] } },
 	plugins: [
 		sveltekit({
 			compilerOptions: {

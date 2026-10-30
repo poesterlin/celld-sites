@@ -3,9 +3,9 @@
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
 	import { oops, toast } from "#lib/client/ui.svelte.js";
-	import { timeAgo } from "#lib/format.js";
-	import TileIcon from "#lib/components/TileIcon.svelte";
-	import Modal from "#lib/components/Modal.svelte";
+	import { timeAgo } from "@hamstr/ui/format.js";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
+	import Modal from "@hamstr/ui/components/Modal.svelte";
 
 	let { data } = $props();
 
@@ -50,7 +50,7 @@
 			<div class="rows">
 				{#each data.trash as grain (grain.id)}
 					<div class="row" data-id={grain.id}>
-						<TileIcon app={grain.app} />
+						<AppIcon app={grain.app} />
 						<div class="grow">
 							<strong>{grain.title}</strong>
 							<div class="dim small">{grain.app.name} · trashed {timeAgo(grain.trashedAt)}</div>

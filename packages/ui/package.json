@@ -1,0 +1,16 @@
+{
+	"name": "@hamstr/ui",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Hamstr's design system: styles, icons, helpers and Svelte components shared by the Hamstr shell and the Hamstr Store",
+	"exports": {
+		"./*": "./*"
+	},
+	"bin": {
+		"hamstr-ui-sync": "./sync.mjs"
+	},
+	"peerDependencies": {
+		"svelte": "^5.0.0"
+	}
+}

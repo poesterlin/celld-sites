@@ -11,12 +11,16 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"test": "npm run build && node --test test/*.test.mjs",
 		"e2e": "npm run build && node test/e2e.mjs",
-		"playground": "npm run build && node test/dev.mjs"
+		"playground": "npm run build && node test/dev.mjs",
+		"sync-ui": "node ../packages/ui/sync.mjs static",
+		"predev": "npm run sync-ui",
+		"prebuild": "npm run sync-ui"
 	},
 	"imports": {
 		"#lib/*": "./src/lib/*"
 	},
 	"devDependencies": {
+		"@hamstr/ui": "file:../packages/ui",
 		"@sveltejs/adapter-node": "^6.0.0",
 		"@sveltejs/kit": "^3.1.0",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",

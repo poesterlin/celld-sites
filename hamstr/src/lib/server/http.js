@@ -68,7 +68,7 @@ export const LOGO = `<img src="/favicon.svg" width="64" height="64" alt="">`;
 /** A plain centred card, as the server renders for sign-in errors and links. */
 export function page(title, body, name = "Hamstr") {
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · ${name}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head>
+<title>${esc(title)} · ${name}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/ui.css"></head>
 <body class="plain"><main class="center-card">${body}</main></body></html>`;
 }
 

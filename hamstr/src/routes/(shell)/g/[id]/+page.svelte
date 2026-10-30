@@ -4,9 +4,9 @@
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
 	import { oops, toast } from "#lib/client/ui.svelte.js";
-	import { ICON } from "#lib/icons.js";
-	import TileIcon from "#lib/components/TileIcon.svelte";
-	import MoreMenu from "#lib/components/MoreMenu.svelte";
+	import { ICON } from "@hamstr/ui/icons.js";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
+	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
 	import { downloadGrain } from "#lib/client/download.js";
 
 	let { data } = $props();
@@ -110,7 +110,7 @@
 			<div class="grain-bar">
 				<a class="icon-button" href={back} aria-label="Back" title="Back">{@html ICON.back}</a>
 				<a class="crumb-app" href={app ? `/a/${app.slug}` : back} title={app ? `All of ${app.name}` : "Back"}>
-					<TileIcon app={grain.app} />
+					<AppIcon app={grain.app} />
 					<span class="hide-sm">{grain.app.name}</span>
 				</a>
 				<span class="crumb-sep hide-sm">{@html ICON.chevron}</span>

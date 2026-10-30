@@ -1,13 +1,13 @@
-// Hamstr's core: configuration, the SQLite store, the access model, the Cubby
-// store client, tickets and grain sessions. The SvelteKit routes and hooks are
+// Hamstr's core: configuration, the SQLite store, the access model, the Hamstr
+// Store client, tickets and grain sessions. The SvelteKit routes and hooks are
 // thin layers over this module; it has no SvelteKit imports, so the test
 // harness (and any plain Node script) can drive it directly.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { BundleError } from "../../../../cubby/lib/bundle.mjs";
-import { ManifestError, validateManifest } from "../../../../cubby/lib/manifest.mjs";
+import { BundleError } from "../../../../packages/app-format/bundle.mjs";
+import { ManifestError, validateManifest } from "../../../../packages/app-format/manifest.mjs";
 import { CelldError, createCelld, downloadBundle } from "../../../lib/celld.mjs";
 import { createOidc } from "../../../lib/oidc.mjs";
 import { safePath } from "../../../lib/path.mjs";
@@ -74,7 +74,7 @@ export function createCore(options = {}) {
 		grainPrefix: options.grainPrefix ?? env.HAMSTR_GRAIN_PREFIX ?? "grain-",
 		scheme: options.scheme ?? env.HAMSTR_SCHEME ?? "https",
 		publicPort: String(options.publicPort ?? env.HAMSTR_PUBLIC_PORT ?? ""),
-		store: strip(options.store ?? env.HAMSTR_STORE ?? "http://cubby:3000"),
+		store: strip(options.store ?? env.HAMSTR_STORE ?? "http://store:3000"),
 		storePublic: strip(options.storePublic ?? env.HAMSTR_STORE_PUBLIC ?? env.HAMSTR_STORE ?? ""),
 		celldApi: strip(options.celldApi ?? env.CELLD_ADMIN_API ?? "http://admin.internal:8080"),
 		adminHost: options.adminHost ?? env.ADMIN_HOST ?? "admin.internal",

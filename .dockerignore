@@ -13,3 +13,4 @@ dashboard
 docs
 sites/*
 !sites/example/
+**/build

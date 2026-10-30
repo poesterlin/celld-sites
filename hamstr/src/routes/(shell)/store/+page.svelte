@@ -3,9 +3,9 @@
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
-	import { askUninstall, contextMenu, oops } from "#lib/client/ui.svelte.js";
+	import { askUninstall, oops } from "#lib/client/ui.svelte.js";
 	import { appMenu, openApp } from "#lib/client/actions.js";
-	import TileIcon from "#lib/components/TileIcon.svelte";
+	import AppCard from "@hamstr/ui/components/AppCard.svelte";
 	import ConsentModal from "#lib/components/ConsentModal.svelte";
 	import { install as installApp, latestRelease, newHosts } from "#lib/client/install.js";
 
@@ -113,16 +113,13 @@
 		<div class="cards">
 			{#each cards as app (app.slug)}
 				{@const mine = installed.get(app.slug)}
-				<div class="card linked" data-slug={app.slug} use:contextMenu={() => cardMenu(app)}>
-					<a class="card-head card-link" href="/store/{app.slug}">
-						<TileIcon {app} />
-						<div>
-							<h3>{app.name}</h3>
-							<span class="dim small">{app.publisher ?? ""}{app.publisher && app.version ? " · " : ""}{app.version ? `v${mine?.version ?? app.version}` : ""}</span>
-						</div>
-					</a>
-					<p class="dim small">{app.summary}</p>
-					<div class="card-actions">
+				<AppCard
+					{app}
+					href="/store/{app.slug}"
+					meta="{app.publisher ?? ""}{app.publisher && app.version ? " · " : ""}{app.version ? `v${mine?.version ?? app.version}` : ""}"
+					menu={() => cardMenu(app)}
+				>
+					{#snippet actions()}
 						{#if mine}
 							<button type="button" class="button small" onclick={() => openApp(mine)}>Open</button>
 							{#if updates[app.slug]}
@@ -139,8 +136,8 @@
 							</button>
 						{/if}
 						<a class="button quiet small push" href="/store/{app.slug}">Details</a>
-					</div>
-				</div>
+					{/snippet}
+				</AppCard>
 			{:else}
 				{#if !market.error}<p class="dim">No apps match.</p>{/if}
 			{/each}

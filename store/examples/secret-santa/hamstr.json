@@ -1,0 +1,12 @@
+{
+	"slug": "secret-santa",
+	"name": "Secret Santa",
+	"summary": "Draw names for a gift exchange without an account.",
+	"description": "Add the people in your group, draw once, and get a private list of who buys for whom. Names and pairs live in this app's own SQLite database on your celld node. Nothing leaves the machine.\n\nA tiny demo app for the Hamstr Store; it shows the whole lifecycle: a worker, a Durable Object, no static build step and no network permission.",
+	"version": "1.1.0",
+	"export": "/export",
+	"license": "MIT",
+	"icon": "🎁",
+	"tags": ["family", "fun", "demo"],
+	"egress": []
+}

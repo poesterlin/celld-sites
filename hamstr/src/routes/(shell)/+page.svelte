@@ -5,9 +5,9 @@
 	import { api } from "#lib/client/api.js";
 	import { contextMenu, oops } from "#lib/client/ui.svelte.js";
 	import { appMenu, grainMenu } from "#lib/client/actions.js";
-	import { greeting, today } from "#lib/format.js";
+	import { greeting, today } from "@hamstr/ui/format.js";
 	import GrainTile from "#lib/components/GrainTile.svelte";
-	import TileIcon from "#lib/components/TileIcon.svelte";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
 	let { data } = $props();
 
@@ -62,7 +62,7 @@
 					onclick={app.instances === "single" ? (event) => openSingle(event, app) : undefined}
 					use:contextMenu={() => appMenu(app, { admin: data.admin })}
 				>
-					<TileIcon {app} />
+					<AppIcon {app} />
 					<span class="tile-title">{app.name}</span>
 					<span class="tile-meta">{metaFor(app)}</span>
 					{#if opening === app.slug}<span class="tile-badge"><span class="spinner"></span></span>{/if}

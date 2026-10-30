@@ -5,8 +5,8 @@
 Hamstr is a personal app platform in the spirit of [Sandstorm](https://sandstorm.io),
 built on a celld-sites node. A hamster hoards *grains*; so does Hamstr.
 
-- **Apps** come from the [Cubby](../cubby/README.md) store. Developers publish
-  with the `cubby` CLI; everyone else only uses the web UI. *Home* is a
+- **Apps** come from the [Hamstr Store](../store/README.md). Developers publish
+  with the `hamstr` CLI; everyone else only uses the web UI. *Home* is a
   launcher: every installed app is an icon there. An admin's *Get* in the store
   puts an app on everyone's Home at once; only an app that wants internet
   access asks first.
@@ -44,7 +44,7 @@ re-checks access: signing out or trashing the grain
 takes effect on the next request.
 
 Installing an app downloads the release from the store, verifies its SHA-256
-and contents (Cubby's bundle validator), uploads the code to celld once, and
+and contents (the shared bundle validator in `packages/app-format`), uploads the code to celld once, and
 boots it on a throwaway probe site (the deploy check) before anyone can use it.
 A new grain only stages and activates that version: **~65 ms** on this VM. An
 app update moves every grain to the new version; their data stays and the
@@ -56,18 +56,18 @@ new grain 65 ms, a proxied request ~1.5 ms more than going straight to celld.
 ## For app developers
 
 Write a normal celld site ([docs/SITES.md](../docs/SITES.md)) and publish it
-with `cubby publish`. Inside a grain, read who is visiting from request headers:
+with `hamstr publish`. Inside a grain, read who is visiting from request headers:
 
 | Header | Value |
 | --- | --- |
 | `X-Hamstr-User-Id` | stable 32-hex id of the signed-in owner |
 | `X-Hamstr-Username` | display name, percent-encoded UTF-8 (`decodeURIComponent`) |
-| `X-Hamstr-Permissions` | comma-separated permission ids from your `cubby.json` |
+| `X-Hamstr-Permissions` | comma-separated permission ids from your `hamstr.json` |
 | `X-Hamstr-Role` | always `owner` |
 | `X-Hamstr-Grain-Id` | this grain's id |
 | `X-Hamstr-Session-Id` | random per grain session |
 
-The owner holds every permission the app declares in `cubby.json`
+The owner holds every permission the app declares in `hamstr.json`
 (`"permissions": [{ "id": "pin", "title": "Pin notes" }]`), so an app written
 for several roles still works. `roles` are still accepted in manifests but
 Hamstr ignores them.
@@ -97,12 +97,12 @@ Notes:
 - Don't rely on a `Referer` or on being top-level: grains run in the shell's
   iframe (`frame-ancestors` is the shell only) and also open in their own tab.
 
-See `cubby/examples/pinboard` for a complete app that uses all of this.
+See `store/examples/pinboard` for a complete app that uses all of this.
 
 ## Running it
 
-Hamstr is a compose service behind the `hamstr` profile, LAN-only like the
-shelf (it holds `ADMIN_TOKEN`). Setup:
+Hamstr is a compose service behind the `hamstr` profile, LAN-only (it holds
+`ADMIN_TOKEN`). Setup:
 
 1. Register an OIDC client at the IdP with redirect URI
    `https://<HAMSTR_HOST>/auth/callback` (tsidp: its web UI, or its
@@ -137,8 +137,8 @@ plain-Node modules in `hamstr/lib` hold the platform core, the celld and OIDC
 clients and the proxy, so the tests drive them without a browser.
 
 ```sh
-npm test --prefix hamstr            # 33 tests: mock IdP, mock celld, real Cubby store
-npm run e2e --prefix hamstr         # real celld dev node, real `cubby publish`, Pinboard
+npm test --prefix hamstr            # 33 tests: mock IdP, mock celld, real Hamstr Store
+npm run e2e --prefix hamstr         # real celld dev node, real `hamstr publish`, Pinboard
 npm run playground --prefix hamstr  # http://hamstr.localhost:8795, seeded
 ```
 

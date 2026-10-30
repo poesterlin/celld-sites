@@ -1,4 +1,4 @@
-// Local playground: a celld dev node, a Cubby store with the example apps, a
+// Local playground: a celld dev node, a Hamstr Store with the example apps, a
 // mock IdP that signs you in as Ada (admin), and Hamstr on http://hamstr.localhost:PORT.
 // Browsers resolve *.localhost to 127.0.0.1, so grain hosts work too.
 //
@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Node } from "../../tests/harness.mjs";
-import { createStore } from "../../cubby/server.mjs";
+import { createStore } from "../../store/server.mjs";
 import { createHamstr } from "../server.mjs";
 import { Browser, mockIdp } from "./helpers.mjs";
 
@@ -23,12 +23,12 @@ const storeBase = `http://127.0.0.1:${(await store.listen(0, "127.0.0.1")).port}
 const { token } = await (
 	await fetch(`${storeBase}/api/v1/publishers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "examples", password: "correct horse battery" }) })
 ).json();
-const config = join(dir, "cubby.json");
+const config = join(dir, "cli-config.json");
 writeFileSync(config, JSON.stringify({ store: storeBase, token, publisher: "examples" }), { mode: 0o600 });
 for (const app of ["pinboard", "secret-santa"]) {
 	await new Promise((ok, fail) =>
-		spawn(process.execPath, [join(import.meta.dirname, "../../cubby/cli/cubby.mjs"), "publish", join(import.meta.dirname, "../../cubby/examples", app)], {
-			env: { ...process.env, CUBBY_CONFIG: config, CUBBY_STORE: storeBase },
+		spawn(process.execPath, [join(import.meta.dirname, "../../store/cli/hamstr.mjs"), "publish", join(import.meta.dirname, "../../store/examples", app)], {
+			env: { ...process.env, HAMSTR_CLI_CONFIG: config, HAMSTR_STORE: storeBase },
 			stdio: "ignore",
 		}).on("close", (code) => (code === 0 ? ok() : fail(new Error(`publishing ${app} failed`)))),
 	);

@@ -2,13 +2,15 @@
 	import { invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
 	import { install, latestRelease, newHosts } from "#lib/client/install.js";
-	import { askUninstall, contextMenu, oops, toast } from "#lib/client/ui.svelte.js";
+	import { askUninstall, oops, toast } from "#lib/client/ui.svelte.js";
 	import { appMenu, openApp } from "#lib/client/actions.js";
-	import { ICON, sized } from "#lib/icons.js";
-	import { shortDate } from "#lib/format.js";
+	import { ICON, sized } from "@hamstr/ui/icons.js";
+	import { plural, shortDate, size } from "@hamstr/ui/format.js";
 	import ConsentModal from "#lib/components/ConsentModal.svelte";
-	import MoreMenu from "#lib/components/MoreMenu.svelte";
-	import TileIcon from "#lib/components/TileIcon.svelte";
+	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
+	import AppHero from "@hamstr/ui/components/AppHero.svelte";
+	import Capabilities from "@hamstr/ui/components/Capabilities.svelte";
+	import Releases from "@hamstr/ui/components/Releases.svelte";
 
 	let { data } = $props();
 
@@ -26,8 +28,19 @@
 	const TABS = ["overview", "permissions", "versions"];
 	const tab = $derived(TABS.includes(page.url.searchParams.get("tab")) ? page.url.searchParams.get("tab") : "overview");
 
-	const size = (n) => (n == null ? "" : n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 ** 2).toFixed(1)} MB`);
-	const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+	const heroChips = $derived([
+		listing?.publisher && { label: `by ${listing.publisher}` },
+		{ label: `v${latest?.version ?? app.version}` },
+		manifest?.egress?.length
+			? { label: "Uses the internet", tone: "warn", title: `Can connect to: ${manifest.egress.join(", ")}` }
+			: { label: "Doesn't use the internet", title: "Can't connect to anything outside this Hamstr; its data never leaves it" },
+		manifest?.export && { label: "Exports data" },
+		installed && { label: `Installed${installed.version !== latest?.version ? ` · v${installed.version}` : ""}`, tone: "accent" },
+	].filter(Boolean));
+	const releaseBadges = (release) => [
+		installed?.version === release.version && { label: "Installed", tone: "ok" },
+		installed && newHosts(release, installed).length && { label: "New internet access", tone: "warn" },
+	].filter(Boolean);
 
 	// --- get, update, switch version, open, remove -----------------------------------
 	let busy = $state("");
@@ -55,9 +68,9 @@
 
 	const open = () => openApp(installed);
 
-	const cubbyLink = $derived(data.storePublic && app ? `${data.storePublic}/#/app/${app.slug}` : null);
+	const storeLink = $derived(data.storePublic && app ? `${data.storePublic}/apps/${app.slug}` : null);
 	const menu = $derived([
-		{ label: "View in Cubby", icon: "external", hidden: !cubbyLink || !listing, onclick: () => window.open(cubbyLink, "_blank", "noopener") },
+		{ label: "View in the Hamstr Store", icon: "external", hidden: !storeLink || !listing, onclick: () => window.open(storeLink, "_blank", "noopener") },
 		{ label: "Uninstall…", icon: "trash", danger: true, separator: true, hidden: !(data.admin && installed), onclick: () => askUninstall(installed) },
 	]);
 	// Right click on the hero: the installed app's menu, or Get.
@@ -93,20 +106,8 @@
 			<a href="/store">Store</a>{@html ICON.chevron}<span aria-current="page">{app.name}</span>
 		</nav>
 
-		<header class="hero" use:contextMenu={heroMenu}>
-			<TileIcon {app} extra="big" />
-			<div class="hero-text">
-				<h1>{app.name}</h1>
-				<p class="dim">{app.summary}</p>
-				<div class="chips">
-					{#if listing?.publisher}<span class="chip">by {listing.publisher}</span>{/if}
-					<span class="chip">v{latest?.version ?? app.version}</span>
-					{#if manifest?.egress?.length}<span class="chip warn" title="Can connect to: {manifest.egress.join(", ")}">Uses the internet</span>{:else}<span class="chip" title="Can't connect to anything outside this Hamstr; its data never leaves it">Doesn't use the internet</span>{/if}
-					{#if manifest?.export}<span class="chip">Exports data</span>{/if}
-					{#if installed}<span class="chip accent">Installed{installed.version !== latest?.version ? ` · v${installed.version}` : ""}</span>{/if}
-				</div>
-			</div>
-			<div class="hero-actions">
+		<AppHero {app} chips={heroChips} menu={heroMenu}>
+			{#snippet actions()}
 				{#if installed}
 					<button type="button" class="button" onclick={open}>Open</button>
 					{#if updatable && data.admin}
@@ -120,8 +121,8 @@
 					</button>
 				{/if}
 				{#if menu.some((item) => !item.hidden)}<MoreMenu items={menu} label="More actions" />{/if}
-			</div>
-		</header>
+			{/snippet}
+		</AppHero>
 		{#if !installed && !data.admin}
 			<p class="callout">Only an admin can add apps to this Hamstr. Ask one to get {app.name}; it then shows up on everyone's Home.</p>
 		{/if}
@@ -174,92 +175,31 @@
 						{#if listing?.homepage || installed?.homepage}<dt>Website</dt><dd><a href={listing?.homepage ?? installed.homepage} target="_blank" rel="noopener noreferrer">{(listing?.homepage ?? installed.homepage).replace(/^https?:\/\//, "")}</a></dd>{/if}
 						{#if listing?.source || installed?.source}<dt>Source</dt><dd><a href={listing?.source ?? installed.source} target="_blank" rel="noopener noreferrer">{(listing?.source ?? installed.source).replace(/^https?:\/\//, "")}</a></dd>{/if}
 					</dl>
-					{#if cubbyLink && listing}
-						<a class="button ghost small gap-top" href={cubbyLink} target="_blank" rel="noopener">{@html sized("external")} {data.detail?.demo?.available ? "Try a demo in Cubby" : "View in Cubby"}</a>
+					{#if storeLink && listing}
+						<a class="button ghost small gap-top" href={storeLink} target="_blank" rel="noopener">{@html sized("external")} {data.detail?.demo?.available ? "Try a demo in the Hamstr Store" : "View in the Hamstr Store"}</a>
 					{/if}
 				</aside>
 			</div>
 		{:else if tab === "permissions"}
-			<div class="caps">
-				<div class="cap">
-					<span class="cap-icon">{@html ICON.grid}</span>
-					<div><strong>Its own storage per item</strong><p class="dim small">Every {app.name} you make keeps its data apart from every other one, and from other apps.</p></div>
-				</div>
-				<div class="cap" class:warn={manifest?.egress?.length}>
-					<span class="cap-icon">{@html ICON.external}</span>
-					<div>
-						{#if manifest?.egress?.length}
-							<strong>Connects to the internet</strong>
-							<p class="dim small">Only to these hosts, and only after an admin allows it: {manifest.egress.join(", ")}.</p>
-						{:else}
-							<strong>No internet access</strong>
-							<p class="dim small">Nothing it stores can leave this Hamstr.</p>
-						{/if}
-					</div>
-				</div>
-				<div class="cap">
-					<span class="cap-icon">{@html ICON.people}</span>
-					<div><strong>Private to you</strong><p class="dim small">Only you can open what you make with it. Other people on this Hamstr have their own.</p></div>
-				</div>
-				<div class="cap">
-					<span class="cap-icon">{@html ICON.download}</span>
-					<div>
-						<strong>{manifest?.export ? "Download your data" : "No data download"}</strong>
-						<p class="dim small">{manifest?.export ? "Owners can download each item's data from its menu." : "The app does not offer an export yet; its data stays inside Hamstr."}</p>
-					</div>
-				</div>
-				<div class="cap">
-					<span class="cap-icon">{@html ICON.plus}</span>
-					<div>
-						<strong>{manifest?.instances === "single" ? "One per person" : "As many as you like"}</strong>
-						<p class="dim small">{manifest?.instances === "single" ? "Tapping it on Home opens your one copy; the first tap makes it." : "Tapping it on Home shows everything you made with it, and a New button."}</p>
-					</div>
-				</div>
-				<div class="cap">
-					<span class="cap-icon">{@html ICON.info}</span>
-					<div><strong>No login of its own</strong><p class="dim small">Hamstr tells the app who is visiting and what they may do; it never sees passwords or your email.</p></div>
-				</div>
-			</div>
+			<Capabilities {manifest} name={app.name} place="this Hamstr" />
 		{:else}
 			{#if releases.length}
-				<div class="rows list">
-					<div class="row head dim tiny" aria-hidden="true">
-						<span class="grow">Version</span>
-						<span class="col hide-sm">Published</span>
-						<span class="col hide-sm">Size</span>
-						<span class="col hide-sm">Downloads</span>
-						<span class="actions-col wide"></span>
-					</div>
-					{#each releases as release (release.version)}
-						{@const isInstalled = installed?.version === release.version}
-						<div class="row">
-							<div class="grow">
-								<strong>v{release.version}</strong>
-								{#if release === latest}<span class="chip accent">Latest</span>{/if}
-								{#if isInstalled}<span class="chip ok">Installed</span>{/if}
-								{#if newHosts(release, installed).length && installed}<span class="chip warn">New internet access</span>{/if}
-								<div class="dim tiny mono" title={release.bundleSha256}>sha256 {release.bundleSha256?.slice(0, 16)}…</div>
-							</div>
-							<span class="col dim small hide-sm">{shortDate(release.publishedAt)}</span>
-							<span class="col dim small hide-sm">{size(release.bundleSize)}</span>
-							<span class="col dim small hide-sm">{release.downloads}</span>
-							<span class="actions-col wide">
-								{#if data.admin && !isInstalled}
-									<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(release)}>
-										{#if busy === release.version}<span class="spinner"></span>{:else}{installed ? (release === latest ? "Update" : "Switch") : "Get"}{/if}
-									</button>
-								{/if}
-								<MoreMenu
-									label="More for v{release.version}"
-									items={[
-										{ label: "Copy SHA-256", icon: "copy", onclick: () => copy(release.bundleSha256) },
-										{ label: "Download source", icon: "download", hidden: !release.sourceSize || !data.storePublic, onclick: () => window.open(`${data.storePublic}/api/v1/apps/${app.slug}/releases/${release.version}/source`, "_blank", "noopener") },
-									]}
-								/>
-							</span>
-						</div>
-					{/each}
-				</div>
+				<Releases {releases} {latest} badges={releaseBadges}>
+					{#snippet actions(release)}
+						{#if data.admin && installed?.version !== release.version}
+							<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(release)}>
+								{#if busy === release.version}<span class="spinner"></span>{:else}{installed ? (release === latest ? "Update" : "Switch") : "Get"}{/if}
+							</button>
+						{/if}
+						<MoreMenu
+							label="More for v{release.version}"
+							items={[
+								{ label: "Copy SHA-256", icon: "copy", onclick: () => copy(release.bundleSha256) },
+								{ label: "Download source", icon: "download", hidden: !release.sourceSize || !data.storePublic, onclick: () => window.open(`${data.storePublic}/api/v1/apps/${app.slug}/releases/${release.version}/source`, "_blank", "noopener") },
+							]}
+						/>
+					{/snippet}
+				</Releases>
 				<p class="dim small hint">Updating or switching moves every item of {app.name} to that version; their data stays. Older versions may not understand data a newer one wrote.</p>
 			{:else}
 				<div class="empty"><h2>No versions listed</h2><p>The store has no published release of {app.name} right now.</p></div>

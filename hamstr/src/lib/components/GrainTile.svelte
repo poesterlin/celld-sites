@@ -1,7 +1,7 @@
 <script>
-	import { timeAgo } from "#lib/format.js";
+	import { timeAgo } from "@hamstr/ui/format.js";
 	import { contextMenu } from "#lib/client/ui.svelte.js";
-	import TileIcon from "./TileIcon.svelte";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
 	let { grain, meta: label = "", menu = () => [] } = $props();
 
@@ -10,7 +10,7 @@
 </script>
 
 <a class="tile" href="/g/{grain.id}" title={hint} use:contextMenu={menu}>
-	<TileIcon app={grain.app} />
+	<AppIcon app={grain.app} />
 	<span class="tile-title">{grain.title}</span>
 	<span class="tile-meta">{meta}</span>
 </a>

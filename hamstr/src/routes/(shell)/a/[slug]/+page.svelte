@@ -5,11 +5,11 @@
 	import { api } from "#lib/client/api.js";
 	import { appMenu, downloadItem as download, grainAction, grainMenu } from "#lib/client/actions.js";
 	import { askUninstall, contextMenu, oops, toast } from "#lib/client/ui.svelte.js";
-	import { ICON, sized } from "#lib/icons.js";
-	import { shortDate, timeAgo } from "#lib/format.js";
-	import Modal from "#lib/components/Modal.svelte";
-	import MoreMenu from "#lib/components/MoreMenu.svelte";
-	import TileIcon from "#lib/components/TileIcon.svelte";
+	import { ICON, sized } from "@hamstr/ui/icons.js";
+	import { shortDate, timeAgo } from "@hamstr/ui/format.js";
+	import Modal from "@hamstr/ui/components/Modal.svelte";
+	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
+	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 
 	let { data } = $props();
 
@@ -148,7 +148,7 @@
 		</nav>
 
 		<header class="hero" use:contextMenu={() => appMenu(app, { admin: data.admin, here: "app" })}>
-			<TileIcon {app} extra="big" />
+			<AppIcon {app} extra="big" />
 			<div class="hero-text">
 				<h1>{app.name}</h1>
 				<p class="dim">{app.summary}</p>
@@ -199,7 +199,7 @@
 					<h2>The trash is empty</h2>
 					<p>Things you trash stay here for 30 days, then they are deleted for good.</p>
 				{:else}
-					<TileIcon {app} extra="big ghosted" />
+					<AppIcon {app} extra="big ghosted" />
 					<h2>No {app.name} yet</h2>
 					<p>Each one keeps its own data, apart from every other one.</p>
 					<p><button type="button" class="button" onclick={create}>{@html sized("plus")} Make your first</button></p>
@@ -216,13 +216,13 @@
 					<div class="tile-wrap" use:contextMenu={() => menuFor(grain)}>
 						{#if tab === "trash"}
 							<div class="tile trashed">
-								<TileIcon app={grain.app} />
+								<AppIcon app={grain.app} />
 								<span class="tile-title">{grain.title}</span>
 								<span class="tile-meta">{subtitle(grain)}</span>
 							</div>
 						{:else}
 							<a class="tile" href="/g/{grain.id}" title={grain.title}>
-								<TileIcon app={grain.app} />
+								<AppIcon app={grain.app} />
 								<span class="tile-title">{grain.title}</span>
 								<span class="tile-meta">{subtitle(grain)}</span>
 							</a>
@@ -242,7 +242,7 @@
 				</div>
 				{#each items as grain (grain.id)}
 					<div class="row" data-id={grain.id} use:contextMenu={() => menuFor(grain)}>
-						<TileIcon app={grain.app} />
+						<AppIcon app={grain.app} />
 						<div class="grow">
 							{#if tab === "trash"}
 								<strong>{grain.title}</strong>
@@ -276,7 +276,7 @@
 		<form onsubmit={rename}>
 			<div class="field">
 				<label for="renameTitle">Name</label>
-				<input class="input" id="renameTitle" maxlength="80" autocomplete="off" bind:value={newTitle} autofocus />
+				<input class="input" id="renameTitle" maxlength="80" autocomplete="off" bind:value={newTitle} data-autofocus />
 			</div>
 			<div class="sheet-foot">
 				<button type="button" class="button ghost" onclick={() => (renaming = null)}>Cancel</button>
@@ -300,7 +300,7 @@
 {#if about}
 	<Modal title="About {app.name}" sub="Version {app.version}{app.license ? ` · ${app.license}` : ''}" onclose={() => (about = false)}>
 		<div class="card-head gap-bottom">
-			<TileIcon {app} />
+			<AppIcon {app} />
 			<p class="flush">{app.summary}</p>
 		</div>
 		{#if app.description}
