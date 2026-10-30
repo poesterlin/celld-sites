@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { createStore } from "../server.mjs";
-import { bundle, call, manifest } from "./helpers.mjs";
+import { createStore } from "../server.ts";
+import { bundle, call, manifest } from "./helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "store-demo-test-"));
 const events = [];
@@ -35,8 +35,8 @@ let store;
 let token;
 
 before(async () => {
-	await new Promise((resolve) => fake.listen(0, "127.0.0.1", resolve));
-	demoBase = `http://127.0.0.1:${fake.address().port}`;
+	await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", () => resolve()));
+	demoBase = `http://127.0.0.1:${(fake.address() as import("node:net").AddressInfo).port}`;
 	store = createStore({
 		dataDir: join(dir, "store"),
 		adminToken: "admin",

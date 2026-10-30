@@ -1,6 +1,6 @@
 // End-to-end install check against a throwaway local celld dev node.
 //
-//   node store/test/e2e-install.mjs
+//   node store/test/e2e-install.ts
 //
 // Starts the store on an ephemeral port and the repo's celld harness on
 // TEST_INSTALL_PORT (default 8780), publishes the demo app through the real CLI,
@@ -11,8 +11,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import assert from "node:assert/strict";
-import { Node } from "../../tests/harness.mjs";
-import { createStore } from "../server.mjs";
+import { Node } from "../../tests/harness.ts";
+import { createStore } from "../server.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "store-e2e-"));
 const config = join(dir, "config.json");
@@ -32,7 +32,7 @@ try {
 	writeFileSync(config, `${JSON.stringify({ store: base, token, publisher: "e2e" })}\n`, { mode: 0o600 });
 	chmodSync(config, 0o600);
 
-	const cli = ["node", join(import.meta.dirname, "..", "cli", "hamstr.mjs")];
+	const cli = ["node", join(import.meta.dirname, "..", "cli", "hamstr.ts")];
 	// Async spawn, not spawnSync: the store runs in this process, so a blocked
 	// event loop would stop it from answering the CLI it is waiting for.
 	const run = (args, extraEnv = {}) =>

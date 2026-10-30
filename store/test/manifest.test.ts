@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ManifestError, validateEgressHost, validateManifest, validatePublisherName, validateSlug, validateVersion } from "../../packages/app-format/manifest.mjs";
-import { manifest } from "./helpers.mjs";
+import { ManifestError, validateEgressHost, validateManifest, validatePublisherName, validateSlug, validateVersion } from "../../packages/app-format/manifest.ts";
+import { manifest } from "./helpers.ts";
 
 describe("manifest validation", () => {
 	it("accepts and normalizes a complete manifest", () => {

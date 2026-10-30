@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { BundleError, readBundle } from "../../packages/app-format/bundle.mjs";
-import { bundle, codeRecord, sha256, tgz } from "./helpers.mjs";
+import { BundleError, readBundle } from "../../packages/app-format/bundle.ts";
+import { bundle, codeRecord, sha256, tgz } from "./helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "store-bundle-test-"));
 after(() => rmSync(dir, { recursive: true, force: true }));

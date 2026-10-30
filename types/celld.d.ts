@@ -9,6 +9,7 @@ declare module "cloudflare:workers" {
 	interface SqlCursor<T = Record<string, unknown>> {
 		one(): T;
 		toArray(): T[];
+		rowsWritten?: number;
 	}
 
 	interface SqlStorage {

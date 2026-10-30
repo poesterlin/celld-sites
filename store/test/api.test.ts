@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { createStore } from "../server.mjs";
-import { bundle, call, codeRecord, manifest, sha256, tgz } from "./helpers.mjs";
+import { createStore } from "../server.ts";
+import { bundle, call, codeRecord, manifest, sha256, tgz, type CallResult } from "./helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "store-api-test-"));
 const store = createStore({ dataDir: dir, adminToken: "admin-secret", rateLimit: false, logging: false, requireReview: false });
@@ -20,13 +21,18 @@ after(async () => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-async function register(name) {
+async function register(name: string): Promise<string> {
 	const res = await call(base, "/api/v1/publishers", { method: "POST", json: { name, password: "correct horse battery" } });
 	assert.equal(res.status, 201, res.text);
 	return res.body.token;
 }
 
-async function publish(slug, version, over = {}, blob = null) {
+interface Published extends CallResult {
+	uploaded?: CallResult;
+	bytes?: Buffer;
+}
+
+async function publish(slug: string, version: string, over: Record<string, unknown> = {}, blob: Buffer | null = null): Promise<Published> {
 	const created = await call(base, `/api/v1/apps/${slug}/releases`, {
 		method: "POST",
 		token,
@@ -305,7 +311,7 @@ describe("web UI", () => {
 		writeFileSync(join(web, "_app", "immutable", "start.abc.js"), "export {}");
 		const web2 = createStore({ dataDir: mkdtempSync(join(tmpdir(), "store-web-data-")), webDir: web, logging: false, rateLimit: false });
 		await web2.listen(0, "127.0.0.1");
-		const base = `http://127.0.0.1:${web2.server.address().port}`;
+		const base = `http://127.0.0.1:${(web2.server.address() as AddressInfo).port}`;
 		try {
 			for (const path of ["/", "/apps/secret-santa", "/demo/abcdef123456", "/about"]) {
 				const res = await fetch(base + path);
@@ -325,8 +331,8 @@ describe("web UI", () => {
 			assert.equal((await fetch(`${base}/missing.js`)).status, 404);
 			// Encoded dot segments are resolved by the URL parser, so this lands on a page path.
 			for (const path of ["/%2e%2e/%2e%2e/etc/passwd", "/..%2f..%2fetc%2fpasswd", "/_app/../../../etc/hostname"]) {
-				const text = await new Promise((ok, fail) =>
-					httpRequest({ host: "127.0.0.1", port: web2.server.address().port, path }, (res) => {
+				const text = await new Promise<string>((ok, fail) =>
+					httpRequest({ host: "127.0.0.1", port: (web2.server.address() as AddressInfo).port, path }, (res) => {
 						let body = "";
 						res.on("data", (d) => (body += d));
 						res.on("end", () => ok(`${res.statusCode} ${body}`));

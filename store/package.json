@@ -4,16 +4,16 @@
 	"type": "module",
 	"description": "Hamstr Store: the app catalog, publisher API and the hamstr CLI",
 	"engines": {
-		"node": ">=22.5"
+		"node": ">=22.18"
 	},
 	"scripts": {
-		"start": "node server.mjs",
-		"test": "node --test --test-concurrency=1 test/manifest.test.mjs test/bundle.test.mjs test/api.test.mjs test/demo.test.mjs"
+		"start": "node server.ts",
+		"test": "node --test --test-concurrency=1 test/manifest.test.ts test/bundle.test.ts test/api.test.ts test/demo.test.ts"
 	},
 	"dependencies": {
 		"tar-stream": "^3.2.2"
 	},
 	"bin": {
-		"hamstr": "./cli/hamstr.mjs"
+		"hamstr": "./cli/hamstr.ts"
 	}
 }

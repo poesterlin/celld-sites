@@ -4,7 +4,7 @@
 // the repo, saves a node with `hamstr node`, installs into a throwaway
 // `celld dev` node over its admin API, updates it, and refuses what it must.
 //
-//   node store/test/e2e-cli-package.mjs
+//   node store/test/e2e-cli-package.ts
 //
 // Needs `celld` on PATH and network access for npm (esbuild).
 import assert from "node:assert/strict";
@@ -12,18 +12,18 @@ import { spawn, spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Node } from "../../tests/harness.mjs";
-import { createStore } from "../server.mjs";
+import { Node } from "../../tests/harness.ts";
+import { createStore } from "../server.ts";
 
 const repo = join(import.meta.dirname, "..", "..");
 const work = mkdtempSync(join(tmpdir(), "hamstr-cli-e2e-"));
 const store = createStore({ dataDir: join(work, "store"), rateLimit: false, logging: false });
 const node = new Node(Number(process.env.TEST_CLI_PORT ?? 8781));
 
-function sh(cmd, args, options = {}) {
+function sh(cmd: string, args: string[], options: Record<string, unknown> = {}): string {
 	const result = spawnSync(cmd, args, { encoding: "utf8", ...options });
 	if (result.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`);
-	return result.stdout.trim();
+	return String(result.stdout).trim();
 }
 
 try {
@@ -36,7 +36,7 @@ try {
 
 	// 2. A store and a node, and an app outside the repo.
 	await store.listen(0, "127.0.0.1");
-	const storeUrl = `http://127.0.0.1:${store.server.address().port}`;
+	const storeUrl = `http://127.0.0.1:${(store.server.address() as import("node:net").AddressInfo).port}`;
 	await node.start();
 	const app = join(work, "pinboard");
 	cpSync(join(repo, "store", "test", "fixtures", "pinboard"), app, { recursive: true });
@@ -49,7 +49,7 @@ try {
 		XDG_CONFIG_HOME: join(work, "config"),
 		HAMSTR_PUBLISHER_PASSWORD: "a long enough password",
 	};
-	const run = (args, extra = {}) =>
+	const run = (args: string[], extra: Record<string, string> = {}): Promise<string> =>
 		new Promise((resolvePromise, rejectPromise) => {
 			// Async: the store runs in this process and must keep answering.
 			const child = spawn(bin, args, { cwd: work, env: { ...env, ...extra }, stdio: ["ignore", "pipe", "pipe"] });

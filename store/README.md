@@ -38,7 +38,7 @@ turning every utility into a SaaS account.
 5. Withdraw a release (publisher) and remove one (operator); report abuse.
 6. Optionally review releases before they appear in the catalog.
 7. Keep the app's code and data inspectable: a bundle is a tar.gz of the same
-   files `tools/pack.mjs` already produces; data is the node's own SQLite.
+   files `tools/pack.ts` already produces; data is the node's own SQLite.
 
 **Non-functional**
 
@@ -99,7 +99,7 @@ data is yours" property.
  publisher                    Hamstr Store (hosted)                       user's Hamstr / celld node
  ─────────                    ─────────────────────                       ──────────────────────────
  hamstr publish ./app
-   pack.mjs + tar.gz  ──────▶  POST /apps/:slug/releases (manifest)
+   pack.ts + tar.gz  ──────▶  POST /apps/:slug/releases (manifest)
                               PUT  /releases/:id/bundle (tar.gz)
                                 validate tar: paths, types, sizes,
                                 blob hashes, code.json, limits
@@ -123,13 +123,13 @@ data is yours" property.
 
 | Piece | Where | Job |
 | --- | --- | --- |
-| `server.mjs` | store container | HTTP API, serves the web UI, SQLite, blob files |
+| `server.ts` | store container | HTTP API, serves the web UI, SQLite, blob files |
 | `web/` | store container | the web UI: a SvelteKit single-page app built on `packages/ui` (the same components as Hamstr's own store pages) |
-| `../packages/app-format/manifest.mjs` | store, CLI, Hamstr | `hamstr.json` schema and egress host rules |
-| `../packages/app-format/bundle.mjs` | store, CLI, Hamstr | tar.gz validation: safe paths, regular files only, size caps, blob hash equality, `code.json` cross-check |
+| `../packages/app-format/manifest.ts` | store, CLI, Hamstr | `hamstr.json` schema and egress host rules |
+| `../packages/app-format/bundle.ts` | store, CLI, Hamstr | tar.gz validation: safe paths, regular files only, size caps, blob hash equality, `code.json` cross-check |
 | `cli/` | publisher/developer machine | the `hamstr` CLI (npm package `@hamstr/cli`, see [cli/README.md](cli/README.md)): register/login, publish (build + pack + upload), install into a celld node over its admin API or a compose stack, update/list/report. Needs no checkout of this repo |
 | `celld-demo` (compose) | separate node | disposable per-session copies for "Try it"; own bucket/token, no egress |
-| `examples/` | repo | demo apps: `secret-santa` (one worker, one Durable Object) and `pinboard` (a Hamstr grain app) |
+| `examples/` | repo | demo apps: `secret-santa` (one worker, one Durable Object), `pinboard` (a Hamstr grain app), `gym-log` (a training log with charts) and `bookmarks` (a link manager with tags, search and import) |
 
 The store joins only the Traefik network (it needs no app network and no bucket
 access) and holds no celld admin token. It shares that bridge with the celld
@@ -211,7 +211,7 @@ decide between global squatting and `publisher/app` names.
 
 ### Bundle format
 
-Exactly what `tools/pack.mjs` writes and `node/push.sh` deploys:
+Exactly what `tools/pack.ts` writes and `node/push.sh` deploys:
 
 ```
 version            12 hex chars; the router's version id
@@ -228,7 +228,7 @@ second copy of the metadata inside the archive.
 ### Publishing flow
 
 1. `hamstr publish ./app` reads `hamstr.json`, runs the site build (unless
-   `--no-build`), runs `tools/pack.mjs`, creates a deterministic tar.gz and
+   `--no-build`), runs `tools/pack.ts`, creates a deterministic tar.gz and
    validates it with the same library the store uses.
 2. `POST /api/v1/apps/:slug/releases` sends the manifest. The store validates
    it, checks ownership and quotas, and returns an upload URL.
@@ -437,7 +437,7 @@ apps.
 | store memory | 512 MiB container, 256 pids |
 | demo sessions | 8 concurrent, 6/hour/IP, 15 min TTL, 100 objects/site, 20 s site timeout |
 
-These are constants in `server.mjs`/`../packages/app-format/bundle.mjs`; promote them to env vars
+These are constants in `server.ts`/`../packages/app-format/bundle.ts`; promote them to env vars
 before running a public instance with different needs.
 
 ---
@@ -485,7 +485,7 @@ npm install --prefix store
 npm test --prefix store          # manifest, bundle, API and web-serving suites (node:test)
 ```
 
-`store/test/api.test.mjs` starts the real server on an ephemeral port with a
+`store/test/api.test.ts` starts the real server on an ephemeral port with a
 temporary data directory and exercises register → publish → catalog → download
 → yank → report → review/approve. No Docker or celld node is required.
 
@@ -493,12 +493,12 @@ The web UI:
 
 ```sh
 npm install --prefix store/web
-npm run build --prefix store/web       # → store/web/build, served by server.mjs
-# or, while working on it, with the API from `node store/server.mjs` on :3000:
+npm run build --prefix store/web       # → store/web/build, served by server.ts
+# or, while working on it, with the API from `node store/server.ts` on :3000:
 npm run dev --prefix store/web
 ```
 
-It is a single-page app (`ssr = false`): `server.mjs` serves the build and
+It is a single-page app (`ssr = false`): `server.ts` serves the build and
 answers every page path with `index.html`, whose one inline bootstrap script the
 CSP allows by hash. Text from the API is rendered by Svelte (escaped); links use
 only http(s) values the server validated.
@@ -508,7 +508,7 @@ app through the real CLI, starts a throwaway `celld dev` node, installs it and
 drives the app):
 
 ```sh
-node store/test/e2e-install.mjs
+node store/test/e2e-install.ts
 ```
 
 It uses `TEST_INSTALL_PORT` (default 8780) for the node and never touches the
@@ -517,7 +517,7 @@ with `npm pack`, installed into an empty directory, run without this repo, the
 node saved with `hamstr node`):
 
 ```sh
-node store/test/e2e-cli-package.mjs     # TEST_CLI_PORT, default 8781
+node store/test/e2e-cli-package.ts     # TEST_CLI_PORT, default 8781
 ```
 
 With a compose stack instead of a node URL, `hamstr install --compose-dir <dir>`
