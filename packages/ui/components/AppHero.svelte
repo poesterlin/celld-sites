@@ -2,7 +2,7 @@
 	// The head of an app's page: big icon, name, summary, fact chips and actions.
 	// chips: [{ label, tone?: "accent" | "warn" | "ok", title? }]
 	import AppIcon from "./AppIcon.svelte";
-	import { contextMenu } from "../state.svelte.js";
+	import { contextMenu } from "../state.svelte.ts";
 
 	let { app, chips = [], menu = null, actions } = $props();
 

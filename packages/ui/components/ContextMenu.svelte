@@ -1,9 +1,9 @@
 <script>
-	// The shell's single context menu (see menuState in ui.svelte.js). Arrow keys
+	// The shell's single context menu (see menuState in ui.svelte.ts). Arrow keys
 	// move, Enter picks, Escape or a click elsewhere closes; it stays on screen.
 	import { tick } from "svelte";
-	import { ICON } from "../icons.js";
-	import { closeMenu, menuState } from "../state.svelte.js";
+	import { ICON } from "../icons.ts";
+	import { closeMenu, menuState } from "../state.svelte.ts";
 
 	let el = $state(null);
 	let pos = $state({ left: 0, top: 0 });

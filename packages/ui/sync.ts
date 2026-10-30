@@ -4,7 +4,7 @@
 // server pages (errors, sign-in) link them directly, so they cannot go through
 // Vite. Run by each app's predev/prebuild; the copies are gitignored.
 //
-//   node ../packages/ui/sync.mjs static
+//   node ../packages/ui/sync.ts static
 import { copyFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 

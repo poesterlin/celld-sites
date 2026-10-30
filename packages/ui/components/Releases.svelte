@@ -1,7 +1,7 @@
 <script>
 	// An app's published versions as a table. `badges(release)` adds chips after
 	// the version, `actions(release)` renders the row's buttons.
-	import { shortDate, size } from "../format.js";
+	import { shortDate, size } from "../format.ts";
 
 	let { releases, latest = null, badges = () => [], actions } = $props();
 </script>

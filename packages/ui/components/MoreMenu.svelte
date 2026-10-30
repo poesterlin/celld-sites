@@ -1,6 +1,6 @@
 <script>
 	// A "⋯" button with a small menu. Items: { label, icon?, onclick, danger?, hidden? }.
-	import { ICON } from "../icons.js";
+	import { ICON } from "../icons.ts";
 
 	let { items, label = "More", extra = "" } = $props();
 

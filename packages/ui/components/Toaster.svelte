@@ -1,5 +1,5 @@
 <script>
-	import { toastState } from "../state.svelte.js";
+	import { toastState } from "../state.svelte.ts";
 </script>
 
 {#if toastState.visible}

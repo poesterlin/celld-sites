@@ -1,5 +1,5 @@
 <script>
-	import { colorFor } from "../format.js";
+	import { colorFor } from "../format.ts";
 
 	let { app, extra = "" } = $props();
 </script>

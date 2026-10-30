@@ -8,7 +8,7 @@
 		"./*": "./*"
 	},
 	"bin": {
-		"hamstr-ui-sync": "./sync.mjs"
+		"hamstr-ui-sync": "./sync.ts"
 	},
 	"peerDependencies": {
 		"svelte": "^5.0.0"

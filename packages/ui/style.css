@@ -1,7 +1,7 @@
 /* Hamstr design system: shared by the Hamstr shell and the Hamstr Store.
    A calm, modern look: neutral greys, one indigo accent, a soft gradient
    wallpaper, glass bars and home-screen style app icons. Light and dark
-   follow the OS. Apps copy this file to /ui.css (see sync.mjs) and add
+   follow the OS. Apps copy this file to /ui.css (see sync.ts) and add
    their own styles on top. */
 :root {
 	color-scheme: light dark;

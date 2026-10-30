@@ -2,7 +2,7 @@
 	// One app in a grid of store cards: icon, name, a meta line, the summary and
 	// the app's actions. `menu` (optional) returns context-menu items.
 	import AppIcon from "./AppIcon.svelte";
-	import { contextMenu } from "../state.svelte.js";
+	import { contextMenu } from "../state.svelte.ts";
 
 	let { app, href, meta = "", menu = null, actions } = $props();
 

@@ -1,5 +1,5 @@
 <script>
-	import { ICON } from "../icons.js";
+	import { ICON } from "../icons.ts";
 
 	let { title, sub = "", onclose, children } = $props();
 

@@ -1,7 +1,7 @@
 <script>
 	// "What it can do": an app's manifest in plain words. `place` names where it
 	// runs ("this Hamstr" inside the shell, "your Hamstr" in the store).
-	import { ICON } from "../icons.js";
+	import { ICON } from "../icons.ts";
 
 	let { manifest, name, place = "your Hamstr" } = $props();
 
