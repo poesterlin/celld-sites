@@ -1,5 +1,0 @@
-{
-	"worker": "worker.js",
-	"objects": "objects.js",
-	"check": "/health"
-}

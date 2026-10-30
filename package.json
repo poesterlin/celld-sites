@@ -1,0 +1,7 @@
+{
+  "name": "celld-sites",
+  "private": true,
+  "devDependencies": {
+    "fallow": "^3.37.0"
+  }
+}

@@ -3,7 +3,7 @@
 //
 //   node hamstr/test/e2e.mjs      (needs celld on PATH and tools' npm deps)
 //
-// Installs examples/pinboard, makes two grains, pins through the proxy as the
+// Installs test/fixtures/pinboard, makes two grains, pins through the proxy as the
 // owner, shares a view-only link with a guest, and checks isolation and cleanup.
 // Never touches the compose stack.
 import assert from "node:assert/strict";
@@ -38,7 +38,7 @@ try {
 	writeFileSync(config, `${JSON.stringify({ store: storeBase, token, publisher: "e2e" })}\n`, { mode: 0o600 });
 	chmodSync(config, 0o600);
 	await new Promise((resolvePromise, rejectPromise) => {
-		const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "store", "cli", "hamstr.mjs"), "publish", join(import.meta.dirname, "..", "..", "store", "examples", "pinboard")], {
+		const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "store", "cli", "hamstr.mjs"), "publish", join(import.meta.dirname, "..", "..", "store", "test", "fixtures", "pinboard")], {
 			env: { ...process.env, HAMSTR_CLI_CONFIG: config, HAMSTR_STORE: storeBase },
 			stdio: ["ignore", "pipe", "pipe"],
 		});

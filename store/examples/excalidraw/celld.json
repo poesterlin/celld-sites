@@ -1,7 +1,0 @@
-{
-	"worker": "worker.js",
-	"objects": "objects.js",
-	"assets": "dist",
-	"notFound": "spa",
-	"check": "/health"
-}

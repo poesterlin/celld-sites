@@ -111,7 +111,7 @@ Notes:
 - Don't rely on a `Referer` or on being top-level: grains run in the shell's
   iframe (`frame-ancestors` is the shell only) and also open in their own tab.
 
-See `store/examples/pinboard` for a complete app that uses all of this.
+See `store/test/fixtures/pinboard` for a complete app that uses all of this.
 
 ## Running it
 

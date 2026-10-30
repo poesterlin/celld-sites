@@ -25,9 +25,9 @@ const { token } = await (
 ).json();
 const config = join(dir, "cli-config.json");
 writeFileSync(config, JSON.stringify({ store: storeBase, token, publisher: "examples" }), { mode: 0o600 });
-for (const app of ["pinboard", "secret-santa"]) {
+for (const app of ["pinboard"]) {
 	await new Promise((ok, fail) =>
-		spawn(process.execPath, [join(import.meta.dirname, "../../store/cli/hamstr.mjs"), "publish", join(import.meta.dirname, "../../store/examples", app)], {
+		spawn(process.execPath, [join(import.meta.dirname, "../../store/cli/hamstr.mjs"), "publish", join(import.meta.dirname, "../../store/test/fixtures", app)], {
 			env: { ...process.env, HAMSTR_CLI_CONFIG: config, HAMSTR_STORE: storeBase },
 			stdio: "ignore",
 		}).on("close", (code) => (code === 0 ? ok() : fail(new Error(`publishing ${app} failed`)))),
@@ -60,11 +60,8 @@ await hamstr.listen(PORT, "127.0.0.1");
 	await b.request("GET", back.pathname + back.search, { host: shell });
 	const api = (method, path, json) => b.request(method, path, { host: shell, headers: { origin: `http://${shell}:${PORT}` }, json });
 	await api("POST", "/api/apps", { slug: "pinboard" });
-	await api("POST", "/api/apps", { slug: "secret-santa" });
 	// Pinboard is single-instance: Home opens (and on first use, makes) Ada's one board.
 	const board = (await api("POST", "/api/apps/pinboard/open", {})).json.grain;
-	await api("POST", "/api/grains", { slug: "secret-santa", title: "Wichteln 2026" });
-	await api("POST", "/api/grains", { slug: "secret-santa", title: "Office party" });
 	const enter = new URL((await api("POST", `/api/grains/${board.id}/open`, { path: "/" })).json.url);
 	const host = enter.hostname;
 	await b.request("GET", enter.pathname + enter.search, { host });
