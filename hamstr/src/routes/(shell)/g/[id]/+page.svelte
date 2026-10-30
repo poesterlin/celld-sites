@@ -3,8 +3,7 @@
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
-	import { askReset, askRestore, oops, toast } from "#lib/client/ui.svelte.js";
-	import { backupItem } from "#lib/client/actions.js";
+	import { askManage, oops, toast } from "#lib/client/ui.svelte.js";
 	import { ICON } from "@hamstr/ui/icons.js";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
@@ -63,12 +62,9 @@
 
 	const menu = $derived([
 		{ label: "Rename", icon: "pencil", onclick: renameNow },
-		{ label: "Download data", icon: "download", hidden: !app?.canExport, onclick: download },
-		{ label: "Download backup", icon: "download", onclick: () => backupItem(grain) },
-		{ label: "Restore from backup…", icon: "upload", hidden: !app, onclick: () => askRestore(grain, app) },
+		{ label: "Manage data…", icon: "download", hidden: !app, onclick: () => askManage(grain, app) },
 		{ label: `About ${app?.name ?? "this app"}`, icon: "info", hidden: !app, onclick: () => goto(`/a/${app.slug}`) },
-		{ label: "Reset data…", icon: "restore", danger: true, separator: true, onclick: () => askReset(grain, app) },
-		{ label: "Move to trash", icon: "trash", danger: true, onclick: trash },
+		{ label: "Move to trash", icon: "trash", danger: true, separator: true, onclick: trash },
 	]);
 
 	async function trash() {

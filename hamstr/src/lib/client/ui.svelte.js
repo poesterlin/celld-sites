@@ -16,3 +16,8 @@ export const askImport = (app) => Object.assign(restoreState, { grain: null, app
 // confirms.
 export const resetState = $state({ grain: null, app: null });
 export const askReset = (grain, app) => Object.assign(resetState, { grain, app });
+
+// Managing an item's data: download, back up, restore, reset. The layout's
+// dialog lists them; the last two open their own dialogs.
+export const manageState = $state({ grain: null, app: null });
+export const askManage = (grain, app) => Object.assign(manageState, { grain, app });

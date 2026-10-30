@@ -7,6 +7,7 @@
 	import UninstallModal from "#lib/components/UninstallModal.svelte";
 	import RestoreModal from "#lib/components/RestoreModal.svelte";
 	import ResetModal from "#lib/components/ResetModal.svelte";
+	import ManageDataModal from "#lib/components/ManageDataModal.svelte";
 
 	let { data, children } = $props();
 
@@ -86,4 +87,5 @@
 	<UninstallModal />
 	<RestoreModal />
 	<ResetModal />
+	<ManageDataModal />
 {/if}

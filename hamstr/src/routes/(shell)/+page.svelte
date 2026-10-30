@@ -86,7 +86,7 @@
 				<h2>Recent</h2>
 				<div class="tiles">
 					{#each data.recent as grain (grain.id)}
-						<GrainTile {grain} menu={() => grainMenu(grain, { canExport: bySlug.get(grain.app.slug)?.canExport, app: bySlug.get(grain.app.slug) })} />
+						<GrainTile {grain} menu={() => grainMenu(grain, { app: bySlug.get(grain.app.slug) })} />
 					{/each}
 				</div>
 			</div>

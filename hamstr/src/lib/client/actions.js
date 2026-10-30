@@ -3,7 +3,7 @@
 import { goto, invalidateAll } from "$app/navigation";
 import { api } from "./api.js";
 import { downloadBackup, downloadGrain } from "./download.js";
-import { askImport, askReset, askRestore, askUninstall, oops, toast } from "./ui.svelte.js";
+import { askImport, askManage, askUninstall, oops, toast } from "./ui.svelte.js";
 
 /** Open an app: a single-instance app goes straight into its one item. */
 export async function openApp(app) {
@@ -67,16 +67,13 @@ export function appMenu(app, { admin = false, here = "" } = {}) {
 }
 
 /** The menu of an item (not trashed). Pass `rename` where renaming is possible,
- *  and the item's app (from the page's data) for restoring a backup. */
-export function grainMenu(grain, { canExport = false, rename, app } = {}) {
+ *  and the item's app (from the page's data) for managing its data. */
+export function grainMenu(grain, { rename, app } = {}) {
 	return [
 		{ label: "Open", icon: "chevron", onclick: () => goto(`/g/${grain.id}`) },
 		{ label: "Open in a new tab", icon: "external", onclick: () => window.open(`/g/${grain.id}/open`, "_blank", "noopener") },
 		{ label: "Rename…", icon: "pencil", separator: true, hidden: !rename, onclick: () => rename(grain) },
-		{ label: "Download data", icon: "download", separator: !rename, hidden: !canExport, onclick: () => downloadItem(grain) },
-		{ label: "Download backup", icon: "download", separator: !rename && !canExport, onclick: () => backupItem(grain) },
-		{ label: "Restore from backup…", icon: "upload", hidden: !app, onclick: () => askRestore(grain, app) },
-		{ label: "Reset data…", icon: "restore", danger: true, separator: true, onclick: () => askReset(grain, app) },
-		{ label: "Move to trash", icon: "trash", danger: true, onclick: () => grainAction(grain, "trash", "Moved to the trash") },
+		{ label: "Manage data…", icon: "download", separator: !rename, hidden: !app, onclick: () => askManage(grain, app) },
+		{ label: "Move to trash", icon: "trash", danger: true, separator: true, onclick: () => grainAction(grain, "trash", "Moved to the trash") },
 	];
 }

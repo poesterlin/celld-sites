@@ -103,7 +103,7 @@
 				{ label: "Delete forever…", icon: "trash", danger: true, separator: true, onclick: () => (confirming = grain) },
 			];
 		}
-		return grainMenu(grain, { canExport: app.canExport, rename: startRename, app });
+		return grainMenu(grain, { rename: startRename, app });
 	}
 
 	// The app itself: a right click on the hero, or its ⋯ button.
