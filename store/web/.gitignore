@@ -1,4 +1,4 @@
-# Copied from packages/ui by sync.mjs (predev/prebuild).
+# Copied from packages/ui by sync.ts (predev/prebuild).
 /static/ui.css
 /static/favicon.svg
 /build/

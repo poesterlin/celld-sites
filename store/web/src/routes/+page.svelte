@@ -2,9 +2,9 @@
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
 	import AppCard from "@hamstr/ui/components/AppCard.svelte";
-	import { ICON } from "@hamstr/ui/icons.js";
-	import { plural } from "@hamstr/ui/format.js";
-	import { api } from "#lib/api.js";
+	import { ICON } from "@hamstr/ui/icons.ts";
+	import { plural } from "@hamstr/ui/format.ts";
+	import { api } from "#lib/api.ts";
 
 	const query = $derived(page.url.searchParams.get("q") ?? "");
 	const tag = $derived(page.url.searchParams.get("tag") ?? "");

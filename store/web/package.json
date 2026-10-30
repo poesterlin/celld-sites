@@ -3,9 +3,9 @@
 	"private": true,
 	"version": "0.1.0",
 	"type": "module",
-	"description": "The Hamstr Store's web UI: a SvelteKit single-page app on the shared Hamstr design system, served by ../server.mjs",
+	"description": "The Hamstr Store's web UI: a SvelteKit single-page app on the shared Hamstr design system, served by ../server.ts",
 	"scripts": {
-		"sync-ui": "node ../../packages/ui/sync.mjs static",
+		"sync-ui": "node ../../packages/ui/sync.ts static",
 		"predev": "npm run sync-ui",
 		"dev": "vite dev",
 		"prebuild": "npm run sync-ui",

@@ -3,9 +3,9 @@
 	// slim bar, like a grain in Hamstr. On phones it opens in its own tab.
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { ICON } from "@hamstr/ui/icons.js";
+	import { ICON } from "@hamstr/ui/icons.ts";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
-	import { api } from "#lib/api.js";
+	import { api } from "#lib/api.ts";
 
 	const id = $derived(page.params.id);
 

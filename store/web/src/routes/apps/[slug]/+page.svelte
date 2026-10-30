@@ -6,11 +6,11 @@
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
 	import Releases from "@hamstr/ui/components/Releases.svelte";
-	import { ICON, sized } from "@hamstr/ui/icons.js";
-	import { shortDate, size } from "@hamstr/ui/format.js";
-	import { toast } from "@hamstr/ui/state.svelte.js";
-	import { api, latestRelease } from "#lib/api.js";
-	import { appInHome, home, parseHome, setHome } from "#lib/hamstr.svelte.js";
+	import { ICON, sized } from "@hamstr/ui/icons.ts";
+	import { shortDate, size } from "@hamstr/ui/format.ts";
+	import { toast } from "@hamstr/ui/state.svelte.ts";
+	import { api, latestRelease } from "#lib/api.ts";
+	import { appInHome, home, parseHome, setHome } from "#lib/hamstr.svelte.ts";
 
 	const slug = $derived(page.params.slug);
 

@@ -1,5 +1,5 @@
 <script>
-	import { ICON } from "@hamstr/ui/icons.js";
+	import { ICON } from "@hamstr/ui/icons.ts";
 </script>
 
 <svelte:head><title>How it works · Hamstr Store</title></svelte:head>
