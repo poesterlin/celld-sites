@@ -25,8 +25,10 @@ process.env.PROTOCOL_HEADER ??= "x-forwarded-proto";
 process.env.BODY_SIZE_LIMIT ??= "1100M";
 
 let loading;
+// The adapter-node output; a variable so tsc does not need it before `npm run build`.
+const BUILD_ENTRY = "./build/handler.js";
 function handler() {
-	loading ??= import("./build/handler.js")
+	loading ??= import(BUILD_ENTRY)
 		.then((module: any) => module.handler)
 		.catch((err) => {
 			throw new Error(`hamstr: build/handler.js is missing — run "npm run build" first (${err.message})`);
