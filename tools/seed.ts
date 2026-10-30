@@ -2,9 +2,9 @@
 // Seed (or update) a site's Durable Objects by replaying object method calls
 // through the router's admin API, so data goes through the site's own code.
 //
-//   node tools/seed.mjs <hostname> <calls.json>              production node
-//   node tools/seed.mjs --preview <site-dir> <calls.json>    local preview (tools/preview.sh)
-//   node tools/seed.mjs <hostname> --call Notes main export  one call, print the result
+//   node tools/seed.ts <hostname> <calls.json>              production node
+//   node tools/seed.ts --preview <site-dir> <calls.json>    local preview (tools/preview.sh)
+//   node tools/seed.ts <hostname> --call Notes main export  one call, print the result
 //
 // calls.json: [{ "class": "Notes", "name": "main", "method": "seed", "args": [[...]] }, ...]
 // Add "version": "<id>" to a call to seed a version that is uploaded but not
@@ -24,7 +24,7 @@ const die = (msg) => {
 	console.error(`seed: ${msg}`);
 	process.exit(1);
 };
-const usage = "usage: node tools/seed.mjs <hostname>|--preview <site-dir> <calls.json> | --call <class> <name> <method> [jsonArgs]";
+const usage = "usage: node tools/seed.ts <hostname>|--preview <site-dir> <calls.json> | --call <class> <name> <method> [jsonArgs]";
 
 let target;
 if (argv[0] === "--preview") {
@@ -60,7 +60,7 @@ async function call(c) {
 		// node:http, not fetch(): fetch silently drops a custom Host header, and the
 		// admin API only answers on the admin hostname.
 		const url = new URL(`${target.api}/call?${query}`);
-		const { status, text } = await new Promise((done, failed) => {
+		const { status, text } = await new Promise<{ status: number; text: string }>((done, failed) => {
 			const req = request(
 				url,
 				{

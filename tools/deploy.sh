@@ -30,5 +30,5 @@ done
 if [ "$build" = 1 ] && [ -f "$site/package.json" ] && grep -q '"build"[[:space:]]*:' "$site/package.json"; then
 	(cd "$site" && npm run build >/dev/null)
 fi
-node "$project/tools/pack.mjs" "$site" "$bundle"
+node "$project/tools/pack.ts" "$site" "$bundle"
 tar -C "$bundle" -cf - . | docker compose --project-directory "$project" exec -T celld /app/push.sh "$host" "$@"

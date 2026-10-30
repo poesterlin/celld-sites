@@ -1,12 +1,12 @@
 // Security regression tests: the isolate boundary, per-site quotas and path
 // handling, against local celld dev nodes. Never production.
-// Run: npm test --prefix tools   (or: node --test tests/security.test.mjs)
+// Run: npm test --prefix tools   (or: node --test tests/security.test.ts)
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { Node } from "./harness.mjs";
+import { Node } from "./harness.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "celld-security-"));
 const host = "guard.test";
@@ -14,7 +14,7 @@ const main = new Node(8781);
 const quota = new Node(8782);
 const flood = new Node(8783);
 
-const site = (n, path, opts = {}) => n.request(opts.method ?? "GET", path, { host, headers: opts.headers, body: opts.body });
+const site = (n: Node, path: string, opts: { method?: string; headers?: Record<string, string>; body?: string | Buffer } = {}) => n.request(opts.method ?? "GET", path, { host, headers: opts.headers, body: opts.body });
 const obj = async (name, method = "get", args = [], n = quota) =>
 	(await site(n, `/obj?name=${encodeURIComponent(name)}&method=${encodeURIComponent(method)}&args=${encodeURIComponent(JSON.stringify(args))}`)).json();
 

@@ -1,4 +1,4 @@
-// Usage: node tools/pack.mjs <site-dir> <out-dir>
+// Usage: node tools/pack.ts <site-dir> <out-dir>
 // Packs a built site into a deploy bundle in <out-dir>: the server code bundled
 // into one module, the static files, and a version id derived from both. Run
 // the site's build first. node/push.sh uploads a bundle (tools/deploy.sh does
@@ -144,7 +144,7 @@ const TYPES = {
 };
 // Server-side files adapters write next to the assets; never serve them.
 const SERVER_ONLY = new Set(["_worker.js", "_routes.json", ".assetsignore", "_headers", "_redirects", ...exclude]);
-if (!outDir) fail("usage: node tools/pack.mjs <site-dir> <out-dir>");
+if (!outDir) fail("usage: node tools/pack.ts <site-dir> <out-dir>");
 
 // Walk the static directory without following symlinks: a link in a build folder
 // could otherwise publish any file this user can read.

@@ -36,7 +36,7 @@ compose() { docker compose --project-directory "$project" "$@"; }
 
 rm -rf "$site/celld-adapter"
 mkdir "$site/celld-adapter"
-cp "$project/adapters/emdash/entry.mjs" "$project/adapters/emdash/objects.mjs" "$site/celld-adapter/"
+cp "$project/adapters/emdash/entry.ts" "$project/adapters/emdash/objects.ts" "$site/celld-adapter/"
 
 # Same config, Durable Object database. Refuse a config this doesn't recognise
 # rather than build a site that would look for a D1 binding.
@@ -110,7 +110,7 @@ fi
 
 bundle=$(mktemp -d)
 trap 'rm -rf "$bundle"' EXIT
-node "$project/tools/pack.mjs" "$site" "$bundle"
+node "$project/tools/pack.ts" "$site" "$bundle"
 tar -C "$bundle" -cf - . | compose exec -T celld /app/push.sh "$host" "$@"
 
 # First deploy: apply the seed (setup step 1). Requests go to the node inside the

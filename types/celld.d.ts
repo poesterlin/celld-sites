@@ -20,6 +20,7 @@ declare module "cloudflare:workers" {
 		sql: SqlStorage;
 		get<T = unknown>(key: string): Promise<T | undefined>;
 		put<T = unknown>(key: string, value: T): Promise<void>;
+		put(entries: Record<string, unknown>): Promise<void>;
 		delete(key: string): Promise<boolean>;
 		list<T = unknown>(options?: { prefix?: string; limit?: number }): Promise<Map<string, T>>;
 	}

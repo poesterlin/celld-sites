@@ -11,7 +11,7 @@ export class Kv extends DurableObject {
 	}
 	get(k) {
 		const row = this.#sql().exec("SELECT v FROM kv WHERE k = ?", k).toArray()[0];
-		return row ? JSON.parse(row.v) : null;
+		return row ? JSON.parse(String(row.v)) : null;
 	}
 	echo(...args) {
 		return args;
@@ -84,7 +84,7 @@ export class Store extends DurableObject {
 			parent: rows("SELECT id, label, data, n FROM parent ORDER BY id").map((r) => ({ ...r, data: hex(r.data) })),
 			child: rows("SELECT * FROM child ORDER BY id"),
 			tags: rows("SELECT * FROM tags ORDER BY tag"),
-			log: rows("SELECT rowid, msg, len FROM log ORDER BY rowid").map((r) => [r.rowid, r.msg.slice(0, 20), r.len]),
+			log: rows("SELECT rowid, msg, len FROM log ORDER BY rowid").map((r) => [r.rowid, String(r.msg).slice(0, 20), r.len]),
 			search: rows("SELECT rowid FROM search WHERE search MATCH 'hamsters' ORDER BY rowid").map((r) => r.rowid),
 			schema: rows("SELECT type, name FROM sqlite_master WHERE name NOT LIKE '\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite%' ORDER BY type, name").map((r) => `${r.type} ${r.name}`),
 			kv: [...(await this.ctx.storage.list())].map(([k, v]) => [k, show(v)]),

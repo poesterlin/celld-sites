@@ -11,7 +11,7 @@
 #
 # The preview answers on any hostname (http://localhost:<port>/ by default).
 # PREVIEW_HOST=0.0.0.0 makes it reachable from other machines on the network.
-# Seed it with: tools/seed.mjs --preview <site-dir> <seed.json>
+# Seed it with: tools/seed.ts --preview <site-dir> <seed.json>
 set -eu
 usage="usage: tools/preview.sh <site-dir> [port|--stop|--reset]"
 site=$(cd "${1:?$usage}" && pwd)
@@ -55,7 +55,7 @@ hash=$(printf '%s' "$token" | sha256sum | cut -d' ' -f1)
 
 # The router app, regenerated each run so router changes are picked up on restart.
 mkdir -p "$state/router"
-cp "$project/router/index.js" "$state/router/index.js"
+cp "$project/router/index.ts" "$state/router/index.ts"
 sed -e "s/@ADMIN_TOKEN_SHA256@/$hash/" -e "s/@READ_TOKEN_SHA256@/$hash/" \
 	-e "s/@ADMIN_HOST@/admin.internal/" -e "s/@DEFAULT_SITE@/preview/" -e "s/@OPERATOR_URL@//" -e "s/@SITE_TIMEOUT_SECS@/30/" \
 	-e "s/@SITE_MAX_INFLIGHT@/${SITE_MAX_INFLIGHT:-128}/" -e "s/@SITE_MAX_OBJECTS@/${SITE_MAX_OBJECTS:-1000}/" -e "s/@SITE_MAX_SUBREQUESTS@/${SITE_MAX_SUBREQUESTS:-1000}/" \
@@ -85,7 +85,7 @@ trap 'rm -rf "$bundle"' EXIT
 if [ -f "$site/package.json" ] && grep -q '"build"[[:space:]]*:' "$site/package.json"; then
 	(cd "$site" && npm run build >/dev/null)
 fi
-node "$project/tools/pack.mjs" "$site" "$bundle"
+node "$project/tools/pack.ts" "$site" "$bundle"
 tar -C "$bundle" -cf - . |
 	ADMIN_TOKEN="$token" ADMIN_HOST=admin.internal CELLD_ADMIN_API="http://127.0.0.1:$port" sh "$project/node/push.sh" preview --watch 0 >/dev/null
 echo "preview: http://localhost:$port/"

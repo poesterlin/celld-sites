@@ -6,14 +6,14 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, syml
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { Node, project, sha256 } from "./harness.mjs";
+import { Node, project, sha256 } from "./harness.ts";
 
 const fixtures = join(project, "tests/fixtures");
 const node = new Node();
 let worker; // activation result of the worker fixture
 let spa; // activation result of the spa fixture
 const W = "worker.test";
-const site = (path, opts = {}) => node.request(opts.method ?? "GET", path, { host: opts.host ?? W, headers: opts.headers, body: opts.body });
+const site = (path: string, opts: { method?: string; host?: string; headers?: Record<string, string>; body?: string | Buffer } = {}) => node.request(opts.method ?? "GET", path, { host: opts.host ?? W, headers: opts.headers, body: opts.body });
 const obj = async (cls, name, method, args = [], host = W) =>
 	(await site(`/obj?class=${encodeURIComponent(cls)}&name=${encodeURIComponent(name)}&method=${encodeURIComponent(method)}&args=${encodeURIComponent(JSON.stringify(args))}`, { host })).json();
 
@@ -74,7 +74,7 @@ describe("deploy: upload, code, activate", () => {
 		assert.equal(node.deploy(join(fixtures, "worker"), W).version, worker.version);
 	});
 	it("validates file uploads and checks their hash", async () => {
-		const put = (hash, opts) => node.admin("PUT", `/blob?hash=${hash}`, { body: "x", ...opts });
+		const put = (hash: string, opts: Record<string, any> = {}) => node.admin("PUT", `/blob?hash=${hash}`, { body: "x", ...opts });
 		assert.equal((await put("nothex")).status, 400);
 		assert.equal((await put(sha256("y"))).status, 400, "body must match the hash");
 		assert.equal((await put(sha256("x"), { chunked: true })).status, 411);
@@ -170,10 +170,10 @@ describe("routing", () => {
 	it("sets content types and cache headers", async () => {
 		const hashed = await site("/assets/app-Ab12Cd34.js");
 		assert.equal(hashed.headers["cache-control"], "public, immutable, max-age=31536000");
-		assert.match(hashed.headers["content-type"], /^text\/javascript/);
+		assert.match(String(hashed.headers["content-type"]), /^text\/javascript/);
 		const plain = await site("/hello.txt");
 		assert.equal(plain.headers["cache-control"], "no-cache");
-		assert.match(plain.headers["content-type"], /^text\/plain/);
+		assert.match(String(plain.headers["content-type"]), /^text\/plain/);
 	});
 	it("answers HEAD without a body", async () => {
 		const r = await site("/about", { method: "HEAD" });
@@ -381,7 +381,7 @@ describe("egress allowlist", () => {
 	try { await fetch("https://example.org/"); return new Response("reached the proxy"); }
 	catch (e) { return new Response("no network: " + e.message, { status: 500 }); }
 } };`);
-			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", assets: "public", objects: "objects.js", check: "/needs-net" }));
+			writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", assets: "public", objects: "objects.ts", check: "/needs-net" }));
 			node.deploy(join(fixtures, "worker"), "egresscheck.test");
 			const without = node.tryDeploy(dir, "egresscheck.test");
 			assert.equal(without.status, 1, "no allowlist: the check sees no network");
@@ -432,7 +432,7 @@ describe("aliases", () => {
 });
 
 describe("admin object calls (seeding)", () => {
-	const call = (q, body, token) => node.admin("POST", `/call?${q}`, { body, token, headers: { "content-type": "application/json" } });
+	const call = (q: string, body: string, token?: string) => node.admin("POST", `/call?${q}`, { body, token, headers: { "content-type": "application/json" } });
 	it("validates parameters and body", async () => {
 		assert.equal((await call("host=worker.test&class=Kv&name=x", "[]")).status, 400);
 		assert.equal((await call("host=worker.test&class=Kv&name=&method=get", "[]")).status, 400);
@@ -495,7 +495,7 @@ describe("backups: dump and restore", () => {
 	const dump = async (host) => {
 		const r = await node.admin("GET", `/dump?host=${host}`);
 		assert.equal(r.status, 200, r.text);
-		assert.match(r.headers["content-type"], /ndjson/);
+		assert.match(String(r.headers["content-type"]), /ndjson/);
 		return { text: r.text, lines: r.text.trim().split("\n").map((l) => JSON.parse(l)) };
 	};
 	const restore = (host, body, confirm = host) => node.admin("POST", `/restore?host=${host}&confirm=${confirm}`, { body });
@@ -674,17 +674,17 @@ describe("static files: validators, HEAD, cache", () => {
 });
 
 describe("deploy check and watch", () => {
-	// A copy of the worker fixture with its own worker.js and celld.json "check" path.
-	const variant = (worker, extra = {}) => {
+	// A copy of the worker fixture with its own worker.ts and celld.json "check" path.
+	const variant = (worker: string, extra: Record<string, unknown> = {}) => {
 		const dir = mkdtempSync(join(tmpdir(), "celld-api-check-"));
 		cpSync(join(fixtures, "worker"), dir, { recursive: true });
-		writeFileSync(join(dir, "worker.js"), worker);
-		writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.js", assets: "public", objects: "objects.js", check: "/check", ...extra }));
+		writeFileSync(join(dir, "worker.ts"), worker);
+		writeFileSync(join(dir, "celld.json"), JSON.stringify({ worker: "worker.ts", assets: "public", objects: "objects.ts", check: "/check", ...extra }));
 		return dir;
 	};
 	const dirs = [];
 	after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-	const make = (worker, extra) => {
+	const make = (worker: string, extra: Record<string, unknown> = {}) => {
 		const d = variant(worker, extra);
 		dirs.push(d);
 		return d;
@@ -701,11 +701,11 @@ export default { async fetch(req) {
 
 	it("refuses to activate a version whose check fails", async () => {
 		const good = node.deploy(join(fixtures, "worker"), "check.test");
-		for (const [worker, why] of [
+		for (const [worker, why] of ([
 			['throw new Error("broken at load");\nexport default { fetch() {} };', /broken at load/],
 			['export default { fetch() { return new Response("down", { status: 503 }); } };', /"status":503/],
 			['export default { fetch() { return new Promise((r) => setTimeout(r, 10_000)); } };', /"status":504/],
-		]) {
+		] as [string, RegExp][])) {
 			const r = node.tryDeploy(make(worker), "check.test");
 			assert.equal(r.status, 1, r.stderr);
 			assert.match(r.stderr, /check failed, not activated/);
@@ -876,7 +876,7 @@ describe("packer", () => {
 	const pack = (dir) => {
 		const out = mkdtempSync(join(tmpdir(), "pack-out-"));
 		try {
-			execFileSync("node", [join(project, "tools/pack.mjs"), dir, out], { stdio: ["ignore", "ignore", "pipe"], env: node.env });
+			execFileSync("node", [join(project, "tools/pack.ts"), dir, out], { stdio: ["ignore", "ignore", "pipe"], env: node.env });
 			return { ok: true };
 		} catch (e) {
 			return { ok: false, error: e.stderr.toString() };
