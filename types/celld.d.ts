@@ -9,6 +9,7 @@ declare module "cloudflare:workers" {
 	interface SqlCursor<T = Record<string, unknown>> {
 		one(): T;
 		toArray(): T[];
+		[Symbol.iterator](): IterableIterator<T>;
 		rowsWritten?: number;
 	}
 
@@ -23,6 +24,7 @@ declare module "cloudflare:workers" {
 		put(entries: Record<string, unknown>): Promise<void>;
 		delete(key: string): Promise<boolean>;
 		deleteAll(): Promise<void>;
+		transactionSync<T>(fn: () => T): T;
 		list<T = unknown>(options?: { prefix?: string; limit?: number; startAfter?: string }): Promise<Map<string, T>>;
 	}
 

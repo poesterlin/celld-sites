@@ -1,4 +1,4 @@
-// Durable Object classes for an EmDash site on celld-sites (see entry.mjs).
+// Durable Object classes for an EmDash site on celld-sites (see entry.ts).
 // Each class has one instance per site: EmDashDB "emdash" (the CMS database),
 // EmDashMedia "media" (uploaded files) and EmDashKV "session" (Astro sessions).
 import { DurableObject } from "cloudflare:workers";
@@ -56,7 +56,7 @@ export class EmDashMedia extends DurableObject {
 		if (!meta) return null;
 		const bytes = new Uint8Array(meta.size);
 		let at = 0;
-		for (const { data } of this.ctx.storage.sql.exec("SELECT data FROM chunks WHERE key = ? ORDER BY n", key)) {
+		for (const { data } of this.ctx.storage.sql.exec<{ data: ArrayBuffer }>("SELECT data FROM chunks WHERE key = ? ORDER BY n", key)) {
 			bytes.set(new Uint8Array(data), at);
 			at += data.byteLength;
 		}

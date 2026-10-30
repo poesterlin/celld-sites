@@ -1,0 +1,31 @@
+{
+	"compilerOptions": {
+		"target": "ES2023",
+		"lib": [
+			"ES2023"
+		],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"useDefineForClassFields": true,
+		"isolatedModules": true,
+		"types": [
+			"node"
+		],
+		"strict": false,
+		"noImplicitAny": false,
+		"strictNullChecks": false,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false
+	},
+	"include": [
+		"./*.ts",
+		"./types.d.ts",
+		"../../types/celld.d.ts"
+	]
+}
