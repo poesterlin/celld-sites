@@ -115,6 +115,40 @@ try {
 	assert.match(exported.headers["content-disposition"], /filename="Kitchen \d{4}-\d{2}-\d{2}\.json"/);
 	assert.deepEqual(exported.json.pins.map((p) => [p.text, p.author]), [["Buy oat milk", "Ada Lovelace"]]);
 
+	// Backup and restore: celld's dump of the board's object, for any app.
+	t = performance.now();
+	const backup = await ada.request("GET", `/api/grains/${kitchen.id}/backup`, { host: SHELL, headers: { "sec-fetch-site": "same-origin" } });
+	assert.equal(backup.status, 200, backup.text);
+	assert.match(backup.headers["content-disposition"], /filename="Kitchen \d{4}-\d{2}-\d{2}\.hamstr-backup"/);
+	const lines = backup.text.trim().split("\n").map((l) => JSON.parse(l));
+	assert.deepEqual([lines[0].type, lines[1].type, lines.at(-1).type], ["hamstr-backup", "celld-dump", "end"]);
+	assert.ok(lines.some((l) => l.type === "rows" && JSON.stringify(l.rows).includes("Buy oat milk")), "the pin is in the backup");
+	console.log(`backup of a board: ${ms(t)}, ${backup.text.length} bytes`);
+	await ada.request("POST", "/pin", { host: host(kitchen.id), headers: FORM, body: "text=Pinned+after+the+backup&color=sky" });
+	assert.match((await ada.request("GET", "/", { host: host(kitchen.id) })).text, /Pinned after the backup/);
+	const upload = (method, path) =>
+		ada.request(method, path, { host: SHELL, headers: { ...ORIGIN, "content-type": "application/octet-stream" }, body: backup.text });
+	t = performance.now();
+	const restored = await upload("PUT", `/api/grains/${kitchen.id}/backup`);
+	assert.equal(restored.status, 200, restored.text);
+	console.log(`restore (safety copy, then restore): ${ms(t)}`);
+	const after = (await ada.request("GET", "/", { host: host(kitchen.id) })).text;
+	assert.match(after, /Buy oat milk/);
+	assert.doesNotMatch(after, /Pinned after the backup/);
+	// The app keeps working on restored data.
+	assert.equal((await ada.request("POST", "/pin", { host: host(kitchen.id), headers: FORM, body: "text=Still+works&color=sun" })).status, 303);
+	assert.match((await ada.request("GET", "/", { host: host(kitchen.id) })).text, /Still works/);
+	// Import: a new board from the backup.
+	const imported = await upload("POST", "/api/apps/pinboard/import");
+	assert.equal(imported.status, 201, imported.text);
+	const copy = imported.json.grain;
+	await go(ada, (await api(ada, "POST", `/api/grains/${copy.id}/open`, { path: "/" })).json.url);
+	const copyBoard = (await ada.request("GET", "/", { host: host(copy.id) })).text;
+	assert.match(copyBoard, /Buy oat milk/);
+	assert.doesNotMatch(copyBoard, /Still works/);
+	await api(ada, "POST", `/api/grains/${copy.id}/trash`, {});
+	assert.equal((await api(ada, "DELETE", `/api/grains/${copy.id}`)).status, 200);
+
 	t = performance.now();
 	const N = 50;
 	for (let i = 0; i < N; i++) assert.equal((await ada.request("GET", "/whoami", { host: host(kitchen.id) })).status, 200);
@@ -150,7 +184,7 @@ try {
 	const opened = await api(ada, "POST", "/api/apps/pinboard/open", {});
 	assert.equal(opened.status, 200, opened.text);
 	assert.equal(opened.json.grain.id, kitchen.id);
-	console.log("e2e: install, grains, identity, export, privacy and deletion — OK");
+	console.log("e2e: install, grains, identity, export, backup and restore, privacy and deletion — OK");
 } finally {
 	await hamstr?.close();
 	await node.stop();

@@ -6,6 +6,8 @@
 #   tools/admin.sh POST '/activate?host=a.example.com&version=<id>'        roll back to a stored version
 #   tools/admin.sh DELETE '/site?id=a.example.com&confirm=a.example.com'  delete a site and its data
 #   printf '["api.example.com"]\n' | tools/admin.sh PUT '/egress?host=a.example.com' -  allow outbound fetch()
+#   tools/admin.sh GET '/dump?host=a.example.com' > a.backup               back up a site's objects
+#   tools/admin.sh POST '/restore?host=a.example.com&confirm=a.example.com' - < a.backup  put them back
 #
 # CELLD_COMPOSE_DIR selects another compose project (e.g. the pull-only
 # production stack in ~/projects/services/celld-sites-deploy).

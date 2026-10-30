@@ -83,8 +83,22 @@ path through celld as the owner (`X-Hamstr-Role: owner`, plus
 `X-Hamstr-Export: 1`) and returns your answer as an attachment named after the
 item and the date. Answer 200 with any format (JSON, CSV, a zip); the
 extension comes from your `Content-Disposition` filename or the content type.
-Without `export`, the item's data stays in its Durable Objects and only the
-app can read it: celld has no generic per-site export.
+Without `export`, owners still have backups (below), just not a readable
+format.
+
+**Backups, for every app.** Every item has *Download backup* and *Restore from
+backup…* on its menus, and an app's page has *Import a backup…* (a new item
+from a backup). A backup (`.hamstr-backup`) is a header line (app, app
+version, item name, time) followed by celld's dump of the item's objects:
+every table, row and stored key, no app code involved (see "Back up and
+restore" in the [celld-sites README](../README.md)). Restoring replaces the
+item's data: Hamstr first takes a safety copy, holds the item's traffic (503)
+while it runs, and puts the safety copy back if the restore fails half-way.
+A backup only goes into the same app, and not into an older version of it than
+the one that made it (update the app first); an older backup is migrated by the
+app's own code when the item next starts. API: `GET /api/grains/<id>/backup`,
+`PUT /api/grains/<id>/backup` (the file as `application/octet-stream`),
+`POST /api/apps/<slug>/import`; owner only, up to 1 GiB.
 
 Notes:
 
@@ -137,7 +151,7 @@ plain-Node modules in `hamstr/lib` hold the platform core, the celld and OIDC
 clients and the proxy, so the tests drive them without a browser.
 
 ```sh
-npm test --prefix hamstr            # 33 tests: mock IdP, mock celld, real Hamstr Store
+npm test --prefix hamstr            # 34 tests: mock IdP, mock celld, real Hamstr Store
 npm run e2e --prefix hamstr         # real celld dev node, real `hamstr publish`, Pinboard
 npm run playground --prefix hamstr  # http://hamstr.localhost:8795, seeded
 ```
@@ -178,5 +192,8 @@ Limits worth knowing:
   `Set-Cookie` headers). For apps you don't trust, use a separate grain domain.
 - The runtime boundary is celld's (isolates in one process), not a VM: see the
   hostile-tenant checklist in docs/SECURITY.md.
-- No Powerbox yet (grains requesting access to each other), no per-grain
-  backup download, no WebSockets (celld has none).
+- No Powerbox yet (grains requesting access to each other), no WebSockets
+  (celld has none).
+- A backup contains the item's data as stored, readable by anyone who has the
+  file; restoring a hand-edited backup runs its `CREATE` statements (only
+  `CREATE TABLE/INDEX/TRIGGER/VIEW` are accepted) in that item's own database.

@@ -32,8 +32,12 @@
 	<div class="cap">
 		<span class="cap-icon">{@html ICON.download}</span>
 		<div>
-			<strong>{manifest?.export ? "Download your data" : "No data download"}</strong>
-			<p class="dim small">{manifest?.export ? "Owners can download each item's data from its menu." : `The app does not offer an export yet; its data stays inside ${place}.`}</p>
+			<strong>{manifest?.export ? "Download and back up your data" : "Back up and restore"}</strong>
+			<p class="dim small">
+				{manifest?.export
+					? "Download each item's data in the app's own format, or a full backup to restore later, from the item's menu."
+					: "Download a full backup of any item from its menu, and restore it later or as a new item. The app has no export in a readable format of its own."}
+			</p>
 		</div>
 	</div>
 	<div class="cap">

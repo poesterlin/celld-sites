@@ -3,12 +3,15 @@
 	"private": true,
 	"version": "0.1.0",
 	"type": "module",
-	"description": "The Hamstr app format: hamstr.json manifests and packed bundles, validated the same way by the store, the CLI and Hamstr",
+	"description": "The Hamstr app format: hamstr.json manifests, packed bundles and .hamstr app files, validated the same way by the store, the CLI and Hamstr",
 	"exports": {
 		"./manifest.mjs": "./manifest.mjs",
-		"./bundle.mjs": "./bundle.mjs"
+		"./bundle.mjs": "./bundle.mjs",
+		"./appfile.mjs": "./appfile.mjs"
 	},
-	"engines": { "node": ">=22.5" },
+	"engines": {
+		"node": ">=22.5"
+	},
 	"dependencies": {
 		"tar-stream": "^3.2.2"
 	}

@@ -87,7 +87,7 @@ export async function mockIdp({ clientId = "hamstr-test", clientSecret = "s3cret
 
 /** A celld stand-in: records admin calls, answers them, and echoes grain requests. */
 export async function mockCelld({ adminToken = "admin-token", proxyToken = "proxy-token" } = {}) {
-	const node = { adminToken, proxyToken, calls: [], sites: new Map(), failCheck: false };
+	const node = { adminToken, proxyToken, calls: [], sites: new Map(), failCheck: false, data: new Map(), failRestore: null };
 	const server = createServer(async (req, res) => {
 		const chunks = [];
 		for await (const chunk of req) chunks.push(chunk);
@@ -99,6 +99,26 @@ export async function mockCelld({ adminToken = "admin-token", proxyToken = "prox
 			const path = url.pathname.replace(/^\/__admin/, "");
 			node.calls.push({ method: req.method, path, query: Object.fromEntries(url.searchParams), body: body.toString() });
 			if (path === "/blobs/missing") return send(200, { missing: JSON.parse(body.toString()) });
+			// Backups: a grain's "data" is one string, dumped and restored as JSON lines.
+			if (path === "/dump") {
+				const host = url.searchParams.get("host");
+				if (!node.sites.has(host)) return send(404, { error: "no site" });
+				const lines = [{ type: "celld-dump", format: 1, site: host }, { type: "note", value: node.data.get(host) ?? "" }, { type: "end", objects: 0, rows: 0, keys: 0 }];
+				return res.writeHead(200, { "content-type": "application/x-ndjson" }).end(lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+			}
+			if (path === "/restore") {
+				const host = url.searchParams.get("host");
+				if (url.searchParams.get("confirm") !== host || !node.sites.has(host)) return send(400, { error: "confirm" });
+				const lines = body.toString().trim().split("\n").map((l) => JSON.parse(l));
+				if (lines[0]?.type !== "celld-dump" || lines.at(-1)?.type !== "end") return send(422, { error: "restore failed: not a backup", changed: false });
+				if (node.failRestore === host) {
+					node.failRestore = null;
+					node.data.set(host, "half restored");
+					return send(422, { error: "restore failed: boom", changed: true });
+				}
+				node.data.set(host, lines.find((l) => l.type === "note")?.value ?? "");
+				return send(200, { site: host, objects: 0, rows: 0, keys: 0, removed: 0 });
+			}
 			if (path === "/check") return send(200, node.failCheck ? { ok: false, status: 500, path: "/", error: "boom" } : { ok: true, status: 200, path: "/" });
 			if (path === "/activate") node.sites.set(url.searchParams.get("host"), url.searchParams.get("version"));
 			if (path === "/site" && req.method === "DELETE") {

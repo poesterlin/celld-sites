@@ -1,0 +1,27 @@
+{
+	"name": "@hamstr/cli",
+	"version": "0.2.0",
+	"description": "The hamstr command: publish little apps to the Hamstr Store and install them into a celld node",
+	"type": "module",
+	"license": "MIT",
+	"bin": {
+		"hamstr": "dist/hamstr.mjs"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"build": "node build.mjs",
+		"prepack": "node build.mjs"
+	},
+	"dependencies": {
+		"esbuild": "0.28.2"
+	},
+	"devDependencies": {
+		"tar-stream": "^3.2.2"
+	}
+}

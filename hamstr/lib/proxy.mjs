@@ -33,6 +33,8 @@ export async function grainRequest(event, grainId) {
 	const request = event.request;
 	const grain = core.q.grain.get(grainId);
 	if (!grain || grain.trashed_at) return text(404, "No such grain\n");
+	// Mid-restore the data is half old, half new: nobody gets to see or change it.
+	if (core.isRestoring(grain.id)) return grainNotice(core, 503, grain, "This item is being restored from a backup. Reload in a moment.");
 
 	const rawPath = event.url.pathname + event.url.search;
 	const pathname = event.url.pathname;

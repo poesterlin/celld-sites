@@ -5,6 +5,7 @@
 	import TopBar from "@hamstr/ui/components/TopBar.svelte";
 	import ContextMenu from "@hamstr/ui/components/ContextMenu.svelte";
 	import UninstallModal from "#lib/components/UninstallModal.svelte";
+	import RestoreModal from "#lib/components/RestoreModal.svelte";
 
 	let { data, children } = $props();
 
@@ -82,4 +83,5 @@
 {#if me}
 	<ContextMenu />
 	<UninstallModal />
+	<RestoreModal />
 {/if}

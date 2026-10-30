@@ -1,10 +1,13 @@
-// "Download data": fetch the export, then save it under the name the server
-// chose. Fetching first (instead of a plain link) turns errors into a toast
-// rather than a downloaded error page.
+// "Download data" and "Download backup": fetch the file, then save it under the
+// name the server chose. Fetching first (instead of a plain link) turns errors
+// into a toast rather than a downloaded error page.
 import { ApiError } from "./api.js";
 
-export async function downloadGrain(id) {
-	const res = await fetch(`/api/grains/${id}/export`, { credentials: "same-origin" });
+export const downloadGrain = (id) => download(`/api/grains/${id}/export`);
+export const downloadBackup = (id) => download(`/api/grains/${id}/backup`);
+
+async function download(path) {
+	const res = await fetch(path, { credentials: "same-origin" });
 	if (!res.ok) {
 		let message = `Download failed (${res.status})`;
 		try {

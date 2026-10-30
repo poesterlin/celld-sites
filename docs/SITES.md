@@ -229,6 +229,13 @@ hostname is reachable in a browser only if Traefik routes it to celld:
 `SITES_RULE` in `.env` is a pattern for site hostnames, so a matching name
 works as soon as it is deployed.
 
+**Backups.** The router can dump and restore any site's objects without your
+code's help (`/__admin/dump`, `/__admin/restore`; see the README). It adds a
+method named `__celldData` to every class your site exports, so don't use
+method names starting with `__celld`: `OBJECTS.call` refuses them. A class
+must keep its `ctx` (extend `DurableObject`, or store `state` as `this.state`)
+for its storage to be reachable.
+
 **Seeding.** Sites have no secrets, so they can't guard a seed route. Put
 `seed()`/`export()` methods on the object classes; `tools/seed.mjs` calls them
 through the admin endpoint `POST /__admin/call?host=&class=&name=&method=`

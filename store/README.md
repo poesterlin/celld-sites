@@ -128,7 +128,7 @@ data is yours" property.
 | `web/` | store container | the web UI: a SvelteKit single-page app built on `packages/ui` (the same components as Hamstr's own store pages) |
 | `../packages/app-format/manifest.mjs` | store, CLI, Hamstr | `hamstr.json` schema and egress host rules |
 | `../packages/app-format/bundle.mjs` | store, CLI, Hamstr | tar.gz validation: safe paths, regular files only, size caps, blob hash equality, `code.json` cross-check |
-| `cli/hamstr.mjs` | publisher/developer machine | register/login, publish (build + pack + upload), install/update/list/report |
+| `cli/` | publisher/developer machine | the `hamstr` CLI (npm package `@hamstr/cli`, see [cli/README.md](cli/README.md)): register/login, publish (build + pack + upload), install into a celld node over its admin API or a compose stack, update/list/report. Needs no checkout of this repo |
 | `celld-demo` (compose) | separate node | disposable per-session copies for "Try it"; own bucket/token, no egress |
 | `examples/` | repo | demo apps: `secret-santa` (one worker, one Durable Object) and `pinboard` (a Hamstr grain app) |
 
@@ -198,8 +198,10 @@ reports(id, release_id, reason, created_at, resolved)
 events(id, at, actor, action, target, note)
 ```
 
-`status` is `uploading → pending → published → yanked`, with `removed` reserved
-for operator deletion (the prototype hard-deletes after logging the event).
+`status` is `uploading → pending → published`, then `yanked` (withdrawn: hidden,
+downloads answer 410) or `removed` (deleted by its publisher or taken down by
+an operator: files deleted, downloads answer 404). A removed release keeps its
+row and hashes, so its version is never free again.
 A release row exists before its bundle does; the upload is the second step, so
 a bad manifest fails before a large body is sent and abandoned uploads are
 cleaned up after 24 hours.
@@ -234,8 +236,11 @@ second copy of the metadata inside the archive.
 3. `PUT .../bundle` streams the tar.gz (Content-Length required, bounded),
    hashes it, validates the archive, stores it by hash, and marks the release
    `published` (or `pending` in review mode).
-4. A version id can never be reused with different content. A release can be
-   yanked; the blob is deleted when no release references it.
+4. A version can never be reused with different content: publishing an
+   existing version fails, and deleting a release or an app only marks its
+   releases `removed` (files deleted, version kept). A deleted app's name stays
+   with its publisher, who can publish new versions to it. Abandoned uploads
+   (no bundle after 24 hours) are the only releases deleted outright.
 
 ### Install flow
 
@@ -280,8 +285,8 @@ id.
 | PUT | `/api/v1/releases/:id/bundle` | token | upload tar.gz |
 | PUT | `/api/v1/releases/:id/source` | token | optional source tar.gz |
 | POST | `/api/v1/releases/:id/yank` | token | withdraw a release |
-| DELETE | `/api/v1/releases/:id` | token | delete a release |
-| DELETE | `/api/v1/apps/:slug` | token | delete app, releases and data in the store |
+| DELETE | `/api/v1/releases/:id` | token | remove a release (files deleted, version stays taken) |
+| DELETE | `/api/v1/apps/:slug` | token | remove an app from the catalog: every release removed, name kept for its publisher |
 | POST | `/api/v1/apps/:slug/releases/:version/report` | – | abuse report (rate-limited) |
 | POST | `/api/v1/apps/:slug/demo` | – | start a throwaway demo session |
 | GET | `/api/v1/demos/:id` | – | demo status, URL and expiry |
@@ -289,7 +294,7 @@ id.
 | GET | `/api/v1/admin/pending` | admin | review queue |
 | GET | `/api/v1/admin/reports` | admin | open reports |
 | POST | `/api/v1/admin/releases/:id/approve` | admin | publish a pending release |
-| DELETE | `/api/v1/admin/releases/:id` | admin | takedown |
+| DELETE | `/api/v1/admin/releases/:id` | admin | takedown (as a removal: the version stays taken) |
 | POST | `/api/v1/admin/reports/:id/resolve` | admin | close a report |
 
 `STORE_ADMIN_TOKEN` enables the admin routes; without it they answer 503.
@@ -509,6 +514,18 @@ node store/test/e2e-install.mjs
 ```
 
 It uses `TEST_INSTALL_PORT` (default 8780) for the node and never touches the
-compose stack. For the compose stack, `hamstr install` uses `docker compose exec
-celld /app/push.sh`; `CELLD_COMPOSE_DIR` points it at the pull-only production
-stack, exactly like `tools/deploy.sh`.
+compose stack. The same flow with the CLI as outside developers get it (packed
+with `npm pack`, installed into an empty directory, run without this repo, the
+node saved with `hamstr node`):
+
+```sh
+node store/test/e2e-cli-package.mjs     # TEST_CLI_PORT, default 8781
+```
+
+With a compose stack instead of a node URL, `hamstr install --compose-dir <dir>`
+uses `docker compose exec celld /app/push.sh` there, like `tools/deploy.sh`.
+
+CI (`.github/workflows/test.yml`) runs the unit suites, the router API suite,
+both CLI end-to-end tests, Hamstr's end-to-end test (each against `celld dev`,
+the binary copied out of the celld image the node uses), the names service
+against Pebble, and builds the store, Hamstr and names images.

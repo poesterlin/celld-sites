@@ -3,7 +3,7 @@
 // thin layers over this module; it has no SvelteKit imports, so the test
 // harness (and any plain Node script) can drive it directly.
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BundleError } from "../../../../packages/app-format/bundle.mjs";
@@ -23,6 +23,25 @@ const TICKET_MS = 60 * 1000;
 const LOGIN_MS = 10 * 60 * 1000;
 const TRASH_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_GRAINS_PER_USER = 500;
+/** Largest backup Hamstr accepts for a restore or an import. */
+const MAX_BACKUP_BYTES = 1024 * 1024 * 1024;
+const BACKUP_EXTENSION = "hamstr-backup";
+
+/** -1, 0 or 1 as semver a is older, the same or newer than b (pre-releases
+ *  sort before their release). */
+export function compareVersions(a, b) {
+	const parse = (v) => {
+		const [core, pre = ""] = String(v).split("+")[0].split(/-(.*)/s);
+		return { nums: core.split(".").map((n) => Number(n) || 0), pre };
+	};
+	const x = parse(a);
+	const y = parse(b);
+	for (let i = 0; i < 3; i++) if ((x.nums[i] ?? 0) !== (y.nums[i] ?? 0)) return (x.nums[i] ?? 0) < (y.nums[i] ?? 0) ? -1 : 1;
+	if (x.pre === y.pre) return 0;
+	if (!x.pre) return 1;
+	if (!y.pre) return -1;
+	return x.pre < y.pre ? -1 : 1;
+}
 
 export class HttpError extends Error {
 	constructor(status, message) {
@@ -364,6 +383,124 @@ export function createCore(options = {}) {
 		return { grain, created: true };
 	}
 
+	// --- backups ---------------------------------------------------------------------
+	// A backup file is one header line (what it is a backup of) followed by celld's
+	// dump of the grain's objects: every table, row and stored key, so it works for
+	// every app, whether or not the app has an export of its own.
+	const tempFiles = new Set(); // in use: housekeeping leaves them alone
+	const restoring = new Set(); // grain ids: the proxy holds their traffic meanwhile
+	const isRestoring = (id) => restoring.has(id);
+
+	function tempFile(kind) {
+		const file = join(tmpDir, `${kind}-${randomId(12)}.${BACKUP_EXTENSION}`);
+		tempFiles.add(file);
+		return file;
+	}
+	function releaseTemp(file) {
+		tempFiles.delete(file);
+		rmSync(file, { force: true });
+	}
+
+	/** Back a grain up into a temp file; the caller sends it and releases it. */
+	async function backupGrain(grain) {
+		const app = q.app.get(grain.slug);
+		const file = tempFile("backup");
+		try {
+			const header = {
+				type: "hamstr-backup",
+				format: 1,
+				app: grain.slug,
+				appName: app?.name ?? grain.slug,
+				appVersion: app?.version ?? null,
+				title: grain.title,
+				at: now(),
+			};
+			writeFileSync(file, `${JSON.stringify(header)}\n`, { mode: 0o600 });
+			const totals = await celld.dumpTo(grainHost(grain.id), file);
+			return { file, header, totals };
+		} catch (err) {
+			releaseTemp(file);
+			throw err;
+		}
+	}
+
+	/** The header of a backup file and where celld's part starts. */
+	function readBackupHeader(file) {
+		const buf = Buffer.alloc(16 * 1024);
+		const fd = openSync(file, "r");
+		let n;
+		try {
+			n = readSync(fd, buf, 0, buf.length, 0);
+		} finally {
+			closeSync(fd);
+		}
+		const nl = buf.subarray(0, n).indexOf(10);
+		let header = null;
+		try {
+			header = nl > 0 ? JSON.parse(buf.subarray(0, nl).toString("utf8")) : null;
+		} catch {}
+		if (header?.type !== "hamstr-backup" || header.format !== 1 || typeof header.app !== "string") {
+			throw new HttpError(422, `that is not a ${NAME} backup (a .${BACKUP_EXTENSION} file)`);
+		}
+		return { header, offset: nl + 1 };
+	}
+
+	/** Why a backup can't go into an item of `app`, or nothing. */
+	function checkBackupFor(header, app) {
+		if (header.app !== app.slug) throw new HttpError(422, `that is a backup of ${String(header.appName ?? header.app).slice(0, 80)}, not ${app.name}`);
+		if (header.appVersion && compareVersions(header.appVersion, app.version) > 0) {
+			throw new HttpError(409, `that backup was made with ${app.name} ${header.appVersion}, newer than this Hamstr's ${app.version}; update the app first`);
+		}
+	}
+
+	/** Replace a grain's data with a backup file. A copy of its current data is
+	 *  taken first and put back if the restore fails half-way. */
+	async function restoreGrain(grain, file) {
+		const app = q.app.get(grain.slug);
+		if (!app) throw new HttpError(409, "the app of this item is not installed");
+		const { header, offset } = readBackupHeader(file);
+		checkBackupFor(header, app);
+		if (restoring.has(grain.id)) throw new HttpError(409, "this item is already being restored");
+		const host = grainHost(grain.id);
+		restoring.add(grain.id);
+		const safety = tempFile("before-restore");
+		try {
+			try {
+				await celld.dumpTo(host, safety);
+			} catch (err) {
+				throw new HttpError(502, `could not take a safety copy of the current data first, so nothing was changed (${err.message})`);
+			}
+			const r = await celld.restoreFrom(host, file, offset);
+			if (r.status === 200) return { header, ...r.json };
+			const why = String(r.json?.error ?? `status ${r.status}`).replace(/^restore failed: /, "");
+			if (r.json?.changed) {
+				const back = await celld.restoreFrom(host, safety).catch((err) => ({ status: 0, json: { error: err.message } }));
+				if (back.status !== 200) {
+					throw new HttpError(502, `the restore failed (${why}), and putting the previous data back failed too (${back.json?.error}); the item may be incomplete`);
+				}
+				throw new HttpError(422, `the restore failed (${why}); the item was put back as it was`);
+			}
+			throw new HttpError(r.status === 429 ? 429 : 422, `the restore failed (${why}); nothing was changed`);
+		} finally {
+			releaseTemp(safety);
+			restoring.delete(grain.id);
+		}
+	}
+
+	/** A new grain of `app` made from a backup file. */
+	async function importBackup(user, app, file) {
+		const { header } = readBackupHeader(file);
+		checkBackupFor(header, app);
+		const grain = await createGrain(user, app, typeof header.title === "string" ? header.title : "");
+		try {
+			const result = await restoreGrain(grain, file);
+			return { grain: q.grain.get(grain.id), ...result };
+		} catch (err) {
+			await purgeGrain(grain).catch(() => {});
+			throw err;
+		}
+	}
+
 	async function purgeGrain(grain) {
 		await celld.deleteSite(grainHost(grain.id));
 		db.prepare("DELETE FROM grains WHERE id = ?").run(grain.id);
@@ -446,7 +583,7 @@ export function createCore(options = {}) {
 			}
 		}
 		for (const name of readdirSync(tmpDir)) {
-			if (!installing.size) rmSync(join(tmpDir, name), { recursive: true, force: true });
+			if (!installing.size && !tempFiles.has(join(tmpDir, name))) rmSync(join(tmpDir, name), { recursive: true, force: true });
 		}
 	}
 	const timer = setInterval(() => housekeeping().catch((err) => console.error("hamstr: housekeeping failed", err)), 10 * 60 * 1000);
@@ -475,6 +612,14 @@ export function createCore(options = {}) {
 		TICKET_MS,
 		TRASH_MS,
 		MAX_GRAINS_PER_USER,
+		MAX_BACKUP_BYTES,
+		BACKUP_EXTENSION,
+		tempFile,
+		releaseTemp,
+		backupGrain,
+		restoreGrain,
+		importBackup,
+		isRestoring,
 		sha256,
 		token,
 		now,

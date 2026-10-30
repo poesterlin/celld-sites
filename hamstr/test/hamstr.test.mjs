@@ -513,6 +513,55 @@ describe("trash and updates", () => {
 		assert.equal(r.json.grain.title, "Kitchen board");
 		assert.equal((await apiCall(bob, "PATCH", `/api/grains/${board.id}`, { title: " " })).status, 400);
 	});
+	it("backs up any item and restores it, putting it back if a restore fails", async () => {
+		const host = grainHost(board.id);
+		const upload = (browser, path, body, headers = {}) =>
+			browser.request(path.endsWith("/import") ? "POST" : "PUT", path, { host: SHELL, headers: { ...ORIGIN, "content-type": "application/octet-stream", ...headers }, body });
+		celld.data.set(host, "version one");
+		const down = await bob.request("GET", `/api/grains/${board.id}/backup`, { host: SHELL });
+		assert.equal(down.status, 200, down.text);
+		assert.match(down.headers["content-disposition"], /^attachment; filename="Kitchen board \d{4}-\d\d-\d\d\.hamstr-backup"/);
+		const [head, ...rest] = down.text.trim().split("\n").map((l) => JSON.parse(l));
+		assert.deepEqual([head.type, head.app, head.appVersion, head.title], ["hamstr-backup", "board", "1.1.0", "Kitchen board"]);
+		assert.deepEqual(rest.map((l) => l.type), ["celld-dump", "note", "end"]);
+		assert.equal((await ada.request("GET", `/api/grains/${board.id}/backup`, { host: SHELL })).status, 404, "owner only");
+		assert.equal((await bob.request("GET", `/api/grains/${board.id}/backup`, { host: SHELL, headers: { "sec-fetch-site": "cross-site" } })).status, 403);
+
+		celld.data.set(host, "changed later");
+		const r = await upload(bob, `/api/grains/${board.id}/backup`, down.text);
+		assert.equal(r.status, 200, r.text);
+		assert.equal(celld.data.get(host), "version one");
+
+		// Refused before anything changes.
+		const swap = (patch) => [JSON.stringify({ ...head, ...patch }), ...down.text.trim().split("\n").slice(1)].join("\n");
+		assert.equal((await upload(bob, `/api/grains/${board.id}/backup`, swap({ appVersion: "9.0.0" }))).status, 409, "made by a newer app");
+		assert.match((await upload(bob, `/api/grains/${board.id}/backup`, swap({ app: "plain", appName: "Plain" }))).json.error, /backup of Plain, not Board/);
+		assert.equal((await upload(bob, `/api/grains/${board.id}/backup`, "hello\n")).status, 422);
+		assert.equal((await upload(ada, `/api/grains/${board.id}/backup`, down.text)).status, 404, "owner only");
+		assert.equal((await upload(bob, `/api/grains/${board.id}/backup`, down.text, { origin: "http://evil.test" })).status, 403);
+		assert.equal((await upload(bob, `/api/grains/${board.id}/backup`, down.text, { "content-type": "text/plain" })).status, 415);
+		assert.equal(celld.data.get(host), "version one");
+
+		// A restore that fails half-way puts the item back.
+		celld.data.set(host, "current");
+		celld.failRestore = host;
+		const failed = await upload(bob, `/api/grains/${board.id}/backup`, down.text);
+		assert.equal(failed.status, 422);
+		assert.match(failed.json.error, /put back as it was/);
+		assert.equal(celld.data.get(host), "current");
+
+		// Importing makes a new item from the backup.
+		const made = await upload(bob, "/api/apps/board/import", down.text);
+		assert.equal(made.status, 201, made.text);
+		assert.equal(made.json.grain.title, "Kitchen board");
+		assert.notEqual(made.json.grain.id, board.id);
+		assert.equal(celld.data.get(grainHost(made.json.grain.id)), "version one");
+		const before = celld.sites.size;
+		assert.equal((await upload(bob, "/api/apps/plain/import", down.text)).status, 422);
+		assert.equal(celld.sites.size, before, "a refused import leaves no grain behind");
+		await apiCall(bob, "POST", `/api/grains/${made.json.grain.id}/trash`, {});
+		assert.equal((await apiCall(bob, "DELETE", `/api/grains/${made.json.grain.id}`)).status, 200);
+	});
 	it("uninstalls an app for everyone, deleting its items only when told to", async () => {
 		const bobs = (await apiCall(bob, "POST", "/api/apps/family/open", {})).json.grain;
 		const adas = (await apiCall(ada, "POST", "/api/apps/family/open", {})).json.grain;

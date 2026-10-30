@@ -154,6 +154,53 @@ describe("store API", () => {
 		const loser = winner === sha256(one) ? sha256(two) : sha256(one);
 		assert.ok(!existsSync(join(dir, "blobs", `${loser}.tgz`)), "losing upload blob is removed");
 	});
+	it("never lets a deleted version come back with other content", async () => {
+		const first = await publish("keep", "1.0.0", {}, await bundle({ files: { "index.html": "<h1>keep one</h1>" } }));
+		assert.equal(first.uploaded.status, 201);
+		const sha = sha256(first.bytes);
+		const id = first.uploaded.body.release.id;
+		assert.equal((await call(base, `/api/v1/releases/${id}`, { method: "DELETE", token })).status, 200);
+
+		// Gone from the catalog and from disk, but the version stays taken.
+		assert.equal((await call(base, "/api/v1/apps/keep")).status, 404);
+		assert.equal((await call(base, "/api/v1/apps/keep/releases/1.0.0/download")).status, 404);
+		assert.ok(!existsSync(join(dir, "blobs", `${sha}.tgz`)), "the bundle file is deleted");
+		const again = await publish("keep", "1.0.0", {}, await bundle({ files: { "index.html": "<h1>other</h1>" } }));
+		assert.equal(again.status, 409);
+		assert.match(again.body.error, /already exists/);
+		// The owner still sees it, as removed, with the hash it had.
+		const mine = await call(base, "/api/v1/apps/keep", { token });
+		assert.deepEqual(mine.body.releases.map((r) => [r.version, r.status, r.bundleSha256]), [["1.0.0", "removed", sha]]);
+		// A removed release cannot get a new bundle either.
+		const reupload = await call(base, `/api/v1/releases/${id}/bundle`, { method: "PUT", token, body: again.bytes ?? first.bytes, headers: { "content-type": "application/gzip" } });
+		assert.equal(reupload.status, 410);
+
+		// New versions are fine and bring the app back.
+		assert.equal((await publish("keep", "1.0.1")).uploaded.status, 201);
+		assert.equal((await call(base, "/api/v1/apps/keep")).body.app.version, "1.0.1");
+	});
+
+	it("keeps a deleted app's name and versions reserved", async () => {
+		assert.equal((await publish("gone", "2.0.0")).uploaded.status, 201);
+		assert.equal((await call(base, "/api/v1/apps/gone", { method: "DELETE", token })).status, 200);
+		assert.equal((await call(base, "/api/v1/apps/gone")).status, 404);
+		assert.ok(!(await call(base, "/api/v1/apps")).body.apps.some((a) => a.slug === "gone"));
+
+		const other = await register("someone-else");
+		const taken = await call(base, "/api/v1/apps/gone/releases", { method: "POST", token: other, json: { manifest: manifest({ slug: "gone", name: "Gone", version: "9.0.0" }) } });
+		assert.equal(taken.status, 403, "another publisher cannot take the name");
+		assert.equal((await publish("gone", "2.0.0")).status, 409, "the old version stays taken");
+		assert.equal((await publish("gone", "2.0.1")).uploaded.status, 201, "the owner can publish new versions");
+	});
+
+	it("keeps a version taken after an operator takedown", async () => {
+		const result = await publish("takedown", "1.0.0");
+		const id = result.uploaded.body.release.id;
+		assert.equal((await call(base, `/api/v1/admin/releases/${id}`, { method: "DELETE", headers: admin })).status, 200);
+		assert.equal((await call(base, "/api/v1/apps/takedown/releases/1.0.0/download")).status, 404);
+		assert.equal((await publish("takedown", "1.0.0")).status, 409);
+	});
+
 	it("hides yanked releases and blocks their download", async () => {
 		const result = await publish("yanked", "0.1.0");
 		assert.equal(result.uploaded.status, 201);

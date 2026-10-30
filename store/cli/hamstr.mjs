@@ -12,7 +12,6 @@
 // stored token, HAMSTR_STORE the store, HAMSTR_CLI_CONFIG the config path.
 // A config left by the CLI's old name (~/.config/cubby) is still read.
 import { createHash } from "node:crypto";
-import { request as httpRequest } from "node:http";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -23,9 +22,18 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { once } from "node:events";
 import { pack as tarPack } from "tar-stream";
 import { readBundle } from "../../packages/app-format/bundle.mjs";
+import { adminClient, deploy } from "./deploy.mjs";
 import { parseManifest, validatePublisherName, validateSlug, validateVersion } from "../../packages/app-format/manifest.mjs";
 
-const REPO = resolve(process.env.HAMSTR_REPO ?? join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
+const HERE = dirname(fileURLToPath(import.meta.url));
+// Inside a checkout of celld-sites, the CLI can also deploy through the local
+// compose stack. A packaged CLI (npm) never needs the repo.
+const REPO = resolve(process.env.HAMSTR_REPO ?? join(HERE, "..", ".."));
+const IN_REPO = existsSync(join(REPO, "compose.yaml")) && existsSync(join(REPO, "node", "push.sh"));
+// tools/pack.mjs ships next to the bundled CLI (dist/pack.mjs); in the repo it
+// is used where it is.
+const PACK = [join(HERE, "pack.mjs"), join(REPO, "tools", "pack.mjs")].find(existsSync);
+const VERSION = "0.2.0";
 const configDir = (name) => (process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, name) : join(homedir(), ".config", name));
 const CONFIG_DIR = existsSync(join(configDir("cubby"), "config.json")) && !existsSync(join(configDir("hamstr"), "config.json")) ? configDir("cubby") : configDir("hamstr");
 const CONFIG_PATH = process.env.HAMSTR_CLI_CONFIG ?? join(CONFIG_DIR, "config.json");
@@ -147,7 +155,7 @@ async function ask(question) {
 function parseArgs(argv) {
 	const positional = [];
 	const opts = {};
-	const booleans = new Set(["all", "no-build", "allow-egress", "yes", "replace"]);
+	const booleans = new Set(["all", "no-build", "allow-egress", "yes", "replace", "forget", "version"]);
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (!arg.startsWith("--")) {
@@ -185,7 +193,8 @@ async function makeBundle(dir) {
 function packSite(siteDir) {
 	const out = mkdtempSync(join(tmpdir(), "hamstr-pack-"));
 	try {
-		const result = spawnSync(process.execPath, [join(REPO, "tools", "pack.mjs"), siteDir, out], { stdio: "inherit", env: process.env });
+		if (!PACK) die("cannot find pack.mjs; reinstall the hamstr CLI");
+		const result = spawnSync(process.execPath, [PACK, siteDir, out], { stdio: "inherit", env: process.env });
 		if (result.status !== 0) die("packing the site failed");
 		return out;
 	} catch (err) {
@@ -194,70 +203,63 @@ function packSite(siteDir) {
 	}
 }
 
-// --- local celld admin helpers ---------------------------------------------
+// --- the celld node to install into ------------------------------------------
+//
+// Two ways to reach a node:
+//   http     its admin API directly (`hamstr node <url>`, --node, or
+//            CELLD_ADMIN_API), with the admin token from ADMIN_TOKEN or a
+//            token file. Works from anywhere, no repo, no Docker.
+//   compose  `docker compose exec` into a celld-sites stack (--compose-dir,
+//            CELLD_COMPOSE_DIR, or this checkout), where the token already lives.
 
-function requireCelldTools() {
-	const local = Boolean(process.env.CELLD_ADMIN_API);
-	const missing = [];
-	if (!existsSync(join(REPO, "node", "push.sh"))) missing.push("node/push.sh");
-	if (!local && !existsSync(join(REPO, "tools", "admin.sh"))) missing.push("tools/admin.sh");
-	if (missing.length) die(`cannot find ${missing.join(", ")} under ${REPO}; set HAMSTR_REPO to the checkout`);
-}
-const composeProject = () => process.env.CELLD_COMPOSE_DIR ?? REPO;
-
-function admin(args, input) {
-	const result = spawnSync("sh", [join(REPO, "tools", "admin.sh"), ...args], {
-		input,
-		encoding: "utf8",
-		env: { ...process.env, CELLD_COMPOSE_DIR: composeProject() },
-	});
-	return result;
-}
-
-/** Talk to a local celld dev node (CELLD_ADMIN_API) instead of `docker compose exec`. */
-function adminRequest(method, pathname, body) {
-	const base = new URL(process.env.CELLD_ADMIN_API);
-	return new Promise((resolvePromise, rejectPromise) => {
-		const req = httpRequest(
-			{
-				hostname: base.hostname,
-				port: base.port || 80,
-				path: `/__admin${pathname}`,
-				method,
-				headers: {
-					Host: process.env.ADMIN_HOST ?? "admin.internal",
-					authorization: `Bearer ${process.env.ADMIN_TOKEN ?? ""}`,
-					...(body !== undefined ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {}),
-				},
-			},
-			(res) => {
-				let data = "";
-				res.setEncoding("utf8");
-				res.on("data", (chunk) => (data += chunk));
-				res.on("end", () => resolvePromise({ status: res.statusCode ?? 0, stdout: data }));
-			},
-		);
-		req.on("error", rejectPromise);
-		if (body !== undefined) req.write(body);
-		req.end();
-	});
-}
-
-async function currentEgress(host) {
-	if (process.env.CELLD_ADMIN_API) {
-		const result = await adminRequest("GET", `/egress?host=${host}`);
-		if (result.status === 404) return null;
-		if (result.status !== 200) die(`could not read the egress allowlist: ${result.stdout.trim()}`);
-		try {
-			return JSON.parse(result.stdout).allow ?? [];
-		} catch {
-			return null;
-		}
-	}
-	const result = admin(["GET", `/egress?host=${host}`]);
-	if (result.status !== 0) return null; // no site yet (404) or no access
+function readTokenFile(path) {
 	try {
-		return JSON.parse(result.stdout).allow ?? [];
+		return readFileSync(resolve(path), "utf8").trim();
+	} catch (err) {
+		die(`cannot read the admin token file ${path}: ${err.message}`);
+	}
+}
+
+let target;
+function nodeTarget(opts) {
+	if (target) return target;
+	const saved = config().node ?? {};
+	const api = opts.node ?? process.env.CELLD_ADMIN_API ?? (opts.composeDir || process.env.CELLD_COMPOSE_DIR ? undefined : saved.api);
+	if (api) {
+		const tokenFile = opts.adminTokenFile ?? saved.tokenFile;
+		const token = process.env.ADMIN_TOKEN ?? (tokenFile ? readTokenFile(tokenFile) : "");
+		if (!token) die("no admin token for the node: set ADMIN_TOKEN, or pass --admin-token-file <file> (see `hamstr node`)");
+		const client = adminClient({ api, token, adminHost: opts.adminHost ?? process.env.ADMIN_HOST ?? saved.adminHost ?? "admin.internal" });
+		return (target = { kind: "http", client, name: client.origin });
+	}
+	const dir = opts.composeDir ?? process.env.CELLD_COMPOSE_DIR ?? (IN_REPO ? REPO : null);
+	if (!dir) {
+		die("which node? Run `hamstr node <admin-url> --admin-token-file <file>` once, or pass --node <url> (with ADMIN_TOKEN), or --compose-dir <celld-sites stack>");
+	}
+	return (target = { kind: "compose", dir: resolve(dir), name: `compose stack ${resolve(dir)}` });
+}
+
+/** An admin call on the target node: { status, text } with HTTP-like statuses. */
+async function adminCall(opts, method, path, body) {
+	const node = nodeTarget(opts);
+	if (node.kind === "http") return node.client.admin(method, path, body);
+	const args = ["compose", "--project-directory", node.dir, "exec", "-T", "celld", "/app/admin.sh", method, path];
+	if (body !== undefined) args.push("-");
+	const result = spawnSync("docker", args, { input: body, encoding: "utf8" });
+	if (result.error) die(`could not run docker: ${result.error.message}`);
+	// admin.sh is curl --fail-with-body: the body is on stdout either way.
+	const text = (result.stdout || result.stderr || "").trim();
+	if (result.status === 0) return { status: 200, text };
+	const status = Number(/error: (\d{3})/.exec(result.stderr ?? "")?.[1]) || (/no site for|not found/i.test(text) ? 404 : 500);
+	return { status, text };
+}
+
+async function currentEgress(opts, host) {
+	const result = await adminCall(opts, "GET", `/egress?host=${host}`);
+	if (result.status === 404) return null;
+	if (result.status !== 200) die(`could not read the egress allowlist: ${result.text}`);
+	try {
+		return JSON.parse(result.text).allow ?? [];
 	} catch {
 		return null;
 	}
@@ -265,57 +267,58 @@ async function currentEgress(host) {
 
 // Whether host already serves a site, as its own id or as an alias. The egress
 // endpoint answers for any hostname, so it cannot tell.
-async function siteExists(host) {
-	const viaApi = Boolean(process.env.CELLD_ADMIN_API);
-	const result = viaApi ? await adminRequest("GET", "/overview") : admin(["GET", "/overview"]);
-	if (result.status !== (viaApi ? 200 : 0)) die(`could not list this node's sites: ${String(result.stdout ?? "").trim()}`);
+async function siteExists(opts, host) {
+	const result = await adminCall(opts, "GET", "/overview");
+	if (result.status !== 200) die(`could not list the node's sites: ${result.text}`);
 	try {
-		const { sites = [] } = JSON.parse(result.stdout);
+		const { sites = [] } = JSON.parse(result.text);
 		return sites.some((site) => site.id === host || site.aliases?.includes(host));
 	} catch {
-		die("could not read this node's site list");
+		die("could not read the node's site list");
 	}
 }
 
-async function setEgress(host, allow) {
-	if (process.env.CELLD_ADMIN_API) {
-		const result = await adminRequest("PUT", `/egress?host=${host}`, JSON.stringify(allow));
-		// Nodes older than the store installer's pre-seed support refuse an allowlist for a
-		// site that does not exist yet. With nothing to grant, that is harmless:
-		// deploy first, the list is empty either way.
-		if (result.status === 404 && allow.length === 0) return;
-		if (result.status !== 200) die(`could not set the egress allowlist: ${result.stdout.trim()}`);
-		return;
-	}
-	const result = admin(["PUT", `/egress?host=${host}`, "-"], JSON.stringify(allow));
-	if (result.status !== 0) {
-		if (allow.length === 0 && /no site for/.test(result.stderr || result.stdout)) return;
-		die(`could not set the egress allowlist: ${(result.stderr || result.stdout).trim()}`);
-	}
+async function setEgress(opts, host, allow) {
+	const result = await adminCall(opts, "PUT", `/egress?host=${host}`, JSON.stringify(allow));
+	if (result.status === 200) return;
+	// Nodes older than the installer's pre-seed support refuse an allowlist for a
+	// site that does not exist yet. With nothing to grant, that is harmless.
+	if (allow.length === 0 && (result.status === 404 || /no site for/.test(result.text))) return;
+	die(`could not set the egress allowlist: ${result.text}`);
 }
 
-function pushBundle(bundle, host, watch) {
-	const raw = gunzipSync(bundle);
-	if (process.env.CELLD_ADMIN_API) {
-		const args = [join(REPO, "node", "push.sh"), host];
-		if (watch !== undefined) args.push("--watch", String(watch));
-		const result = spawnSync("sh", args, {
-			input: raw,
-			stdio: ["pipe", "inherit", "inherit"],
-			env: {
-				...process.env,
-				CELLD_ADMIN_API: process.env.CELLD_ADMIN_API,
-				ADMIN_TOKEN: process.env.ADMIN_TOKEN ?? "",
-				ADMIN_HOST: process.env.ADMIN_HOST ?? "admin.internal",
-			},
-		});
-		if (result.status !== 0) die(`deploy failed (push.sh exited ${result.status})`);
+async function pushBundle(opts, bundle, host, watch) {
+	const node = nodeTarget(opts);
+	if (node.kind === "http") {
+		await deploy(node.client, bundle, host, { watch: watch === undefined ? 10 : Number(watch) });
 		return;
 	}
-	const args = ["compose", "--project-directory", composeProject(), "exec", "-T", "celld", "/app/push.sh", host];
+	const args = ["compose", "--project-directory", node.dir, "exec", "-T", "celld", "/app/push.sh", host];
 	if (watch !== undefined) args.push("--watch", String(watch));
-	const result = spawnSync("docker", args, { input: raw, stdio: ["pipe", "inherit", "inherit"] });
+	const result = spawnSync("docker", args, { input: gunzipSync(bundle), stdio: ["pipe", "inherit", "inherit"] });
 	if (result.status !== 0) die(`deploy failed (push.sh exited ${result.status})`);
+}
+
+/** `hamstr node <admin-url>`: remember the node to install into. */
+async function useNode(api, opts) {
+	if (!api) {
+		const saved = config().node;
+		console.log(saved ? `node: ${saved.api} (admin host ${saved.adminHost ?? "admin.internal"}, token from ${saved.tokenFile ?? "ADMIN_TOKEN"})` : "no node saved; see `hamstr help`");
+		return;
+	}
+	if (opts.forget) {
+		saveConfig({ node: undefined });
+		console.log("forgot the saved node");
+		return;
+	}
+	const tokenFile = opts.adminTokenFile ? resolve(opts.adminTokenFile) : undefined;
+	const node = { api, adminHost: opts.adminHost ?? "admin.internal", tokenFile };
+	target = undefined;
+	const probe = adminClient({ api, token: process.env.ADMIN_TOKEN ?? (tokenFile ? readTokenFile(tokenFile) : ""), adminHost: node.adminHost });
+	const res = await probe.admin("GET", "/overview");
+	if (res.status !== 200) die(`the node did not accept the admin token (${res.status}): ${res.text.slice(0, 200)}`);
+	saveConfig({ node });
+	console.log(`saved: installs go to ${probe.origin} (${JSON.parse(res.text).sites?.length ?? 0} sites there now)`);
 }
 
 // --- commands ---------------------------------------------------------------
@@ -437,7 +440,7 @@ async function info(slug, opts) {
 }
 
 async function install(slugArg, opts, { previousEgress = [], quiet = false } = {}) {
-	requireCelldTools();
+	const node = nodeTarget(opts);
 	const [slug, wanted] = slugArg.includes("@") ? slugArg.split("@") : [slugArg, undefined];
 	validateSlug(slug);
 	const host = opts.host;
@@ -450,7 +453,7 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 	if (prior && prior.slug !== slug && opts.replace) {
 		console.log(`warning: replacing ${prior.slug} on ${host}; ${slug} will run against the same Durable Objects and data`);
 	}
-	if (!prior && !opts.replace && (await siteExists(host))) {
+	if (!prior && !opts.replace && (await siteExists(opts, host))) {
 		die(`${host} is already a site on this node that this CLI did not install; pick a free --host, or --replace to overwrite it (the app would run against its data)`);
 	}
 	if (opts.watch !== undefined) {
@@ -476,7 +479,7 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 
 	if (!quiet && !opts.yes) {
 		console.log(`install ${manifest.name} ${release.version} (${release.bundleSize ? `${(release.bundleSize / 1024 / 1024).toFixed(1)} MiB` : "bundle"})`);
-		console.log(`  from ${store}, to ${host}`);
+		console.log(`  from ${store}, to ${host} on ${node.name}`);
 		console.log(`  network: ${manifest.egress?.length ? manifest.egress.join(", ") : "none"}`);
 		if (!(await ask("Continue? [Y/n] "))) die("aborted");
 	}
@@ -499,16 +502,16 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 	const file = join(tmp, "bundle.tgz");
 	writeFileSync(file, bundle);
 	try {
-		// Validate every entry before the bytes reach the celld node. The original
-		// tar.gz is what push.sh consumes, so nothing is unpacked on this machine.
+		// Validate every entry before the bytes reach the celld node. Nothing is
+		// unpacked to disk on this machine.
 		await readBundle(file);
 
-		const before = await currentEgress(host);
-		await setEgress(host, manifest.egress ?? []);
+		const before = await currentEgress(opts, host);
+		await setEgress(opts, host, manifest.egress ?? []);
 		try {
-			pushBundle(bundle, host, opts.watch);
+			await pushBundle(opts, bundle, host, opts.watch);
 		} catch (err) {
-			if (before) await setEgress(host, before);
+			if (before) await setEgress(opts, host, before);
 			throw err;
 		}
 		const all = installed();
@@ -574,26 +577,40 @@ async function list(opts) {
 }
 
 function usage() {
-	console.log(`hamstr — little apps for your own node
+	console.log(`hamstr ${VERSION} — publish little apps to the Hamstr Store, install them into a celld node
 
+Publishing
   register <name> --store <url>       create a publisher and save a token
   login <name> --store <url>          get a new token for an existing publisher
-  whoami [--store <url>]
-  publish <dir> [--no-build] [--source <file.tgz>] [--store <url>]
+  whoami                              who you are, your apps and their versions
+  publish [dir] [--no-build] [--source <file.tgz>]
+                                      build (npm run build), pack, check and upload
+
+The store
   search [query] / info <app>
-  install <app>[@version] --host <host> [--allow-egress] [--yes] [--replace] [--watch <s>]
-  update <app> | --all                install the latest published release
-  list                                apps installed on this machine
   report <app>@<version> <reason>
 
-Environment: HAMSTR_STORE, HAMSTR_PUBLISHER_TOKEN, HAMSTR_CLI_CONFIG, HAMSTR_REPO,
-CELLD_COMPOSE_DIR. Tokens are stored in ${CONFIG_PATH} (mode 600).
+Installing into a celld node (people with Hamstr just press Get instead)
+  node <admin-url> --admin-token-file <file> [--admin-host <host>]
+                                      remember the node (checks the token first)
+  node / node --forget                show / forget it
+  install <app>[@version] --host <hostname> [--allow-egress] [--yes] [--replace] [--watch <s>]
+  update <app> | --all                install the latest published release
+  list                                apps this CLI installed
+
+  For one command, --node <url> (token in ADMIN_TOKEN) or --compose-dir <dir>
+  (a celld-sites compose stack, via docker compose exec) pick the node instead.
+
+Environment: HAMSTR_STORE, HAMSTR_PUBLISHER_TOKEN, HAMSTR_PUBLISHER_PASSWORD,
+HAMSTR_CLI_CONFIG, CELLD_ADMIN_API, ADMIN_TOKEN, ADMIN_HOST, CELLD_COMPOSE_DIR.
+Settings and tokens are stored in ${CONFIG_PATH} (mode 600).
 `);
 }
 
 async function main() {
 	const { positional, opts } = parseArgs(process.argv.slice(2));
 	const [command, ...rest] = positional;
+	if (opts.version) return console.log(VERSION);
 	switch (command) {
 		case "register": {
 			if (!rest[0]) die("usage: hamstr register <name>");
@@ -617,6 +634,10 @@ async function main() {
 			if (!rest[0]) die("usage: hamstr install <app>[@version] --host <host>");
 			return install(rest[0], opts);
 		}
+		case "node":
+			return useNode(rest[0], opts);
+		case "version":
+			return console.log(VERSION);
 		case "update":
 			return update(rest[0], opts);
 		case "list":
@@ -628,7 +649,8 @@ async function main() {
 		case "--help":
 			return usage();
 		default:
-			die(`unknown command: ${command}\n\n${usage()}`);
+			usage();
+			die(`unknown command: ${command}`);
 	}
 }
 

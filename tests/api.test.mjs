@@ -489,6 +489,97 @@ describe("admin object calls (seeding)", () => {
 	});
 });
 
+describe("backups: dump and restore", () => {
+	const B = "backup.test";
+	const C = "copy.test";
+	const dump = async (host) => {
+		const r = await node.admin("GET", `/dump?host=${host}`);
+		assert.equal(r.status, 200, r.text);
+		assert.match(r.headers["content-type"], /ndjson/);
+		return { text: r.text, lines: r.text.trim().split("\n").map((l) => JSON.parse(l)) };
+	};
+	const restore = (host, body, confirm = host) => node.admin("POST", `/restore?host=${host}&confirm=${confirm}`, { body });
+	const snap = async (name, host = B) => (await obj("Store", name, "snapshot", [], host)).result;
+	let backup;
+	let original;
+	before(() => {
+		node.deploy(join(fixtures, "worker"), B);
+		node.deploy(join(fixtures, "worker"), C);
+	});
+	it("dumps every object's tables, rows and keys", async () => {
+		assert.equal((await obj("Store", "a", "fill", [3, 2500], B)).ok, true);
+		assert.equal((await obj("Store", "b", "fill", [1], B)).ok, true);
+		assert.equal((await obj("Kv", "k", "put", ["x", { deep: [1, 2] }], B)).ok, true);
+		original = { a: await snap("a"), b: await snap("b") };
+		backup = await dump(B);
+		const [head, ...rest] = backup.lines;
+		assert.equal(head.type, "celld-dump");
+		assert.equal(head.format, 1);
+		assert.equal(head.site, B);
+		const end = rest.at(-1);
+		assert.equal(end.type, "end", JSON.stringify(end));
+		assert.equal(end.objects, 3);
+		assert.equal(rest.filter((l) => l.type === "object").length, 3);
+		// 2500 rows of 1 KB do not fit one page.
+		assert.ok(rest.filter((l) => l.type === "rows" && l.table === "log").length >= 3);
+		const tables = rest.filter((l) => l.type === "table").map((l) => l.name);
+		assert.ok(tables.includes("search") && !tables.includes("search_data"), "FTS rows, not its shadow tables");
+		assert.ok(!tables.some((t) => t.startsWith("_cf_") || t.startsWith("_litestream_")));
+		assert.deepEqual(rest.find((l) => l.type === "table" && l.name === "log").columns, ["msg"], "no generated columns");
+	});
+	it("keeps the data methods away from site code and plain admin calls", async () => {
+		const r = await obj("Store", "a", "__celldData", ["schema"], B);
+		assert.equal(r.ok, false);
+		assert.match(r.error, /bad object reference/);
+		const call = await node.admin("POST", `/call?host=${B}&class=Store&name=a&method=__celldData`, { body: '["reset"]' });
+		assert.equal(call.status, 400);
+		assert.equal((await node.admin("GET", `/dump?host=${B}`, { token: "read" })).status, 403);
+	});
+	it("restores a site exactly as backed up", async () => {
+		assert.equal((await obj("Store", "a", "mutate", [], B)).ok, true);
+		assert.equal((await obj("Store", "c", "fill", [1], B)).ok, true);
+		assert.notDeepEqual(await snap("a"), original.a);
+		const r = await restore(B, backup.text);
+		assert.equal(r.status, 200, r.text);
+		const result = r.json();
+		assert.equal(result.objects, 3);
+		assert.equal(result.removed, 1, "the object made after the backup is gone");
+		assert.equal(result.foreignKeyProblems, 0);
+		assert.deepEqual(await snap("a"), original.a);
+		assert.deepEqual(await snap("b"), original.b);
+		assert.deepEqual((await obj("Kv", "k", "get", ["x"], B)).result, { deep: [1, 2] });
+		const overview = (await node.admin("GET", "/overview")).json();
+		assert.ok(!overview.objects.some((o) => o.site === B && o.name === "c"));
+	});
+	it("restores into another site (a copy)", async () => {
+		const r = await restore(C, backup.text);
+		assert.equal(r.status, 200, r.text);
+		assert.deepEqual(await snap("a", C), original.a);
+		// The copy keeps working: the app writes on top of restored data.
+		assert.equal((await obj("Store", "a", "mutate", [], C)).ok, true);
+		const after = await snap("a", C);
+		assert.deepEqual(after.child, []);
+		assert.ok(after.tags.some((t) => t.tag === "new"));
+	});
+	it("refuses bad requests and broken backups", async () => {
+		assert.equal((await restore(B, backup.text, "other.test")).status, 400);
+		assert.equal((await restore("nobody.test", backup.text)).status, 404);
+		const notDump = await restore(C, '{"hello":1}\n');
+		assert.equal(notDump.status, 422);
+		assert.equal(notDump.json().changed, false);
+		const cut = backup.text.split("\n").slice(0, -2).join("\n");
+		const truncated = await restore(C, cut);
+		assert.equal(truncated.status, 422);
+		assert.match(truncated.json().error, /incomplete/);
+		assert.equal(truncated.json().changed, true);
+		const evil = backup.text.replace('"type":"table","name":"parent","sql":"CREATE TABLE', '"type":"table","name":"parent","sql":"DROP TABLE x; CREATE TABLE');
+		assert.equal((await restore(C, evil)).status, 422);
+		// A good backup repairs a half-restored site.
+		assert.equal((await restore(C, backup.text)).status, 200);
+		assert.deepEqual(await snap("a", C), original.a);
+	});
+});
+
 describe("overview and pruning", () => {
 	it("lists sites, aliases, history, objects and versions", async () => {
 		const o = (await node.admin("GET", "/overview", { token: "read" })).json();

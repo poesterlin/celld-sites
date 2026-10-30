@@ -103,7 +103,7 @@
 				{ label: "Delete forever…", icon: "trash", danger: true, separator: true, onclick: () => (confirming = grain) },
 			];
 		}
-		return grainMenu(grain, { canExport: app.canExport, rename: startRename });
+		return grainMenu(grain, { canExport: app.canExport, rename: startRename, app });
 	}
 
 	// The app itself: a right click on the hero, or its ⋯ button.
@@ -311,7 +311,7 @@
 			<ul class="perm-list">
 				<li>Keep data inside each item, separately per item</li>
 				{#if app.egress.length}<li><strong>Connect to the internet:</strong> {app.egress.join(", ")}</li>{:else}<li>No internet access</li>{/if}
-				<li>{app.canExport ? "Download each item's data" : "No data download yet"}</li>
+				<li>{app.canExport ? "Download each item's data, or a full backup to restore later" : "Back up each item and restore it later, or as a new item"}</li>
 				<li>{app.instances === "single" ? "One per person, opened straight from Home" : "As many as you like"}</li>
 			</ul>
 		</div>

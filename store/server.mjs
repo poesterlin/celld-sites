@@ -422,7 +422,7 @@ export function createStore(options = {}) {
 
 	function appStorage(publisherId) {
 		return db
-			.prepare("SELECT COALESCE(SUM(r.bundle_size + r.source_size), 0) AS total FROM releases r JOIN apps a ON a.id = r.app_id WHERE a.publisher_id = ?")
+			.prepare("SELECT COALESCE(SUM(r.bundle_size + r.source_size), 0) AS total FROM releases r JOIN apps a ON a.id = r.app_id WHERE a.publisher_id = ? AND r.status != 'removed'")
 			.get(publisherId).total;
 	}
 
@@ -433,9 +433,23 @@ export function createStore(options = {}) {
 	function deleteBlobIfUnused(sha, kind = "bundle") {
 		if (!sha) return;
 		const column = kind === "source" ? "source_sha" : "bundle_sha";
-		const used = db.prepare(`SELECT 1 FROM releases WHERE ${column} = ? LIMIT 1`).get(sha);
+		const used = db.prepare(`SELECT 1 FROM releases WHERE ${column} = ? AND status != 'removed' LIMIT 1`).get(sha);
 		if (used) return;
 		rmSync(join(blobsDir, `${kind === "source" ? "source-" : ""}${sha}.tgz`), { force: true });
+	}
+
+	// Versions are immutable: a release that ever had a bundle is never deleted,
+	// only emptied. Its row stays (status "removed", hashes kept) and its files
+	// go, so the version can never be published again with other content. A
+	// release whose upload never finished held nothing and is deleted outright.
+	function removeRelease(row) {
+		if (!row.bundle_sha && !row.source_sha) {
+			db.prepare("DELETE FROM releases WHERE id = ?").run(row.id);
+			return;
+		}
+		db.prepare("UPDATE releases SET status = 'removed' WHERE id = ?").run(row.id);
+		deleteBlobIfUnused(row.bundle_sha);
+		deleteBlobIfUnused(row.source_sha, "source");
 	}
 
 	// --- demo sessions --------------------------------------------------------
@@ -875,7 +889,7 @@ export function createStore(options = {}) {
 				const count = db.prepare("SELECT COUNT(*) AS n FROM apps WHERE publisher_id = ?").get(me.id).n;
 				if (count >= config.maxApps) return fail(res, 403, `a publisher may have at most ${config.maxApps} apps`);
 			}
-			const releases = app ? db.prepare("SELECT COUNT(*) AS n FROM releases WHERE app_id = ?").get(app.id).n : 0;
+			const releases = app ? db.prepare("SELECT COUNT(*) AS n FROM releases WHERE app_id = ? AND status != 'removed'").get(app.id).n : 0;
 			if (releases >= config.maxReleases) return fail(res, 403, `an app may have at most ${config.maxReleases} releases`);
 			const release = tx(() => {
 				let appId = app?.id;
@@ -907,6 +921,7 @@ export function createStore(options = {}) {
 			if (!row) return fail(res, 404, "no such release");
 			if (row.publisher_id !== me.id) return fail(res, 403, "not your release");
 			if (row.status === "yanked") return fail(res, 409, "this release was yanked");
+			if (row.status === "removed") return fail(res, 410, "this release was removed");
 			const kind = uploadMatch[2];
 			if (kind === "source" && row.source_sha) return fail(res, 409, "this release already has a source archive");
 			const limit = kind === "bundle" ? config.maxBundle : config.maxSource;
@@ -1002,9 +1017,7 @@ export function createStore(options = {}) {
 				return json(res, 200, { ok: true });
 			}
 			if (!releaseOp[2] && method === "DELETE") {
-				db.prepare("DELETE FROM releases WHERE id = ?").run(row.id);
-				deleteBlobIfUnused(row.bundle_sha);
-				deleteBlobIfUnused(row.source_sha, "source");
+				removeRelease(row);
 				logEvent(me.name, "release.delete", `${row.slug}@${row.version}`);
 				return json(res, 200, { ok: true });
 			}
@@ -1016,12 +1029,11 @@ export function createStore(options = {}) {
 			const app = q.appBySlug.get(appDelete[1]);
 			if (!app) return fail(res, 404, "no such app");
 			if (app.publisher_id !== me.id) return fail(res, 403, "not your app");
-			const shas = db.prepare("SELECT bundle_sha, source_sha FROM releases WHERE app_id = ?").all(app.id);
-			db.prepare("DELETE FROM apps WHERE id = ?").run(app.id);
-			shas.forEach((r) => {
-				deleteBlobIfUnused(r.bundle_sha);
-				deleteBlobIfUnused(r.source_sha, "source");
-			});
+			// The app leaves the catalog and its files go, but its row and its
+			// releases' versions stay: the name remains this publisher's, and no
+			// version of it can come back with other content.
+			const rows = db.prepare("SELECT * FROM releases WHERE app_id = ? AND status != 'removed'").all(app.id);
+			tx(() => rows.forEach(removeRelease));
 			logEvent(me.name, "app.delete", app.slug);
 			return json(res, 200, { ok: true });
 		}
@@ -1079,9 +1091,7 @@ export function createStore(options = {}) {
 			if (remove && method === "DELETE") {
 				const row = q.releaseById.get(Number(remove[1]));
 				if (!row) return fail(res, 404, "no such release");
-				db.prepare("DELETE FROM releases WHERE id = ?").run(row.id);
-				deleteBlobIfUnused(row.bundle_sha);
-				deleteBlobIfUnused(row.source_sha, "source");
+				removeRelease(row);
 				db.prepare("UPDATE reports SET resolved = 1 WHERE release_id = ?").run(row.id);
 				logEvent("admin", "release.remove", `${row.slug}@${row.version}`);
 				return json(res, 200, { ok: true });

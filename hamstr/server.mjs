@@ -19,7 +19,9 @@ export { siteOf } from "./lib/site.mjs";
 
 // adapter-node reads these once, when its handler is imported.
 process.env.PROTOCOL_HEADER ??= "x-forwarded-proto";
-process.env.BODY_SIZE_LIMIT ??= "25m";
+// Backups are uploaded whole (up to 1 GiB, checked by their routes); every
+// JSON route reads at most 64 KB itself (readBody), so this only sets the ceiling.
+process.env.BODY_SIZE_LIMIT ??= "1100M";
 
 let loading;
 function handler() {

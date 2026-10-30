@@ -3,7 +3,8 @@
 	import { goto, invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
 	import { api } from "#lib/client/api.js";
-	import { oops, toast } from "#lib/client/ui.svelte.js";
+	import { askRestore, oops, toast } from "#lib/client/ui.svelte.js";
+	import { backupItem } from "#lib/client/actions.js";
 	import { ICON } from "@hamstr/ui/icons.js";
 	import AppIcon from "@hamstr/ui/components/AppIcon.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
@@ -63,6 +64,8 @@
 	const menu = $derived([
 		{ label: "Rename", icon: "pencil", onclick: renameNow },
 		{ label: "Download data", icon: "download", hidden: !app?.canExport, onclick: download },
+		{ label: "Download backup", icon: "download", onclick: () => backupItem(grain) },
+		{ label: "Restore from backup…", icon: "upload", hidden: !app, onclick: () => askRestore(grain, app) },
 		{ label: `About ${app?.name ?? "this app"}`, icon: "info", hidden: !app, onclick: () => goto(`/a/${app.slug}`) },
 		{ label: "Move to trash", icon: "trash", danger: true, separator: true, onclick: trash },
 	]);

@@ -3,9 +3,10 @@
 // Installing an app uploads its code once; a new grain only stages and
 // activates a version the node already has, which takes milliseconds.
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, createWriteStream, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { readBundle } from "../../packages/app-format/bundle.mjs";
 
 export class CelldError extends Error {
@@ -106,7 +107,87 @@ export function createCelld({ api, adminHost, adminToken, tmpDir, timeoutMs = 12
 		await ok("POST", `/activate?${q({ host, version })}`);
 	}
 
-	return { call, upload, deployGrain, deleteSite, setEgress };
+	// Backups move whole databases: allow them far longer than a normal call.
+	const BACKUP_TIMEOUT_MS = 30 * 60 * 1000;
+	const adminHeaders = () => ({ Host: adminHost, authorization: `Bearer ${adminToken}` });
+
+	/** Append a backup of the site's objects (GET /__admin/dump, JSON lines) to
+	 *  `file`. Throws unless the dump arrived complete. */
+	function dumpTo(host, file) {
+		return new Promise((resolvePromise, rejectPromise) => {
+			const fail = (err) => rejectPromise(err instanceof CelldError ? err : new CelldError(502, `backing up ${host} failed (${err.code ?? err.message})`));
+			const req = httpRequest(
+				{ hostname: base.hostname, port: base.port || 80, path: `/__admin/dump?${q({ host })}`, method: "GET", headers: adminHeaders(), timeout: BACKUP_TIMEOUT_MS },
+				(res) => {
+					if (res.statusCode !== 200) {
+						const chunks = [];
+						res.on("data", (c) => chunks.push(c));
+						res.on("end", () => fail(new CelldError(502, `backing up ${host} failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8").slice(0, 300)}`)));
+						return;
+					}
+					pipeline(res, createWriteStream(file, { flags: "a", mode: 0o600 }))
+						.then(() => {
+							const last = lastLine(file);
+							if (last?.type === "end") return resolvePromise(last);
+							fail(new CelldError(502, `backing up ${host} failed: ${last?.type === "error" ? last.error : "the backup ended early"}`));
+						})
+						.catch(fail);
+				},
+			);
+			req.on("timeout", () => req.destroy(new Error("timed out")));
+			req.on("error", fail);
+			req.end();
+		});
+	}
+
+	/** Replace the site's objects with the backup in `file`, read from byte
+	 *  `start` (POST /__admin/restore). Returns { status, json }: on failure
+	 *  json.changed says whether the site was already partly rewritten. */
+	function restoreFrom(host, file, start = 0) {
+		return new Promise((resolvePromise, rejectPromise) => {
+			const length = statSync(file).size - start;
+			const headers = { ...adminHeaders(), "content-type": "application/x-ndjson", "content-length": length };
+			const req = httpRequest(
+				{ hostname: base.hostname, port: base.port || 80, path: `/__admin/restore?${q({ host, confirm: host })}`, method: "POST", headers, timeout: BACKUP_TIMEOUT_MS },
+				(res) => {
+					const chunks = [];
+					res.on("data", (c) => chunks.push(c));
+					res.on("end", () => {
+						const text = Buffer.concat(chunks).toString("utf8");
+						let json = null;
+						try {
+							json = JSON.parse(text);
+						} catch {}
+						resolvePromise({ status: res.statusCode ?? 0, json: json ?? { error: text.slice(0, 300) } });
+					});
+				},
+			);
+			req.on("timeout", () => req.destroy(new Error("timed out")));
+			req.on("error", (err) => rejectPromise(new CelldError(502, `restoring ${host} failed (${err.code ?? err.message})`)));
+			createReadStream(file, { start }).on("error", (err) => req.destroy(err)).pipe(req);
+		});
+	}
+
+	return { call, upload, deployGrain, deleteSite, setEgress, dumpTo, restoreFrom };
+}
+
+/** The last JSON line of a file, or null. */
+function lastLine(file) {
+	const size = statSync(file).size;
+	const length = Math.min(size, 64 * 1024);
+	const buf = Buffer.alloc(length);
+	const fd = openSync(file, "r");
+	try {
+		readSync(fd, buf, 0, length, size - length);
+	} finally {
+		closeSync(fd);
+	}
+	const text = buf.toString("utf8").trimEnd();
+	try {
+		return JSON.parse(text.slice(text.lastIndexOf("\n") + 1));
+	} catch {
+		return null;
+	}
 }
 
 /** Download a release bundle from the store into `dir` and check its hash. */

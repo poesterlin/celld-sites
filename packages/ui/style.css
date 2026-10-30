@@ -405,3 +405,12 @@ body.plain, .plain-page, .welcome { display: grid; place-items: center; min-heig
 .button.danger-text { color: var(--danger); }
 .sheet-foot .push-left { margin-right: auto; }
 .menu.context-menu:focus { outline: none; }
+
+/* --- file picker (restore a backup) --- */
+.file-pick { position: relative; display: grid; justify-items: center; gap: 4px; padding: 22px 16px; border: 1.5px dashed var(--line); border-radius: 14px; background: var(--surface-2); cursor: pointer; text-align: center; transition: border-color 0.15s, background 0.15s; }
+.file-pick:hover, .file-pick.dragging, .file-pick:focus-within { border-color: var(--accent); }
+.file-pick.dragging { background: var(--surface); }
+.file-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.file-pick strong { overflow-wrap: anywhere; }
+.file-pick-icon { display: inline-grid; width: 26px; height: 26px; color: var(--accent); }
+.file-pick-icon svg { width: 26px; height: 26px; }

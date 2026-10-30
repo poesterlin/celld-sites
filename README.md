@@ -19,6 +19,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `sizer`, `hamstr` (profile `hamstr`), and `store` + `celld-demo` (profile `store`) |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node, optional bundled sites), `push.sh` and `admin.sh`; `Dockerfile` targets `dev` and `hosting` |
 | `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
+| `.github/workflows/test.yml` | CI: unit suites, integration tests against `celld dev` (router API, the `hamstr` CLI from the repo and as a packed npm package, Hamstr end to end), the names service against Pebble, and the store, Hamstr and names image builds |
 | `router/` | The host-header router Worker and its config template |
 | `tools/pack.mjs` | Packs a built site into a deploy bundle |
 | `tools/deploy.sh` | Builds a site and deploys it to the running router |
@@ -198,6 +199,32 @@ node tools/seed.mjs --preview sites/blog sites/blog/seed.json         # local pr
 node tools/seed.mjs blog.example.com --call Notes main export > notes.json
 ```
 
+**Back up and restore** a whole site's objects without any methods of your
+own: the router can read and rewrite every object's storage (its SQLite tables,
+schema and rows, and its key-value pairs).
+
+```sh
+tools/admin.sh GET '/dump?host=blog.example.com' > blog.backup            # JSON lines
+tools/admin.sh POST '/restore?host=blog.example.com&confirm=blog.example.com' - < blog.backup
+```
+
+A dump streams one object after another: its tables (schema, then rows in
+pages of about 1 MB), its key-value pairs, then its indexes, triggers and
+views, and an `end` line with totals; a dump without that line is incomplete
+and restore refuses it. Values JSON can't say (bytes, dates, maps, big
+integers...) are tagged objects. Virtual tables (FTS5) are dumped through their
+rows, not their shadow tables, and rebuild on restore; generated columns are
+recomputed. Restore empties each object in the backup and refills it, deletes
+indexed objects the backup does not have, then restarts the objects, so the
+live version's constructors (and migrations) run on the restored data; a
+backup from an older version of the site is migrated that way. It runs the
+site's live version and does not pause the site: stop its traffic first. A
+restore that fails half-way answers `changed: true`; restore a good backup to
+recover. The same backup restores into another site of the same code (a copy).
+How it works: the router adds a reserved `__celldData` method to every class a
+site exports; site code cannot call it through `OBJECTS` (any `__celld*`
+method is refused there and in `/call`).
+
 A calls file is a JSON array of `{ "class", "name", "method", "args" }`
 (`sites/sveltekit/seed.json`). Copy production data into a preview by exporting
 it and loading the result with the preview's seed method. Add `"version"` to a
@@ -232,7 +259,7 @@ the last 100 entries per site, and index entries of deleted sites.
 **Deleting a site** stops it serving at once, then deletes its Durable Objects'
 data, its deploy history and staging records; it refuses while aliases point
 at it unless `&aliases=delete` is added. There is no undo apart from the VM
-backup, so export anything worth keeping first (`tools/seed.mjs --call`). Its
+backup, so back it up first (`/__admin/dump`, above). Its
 versions go with the next prune. Deploying to the same id later starts a new,
 empty site. Objects created before the object index existed can't be found by
 name and are not deleted (the dashboard counts them as "not in the index").
@@ -416,7 +443,9 @@ URLs, HEAD, SPA and 404.html fallbacks, forwarded scheme), the site bindings
 and caching, and the packer's refusals and defaults, and upgrading from
 per-version files. `tests/security.test.mjs` adds the request-context surface,
 admin-host isolation, path traversal, the atomic object quota and the in-flight
-cap. 92 tests, about a minute. Run it after changing the router, the tools or the
+cap; backups (dump, restore, copies, broken backups) run against a fixture
+class with foreign keys, blobs, FTS5, a trigger and typed key-value pairs.
+102 tests, about a minute. Run it after changing the router, the tools or the
 push/admin scripts.
 
 The image pins `ghcr.io/denoland/celld:v0.6.3`. To judge a new release, put

@@ -1,0 +1,114 @@
+name: test
+
+# Unit suites, integration tests against a real `celld dev` node, the names
+# service end to end against Pebble, and the store and Hamstr images.
+#
+#   unit         store, Hamstr, names; the store web UI and the CLI build
+#   integration  router API suite, CLI install (from the repo and as a packed
+#                npm package run from an empty directory), Hamstr end to end
+#   names        names server + agent + Pebble (Let's Encrypt's test CA)
+#   images       store and Hamstr images build (never pushed)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same Node major as the images.
+  NODE_VERSION: "24"
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - name: Install dependencies
+        run: |
+          for dir in packages/app-format store store/cli store/web hamstr; do
+            npm ci --prefix "$dir" --no-audit --no-fund
+          done
+      - name: Store (API, bundles, manifests, web serving)
+        run: npm test --prefix store
+      - name: Store web UI builds
+        run: npm run build --prefix store/web
+      - name: Hamstr (builds, then mock IdP, mock celld, real store)
+        run: npm test --prefix hamstr
+      - name: Names service
+        run: npm test --prefix names/server
+      - name: CLI bundles and runs
+        run: |
+          npm run build --prefix store/cli
+          node store/cli/dist/hamstr.mjs --version
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - name: Install dependencies
+        run: |
+          for dir in tools packages/app-format store store/cli hamstr; do
+            npm ci --prefix "$dir" --no-audit --no-fund
+          done
+      - name: Install celld (the version the node image uses, copied out of its image)
+        run: |
+          image=$(grep -oE 'ghcr\.io/denoland/celld:[^ ]+' node/Dockerfile | head -1)
+          id=$(docker create "$image")
+          mkdir -p "$HOME/.local/bin"
+          docker cp "$id:/usr/local/bin/celld" "$HOME/.local/bin/celld"
+          docker rm "$id"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/celld" --version
+      - name: Router API suite (celld dev)
+        run: npm test --prefix tools
+      - name: CLI install from the repo (celld dev)
+        run: node store/test/e2e-install.mjs
+      - name: CLI as a packed npm package, from an empty directory (celld dev)
+        run: node store/test/e2e-cli-package.mjs
+      - name: Hamstr end to end (celld dev, real store, real CLI)
+        run: npm run e2e --prefix hamstr
+
+  names:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Names server + agent + Pebble
+        run: names/agent/test/e2e.sh
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: [store/Dockerfile, hamstr/Dockerfile, names/server/Dockerfile, names/agent/Dockerfile]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.dockerfile }}
+        run: |
+          case "${{ matrix.dockerfile }}" in
+            names/*) context=$(dirname "${{ matrix.dockerfile }}") ;;
+            *) context=. ;;
+          esac
+          docker build -f "${{ matrix.dockerfile }}" "$context"
