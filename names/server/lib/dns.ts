@@ -8,7 +8,7 @@
 // exactly what it sent.
 import { createSocket } from "node:dgram";
 import { createServer } from "node:net";
-import { ipv4Bytes, ipv6Bytes } from "./ip.mjs";
+import { ipv4Bytes, ipv6Bytes } from "./ip.ts";
 
 export const TYPE = { A: 1, NS: 2, SOA: 6, TXT: 16, AAAA: 28 };
 export const RCODE = { NOERROR: 0, FORMERR: 1, SERVFAIL: 2, NXDOMAIN: 3, NOTIMP: 4, REFUSED: 5 };
@@ -148,7 +148,7 @@ export async function startDnsServer({ host, port, lookup }) {
 		sock.setTimeout(10_000, () => sock.destroy());
 		sock.on("error", () => {});
 		let buf = Buffer.alloc(0);
-		sock.on("data", (chunk) => {
+		sock.on("data", (chunk: Buffer) => {
 			buf = Buffer.concat([buf, chunk]);
 			if (buf.length > 70_000) return sock.destroy();
 			while (buf.length >= 2 && buf.length >= 2 + buf.readUInt16BE(0)) {
@@ -163,17 +163,17 @@ export async function startDnsServer({ host, port, lookup }) {
 		});
 	});
 
-	await new Promise((ok, fail) => {
+	await new Promise<void>((ok, fail) => {
 		udp.once("error", fail);
 		udp.bind(port, host, () => ok());
 	});
 	const udpPort = udp.address().port;
-	await new Promise((ok, fail) => {
+	await new Promise<void>((ok, fail) => {
 		tcp.once("error", fail);
 		tcp.listen(udpPort, host, () => ok());
 	});
 	return {
 		port: udpPort,
-		close: () => Promise.all([new Promise((ok) => udp.close(ok)), new Promise((ok) => tcp.close(ok))]),
+		close: () => Promise.all([new Promise<void>((ok) => udp.close(() => ok())), new Promise<void>((ok) => tcp.close(() => ok()))]),
 	};
 }

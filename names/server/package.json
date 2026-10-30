@@ -6,7 +6,7 @@
 	"description": "Hostnames and DNS-01 challenges for Hamstr installs",
 	"engines": { "node": ">=24" },
 	"scripts": {
-		"start": "node server.mjs",
-		"test": "node --test test/*.test.mjs"
+		"start": "node server.ts",
+		"test": "node --test test/*.test.ts"
 	}
 }

@@ -49,20 +49,24 @@ function serviceUrl() {
 	return url;
 }
 
-async function call(method, path, { token, body } = {}) {
+interface CallOptions {
+	token?: string;
+	body?: unknown;
+}
+
+async function call(method: string, path: string, { token, body }: CallOptions = {}): Promise<any> {
 	const res = await fetch(`${serviceUrl()}${path}`, {
 		method,
 		headers: {
 			...(token && { authorization: `Bearer ${token}` }),
 			...(body && { "content-type": "application/json" }),
 		},
-		body: body && JSON.stringify(body),
+		body: (body && JSON.stringify(body)) as any,
 		signal: AbortSignal.timeout(20_000),
 	});
-	const data = res.status === 204 ? null : await res.json().catch(() => null);
+	const data: any = res.status === 204 ? null : await res.json().catch(() => null);
 	if (!res.ok) {
-		const err = new Error(`${method} ${path}: ${res.status} ${data?.error ?? ""}`.trim());
-		err.status = res.status;
+		const err = Object.assign(new Error(`${method} ${path}: ${res.status} ${data?.error ?? ""}`.trim()), { status: res.status });
 		throw err;
 	}
 	return data;
@@ -133,7 +137,7 @@ function legoArgs(domain, dnsProvider) {
 }
 
 function runLego(args, extraEnv) {
-	return new Promise((ok, fail) => {
+	return new Promise<void>((ok, fail) => {
 		const child = spawn(LEGO, args, { env: { ...env, ...extraEnv }, stdio: ["ignore", "inherit", "inherit"] });
 		child.on("error", fail);
 		child.on("exit", (code) => (code === 0 ? ok() : fail(new Error(`lego exited with ${code}`))));
@@ -222,6 +226,6 @@ if (command === "once") {
 		await new Promise((ok) => setTimeout(ok, wait));
 	}
 } else {
-	console.error("usage: agent.mjs [run|once|release]");
+	console.error("usage: agent.ts [run|once|release]");
 	process.exit(2);
 }

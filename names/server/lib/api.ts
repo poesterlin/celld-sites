@@ -11,14 +11,16 @@
 //   DELETE /v1/install                  → 204
 //   GET    /healthz                     → 200
 import { isIPv4, isIPv6 } from "node:net";
-import { isPrivateIPv4, isPrivateIPv6 } from "./ip.mjs";
+import { isPrivateIPv4, isPrivateIPv6 } from "./ip.ts";
 
 const MAX_BODY = 4096;
 // ACME key authorizations are base64url SHA-256 digests (43 characters).
 const CHALLENGE_VALUE = /^[A-Za-z0-9_-]{1,128}$/;
 
 class HttpError extends Error {
-	constructor(status, message) {
+	status: number;
+
+	constructor(status: number, message: string) {
 		super(message);
 		this.status = status;
 	}

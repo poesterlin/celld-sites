@@ -74,7 +74,7 @@ export function openStore(path, { reserved = [] } = {}) {
 			const row = id && q.get.get(id);
 			if (!row) return null;
 			const given = sha256(token);
-			if (!timingSafeEqual(given, Buffer.from(row.token_hash))) return null;
+			if (!timingSafeEqual(given, Buffer.from(row.token_hash as any))) return null;
 			q.touch.run(now(), id);
 			return row;
 		},

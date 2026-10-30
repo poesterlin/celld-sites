@@ -47,7 +47,7 @@ Agent variables:
 | `REFRESH_HOURS` | `6` | Address refresh and renewal check; also the service's "still alive" signal |
 | `ON_CERT_CHANGE` | none | Shell command run after a new certificate is written (reload the TLS server) |
 
-`node agent.mjs run` refreshes forever, `once` refreshes once, `release` gives
+`node agent.ts run` refreshes forever, `once` refreshes once, `release` gives
 the name back.
 
 ## Server API

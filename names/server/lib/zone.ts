@@ -6,7 +6,7 @@
 //
 // plus the zone's own SOA and NS records and a few fixed records from the
 // config (the name servers' addresses, the API's hostname).
-import { RCODE, TYPE } from "./dns.mjs";
+import { RCODE, TYPE } from "./dns.ts";
 
 export function createZone({ zone, nameservers, hostmaster, records, ttl, store }) {
 	const soa = () => ({

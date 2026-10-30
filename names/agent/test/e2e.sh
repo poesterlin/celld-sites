@@ -58,7 +58,7 @@ agent() {
 		`# this fake zone; the check through DNS_RESOLVERS and Pebble's own still run.` \
 		-e LEGO_DNS_PROPAGATION_DISABLE_ANS=true \
 		--cap-drop ALL --security-opt no-new-privileges \
-		"$RUN-agent" node agent.mjs "$cmd"
+		"$RUN-agent" node agent.ts "$cmd"
 }
 inspect() {
 	docker run --rm -v "$WORK/data:/data:ro" --entrypoint sh "$RUN-agent" -c "$1"

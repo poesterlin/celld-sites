@@ -1,0 +1,11 @@
+{
+	"name": "hamstr-agent",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "The names agent: registers and keeps refreshing this host's DNS-01 challenge for Hamstr installs",
+	"scripts": {
+		"start": "node agent.ts",
+		"typecheck": "tsc -p ."
+	}
+}

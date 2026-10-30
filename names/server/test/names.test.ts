@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../lib/config.mjs";
-import { isPrivateIPv4, isPrivateIPv6, ipv6Bytes } from "../lib/ip.mjs";
-import { start } from "../server.mjs";
+import { loadConfig } from "../lib/config.ts";
+import { isPrivateIPv4, isPrivateIPv6, ipv6Bytes } from "../lib/ip.ts";
+import { start } from "../server.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "names-test-"));
 let running, resolver, api;
@@ -27,7 +27,7 @@ before(async () => {
 	);
 	resolver = new Resolver({ timeout: 2000, tries: 1 });
 	resolver.setServers([`127.0.0.1:${running.dnsPort}`]);
-	api = (method, path, { token, basic, body } = {}) =>
+	api = (method: string, path: string, { token, basic, body }: { token?: string; basic?: string; body?: unknown } = {}) =>
 		fetch(`http://127.0.0.1:${running.httpPort}${path}`, {
 			method,
 			headers: {
@@ -180,10 +180,10 @@ describe("wire format", () => {
 		const labels = qname.split(".").map((l) => Buffer.concat([Buffer.from([l.length]), Buffer.from(l)]));
 		const query = Buffer.concat([Buffer.from([0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]), ...labels, Buffer.from([0, 0, 1, 0, 1])]);
 		const framed = Buffer.concat([Buffer.from([0, query.length]), query]);
-		const res = await new Promise((ok, fail) => {
+		const res = await new Promise<Buffer>((ok, fail) => {
 			const sock = connect(running.dnsPort, "127.0.0.1", () => sock.write(framed));
 			let buf = Buffer.alloc(0);
-			sock.on("data", (d) => {
+			sock.on("data", (d: Buffer) => {
 				buf = Buffer.concat([buf, d]);
 				if (buf.length >= 2 && buf.length >= 2 + buf.readUInt16BE(0)) {
 					sock.end();

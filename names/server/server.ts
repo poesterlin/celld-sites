@@ -3,14 +3,14 @@
 // the install publish ACME DNS-01 challenges for that name so it can get its
 // own wildcard certificate. The service never sees certificates or keys.
 //
-// One process: an HTTP API (lib/api.mjs) and the zone's authoritative DNS
-// server (lib/dns.mjs, lib/zone.mjs), sharing one SQLite file.
+// One process: an HTTP API (lib/api.ts) and the zone's authoritative DNS
+// server (lib/dns.ts, lib/zone.ts), sharing one SQLite file.
 import { createServer } from "node:http";
-import { createApi } from "./lib/api.mjs";
-import { loadConfig } from "./lib/config.mjs";
-import { startDnsServer } from "./lib/dns.mjs";
-import { openStore } from "./lib/store.mjs";
-import { createZone } from "./lib/zone.mjs";
+import { createApi } from "./lib/api.ts";
+import { loadConfig } from "./lib/config.ts";
+import { startDnsServer } from "./lib/dns.ts";
+import { openStore } from "./lib/store.ts";
+import { createZone } from "./lib/zone.ts";
 
 export async function start(config) {
 	const store = openStore(config.dbPath, { reserved: config.reserved });
@@ -19,9 +19,9 @@ export async function start(config) {
 	const http = createServer(createApi({ config, store }));
 	http.requestTimeout = 15_000;
 	http.headersTimeout = 10_000;
-	await new Promise((ok, fail) => {
+	await new Promise<void>((ok, fail) => {
 		http.once("error", fail);
-		http.listen(config.httpPort, config.httpHost, ok);
+		http.listen(config.httpPort, config.httpHost, () => ok());
 	});
 
 	const prune = () => {
@@ -34,7 +34,7 @@ export async function start(config) {
 
 	return {
 		dnsPort: dns.port,
-		httpPort: http.address().port,
+		httpPort: (http.address() as import("node:net").AddressInfo).port,
 		store,
 		async close() {
 			clearInterval(timer);

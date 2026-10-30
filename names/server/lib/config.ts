@@ -1,6 +1,6 @@
 // Configuration from the environment; see .env.example for what each value means.
 import { isIPv4, isIPv6 } from "node:net";
-import { TYPE } from "./dns.mjs";
+import { TYPE } from "./dns.ts";
 
 const bool = (v, fallback) => (v === undefined || v === "" ? fallback : /^(1|true|yes|on)$/i.test(v));
 const int = (v, fallback) => {
