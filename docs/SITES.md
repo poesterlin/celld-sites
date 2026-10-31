@@ -72,12 +72,12 @@ no auth code to write:
 
 `"required"`: visitors sign in before they see anything. `"optional"`: anyone
 may open the site, and signed-in people are recognised. That is all a site
-says. *Who* may enter is decided in one place, the auth service's **Sites** page:
+says. *Who* may enter is decided in one place, Hamstr's **Settings → Sites**:
 by default everyone the operator has let in, or only some groups and people. The
 page can also protect a site that declares nothing, or open one up.
 
 Sign-in is the platform's: the router sends a visitor without a valid cookie to
-the [auth service](../auth/README.md), which signs them in with whichever
+[Hamstr](../hamstr/README.md) (`AUTH_URL`), which signs them in with whichever
 provider they use (OIDC, GitHub, passkey), checks the rule, and sends them back.
 The site then receives these headers (the router removes any it finds on the
 incoming request first, so they cannot be forged):

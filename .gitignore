@@ -17,6 +17,7 @@ data/
 !/sites/sveltekit/
 !/sites/tanstack/
 !/sites/static/
+!/sites/authdemo/
 backups/
 
 # Store example apps live outside this repo

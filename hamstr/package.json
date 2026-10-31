@@ -21,9 +21,12 @@
 	},
 	"devDependencies": {
 		"@hamstr/ui": "file:../packages/ui",
+		"@simplewebauthn/browser": "^13.3.0",
+		"@simplewebauthn/server": "^13.3.3",
 		"@sveltejs/adapter-node": "^6.0.0",
 		"@sveltejs/kit": "^3.1.0",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"openid-client": "^6.8.8",
 		"svelte": "^5.57.1",
 		"vite": "^8.3.0"
 	}

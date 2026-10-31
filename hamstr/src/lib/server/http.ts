@@ -5,8 +5,6 @@ import { isHttpError, isRedirect } from "@sveltejs/kit";
 import { esc } from "../../../lib/html.ts";
 import { BundleError, CelldError, HttpError, ManifestError } from "./core.ts";
 
-export { esc };
-
 /** The shell's CSP. SvelteKit appends its nonce to script-src for rendered
  *  pages; everything else gets this exact policy. */
 export function csp(core) {

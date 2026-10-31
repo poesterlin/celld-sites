@@ -44,8 +44,8 @@ async function publish(over, version = "aaaaaaaaaaaa", files = { "index.html": `
 async function signIn(user, next = "/", onPort = port) {
 	const browser = new Browser(onPort);
 	idp.nextUser = user;
-	const start = await browser.request("GET", `/auth/login?next=${encodeURIComponent(next)}`, { host: SHELL });
-	assert.equal(start.status, 303);
+	const start = await browser.request("GET", `/auth/login/${hamstr.core.seededProvider}?next=${encodeURIComponent(next)}`, { host: SHELL });
+	assert.equal(start.status, 302);
 	const authorize = new URL(start.headers.location);
 	assert.equal(authorize.origin, idp.issuer);
 	assert.equal(authorize.searchParams.get("code_challenge_method"), "S256");
@@ -90,11 +90,13 @@ before(async () => {
 		proxyToken: celld.proxyToken,
 		secret: "test-secret",
 		oidc: { issuer: idp.issuer, clientId: idp.clientId, clientSecret: idp.clientSecret },
-		admins: ["ada@example.com"],
-		allowed: ["ada@example.com", "bob", "u-eve"],
 		logging: false,
 	});
 	port = (await hamstr.listen(0, "127.0.0.1")).port;
+	// Ada is the first person in, so she owns this Hamstr; the provider then lets
+	// everyone else in without waiting (the waiting list has its own test).
+	await signIn(ADA);
+	hamstr.core.accounts.setProvider("test", hamstr.core.seededProvider, { autoApprove: true });
 });
 
 after(async () => {
@@ -153,9 +155,9 @@ describe("hosts and robustness", () => {
 });
 
 describe("sign-in", () => {
-	it("signs in with PKCE and a verified ID token, then returns to `next`", async () => {
+	it("signs in with PKCE and a checked ID token, then returns to `next`", async () => {
 		const ada = await signIn(ADA, "/apps");
-		assert.equal(ada.last.status, 303);
+		assert.equal(ada.last.status, 303, ada.last.headers.location);
 		assert.equal(ada.last.headers.location, "/apps");
 		assert.match(ada.last.headers["set-cookie"][0], /HttpOnly; SameSite=Lax/);
 		const me = await ada.request("GET", "/api/me", { host: SHELL });
@@ -165,23 +167,50 @@ describe("sign-in", () => {
 		assert.equal((await bob.request("GET", "/api/me", { host: SHELL })).json.user.admin, false);
 	});
 	it("refuses tampered tokens and replayed or unknown state", async () => {
-		for (const tamper of ["nonce", "aud", "expired", "signature"]) {
+		// The ID token comes straight from the token endpoint, so (as OIDC Core 3.1.3.7
+		// allows) its signature is not what is checked; its claims are.
+		for (const tamper of ["nonce", "aud", "expired"]) {
 			idp.tamper = tamper;
 			const b = await signIn(ADA);
-			assert.equal(b.last.status, 502, tamper);
+			assert.equal(b.last.status, 302, tamper);
+			assert.match(b.last.headers.location, /^\/auth\/login\?error=/, tamper);
 			assert.equal((await b.request("GET", "/api/me", { host: SHELL })).status, 401, tamper);
 		}
 		const b = new Browser(port);
-		assert.equal((await b.request("GET", "/auth/callback?code=x&state=nope", { host: SHELL })).status, 400);
+		const unknown = await b.request("GET", `/auth/callback/${hamstr.core.seededProvider}?code=x&state=nope`, { host: SHELL });
+		assert.match(unknown.headers.location, /^\/auth\/login\?error=/);
 	});
-	it("keeps out people who are not invited", async () => {
-		const stranger = await signIn({ sub: "u-x", email: "x@example.com", name: "X" });
-		assert.equal(stranger.last.status, 403);
-		assert.equal((await stranger.request("GET", "/api/me", { host: SHELL })).status, 401);
+	it("puts strangers on the waiting list until an admin lets them in", async () => {
+		const accounts = hamstr.core.accounts;
+		accounts.setProvider("test", hamstr.core.seededProvider, { autoApprove: false });
+		try {
+			const stranger = await signIn({ sub: "u-x", email: "x@example.com", name: "X" });
+			assert.equal(stranger.last.headers.location, "/auth/pending");
+			assert.equal((await stranger.request("GET", "/api/me", { host: SHELL })).status, 401);
+			const ada = await signIn(ADA);
+			const waiting = (await apiCall(ada, "GET", "/api/admin/people")).json.people.find((p) => p.name === "X");
+			assert.equal(waiting.status, "pending");
+			assert.equal((await apiCall(ada, "PATCH", `/api/admin/people/${waiting.id}`, { status: "active" })).status, 200);
+			const again = await signIn({ sub: "u-x", email: "x@example.com", name: "X" });
+			assert.equal((await again.request("GET", "/api/me", { host: SHELL })).json.user.admin, false);
+			// A member cannot reach the admin API.
+			assert.equal((await apiCall(again, "GET", "/api/admin/people")).status, 403);
+		} finally {
+			accounts.setProvider("test", hamstr.core.seededProvider, { autoApprove: true });
+		}
 	});
-	it("makes everyone an admin with HAMSTR_ADMINS=*", async () => {
-		const open = createHamstr({
-			dataDir: join(dir, "hamstr-open"),
+	it("brings over people who signed in before accounts, keeping their ids", async () => {
+		const { DatabaseSync } = await import("node:sqlite");
+		const { mkdirSync } = await import("node:fs");
+		const oldDir = join(dir, "hamstr-old");
+		mkdirSync(oldDir, { recursive: true });
+		const old = new DatabaseSync(join(oldDir, "hamstr.db"));
+		old.exec("CREATE TABLE users (id TEXT PRIMARY KEY, sub TEXT UNIQUE NOT NULL, name TEXT NOT NULL, email TEXT, login TEXT, created_at TEXT NOT NULL, seen_at TEXT NOT NULL); PRAGMA user_version = 1;");
+		old.prepare("INSERT INTO users VALUES ('olduserzed00001', 'u-z', 'Zed', 'z@example.com', 'zed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')").run();
+		old.prepare("INSERT INTO users VALUES ('olduseryan00002', 'u-y', 'Yan', 'y@example.com', 'yan', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z')").run();
+		old.close();
+		const upgraded = createHamstr({
+			dataDir: oldDir,
 			shellHost: SHELL,
 			grainDomain: "grains.test",
 			scheme: "http",
@@ -191,16 +220,19 @@ describe("sign-in", () => {
 			proxyToken: celld.proxyToken,
 			secret: "s",
 			oidc: { issuer: idp.issuer, clientId: idp.clientId, clientSecret: idp.clientSecret },
-			admins: ["*"],
+			admins: ["y@example.com"],
 			logging: false,
 		});
-		const openPort = (await open.listen(0, "127.0.0.1")).port;
+		const upPort = (await upgraded.listen(0, "127.0.0.1")).port;
 		try {
-			const someone = await signIn({ sub: "u-z", email: "z@example.com", name: "Zed" }, "/", openPort);
-			assert.equal(someone.last.status, 303);
-			assert.equal((await someone.request("GET", "/api/me", { host: SHELL })).json.user.admin, true);
+			const roles = Object.fromEntries(upgraded.core.accounts.people().map((p) => [p.id, p.role]));
+			assert.deepEqual(roles, { olduserzed00001: "owner", olduseryan00002: "admin" });
+			const zed = await signIn({ sub: "u-z", email: "z@example.com", name: "Zed" }, "/", upPort);
+			const me = (await zed.request("GET", "/api/me", { host: SHELL })).json.user;
+			assert.equal(me.id, "olduserzed00001");
+			assert.equal(me.admin, true);
 		} finally {
-			await open.close();
+			await upgraded.close();
 		}
 	});
 	it("ignores a `next` that leaves the shell", async () => {

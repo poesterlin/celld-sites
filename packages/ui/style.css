@@ -241,6 +241,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 kbd { font: 600 0.7rem/1 var(--font); padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface-2); color: var(--dim); }
 .select { width: auto; height: 36px; padding: 0 30px 0 11px; font-size: 0.88rem; cursor: pointer; }
 .more .menu { top: calc(100% + 4px); min-width: 200px; background: var(--surface); border-color: var(--line); }
+.more .menu.flip { right: auto; left: 0; max-width: calc(100vw - 16px); }
 .menu-item { display: flex; align-items: center; gap: 9px; }
 .menu-icon { display: inline-grid; width: 16px; height: 16px; opacity: 0.8; }
 .menu-icon svg { width: 16px; height: 16px; }
@@ -414,3 +415,35 @@ body.plain, .plain-page, .welcome { display: grid; place-items: center; min-heig
 .file-pick strong { overflow-wrap: anywhere; }
 .file-pick-icon { display: inline-grid; width: 26px; height: 26px; color: var(--accent); }
 .file-pick-icon svg { width: 26px; height: 26px; }
+
+/* --- settings lists: what an item is, then its chips and actions. On a narrow
+   screen the actions drop below the text instead of squeezing it --- */
+/* One column that may shrink below its content, so a long name truncates instead of widening the page. */
+.rows { grid-template-columns: minmax(0, 1fr); }
+.item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 14px; }
+.item + .item { border-top: 1px solid var(--line); }
+.item > .avatar { flex: none; display: inline-grid; place-items: center; cursor: default; }
+.item-main { flex: 1 1 200px; min-width: 0; }
+.item-main > * { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-side { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.item.dim { justify-content: center; }
+.link-button { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); font-weight: 600; text-align: left; cursor: pointer; }
+.link-button:hover { color: var(--accent); }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.section-head h2 { margin: 0; }
+.section.first { margin-top: 0; }
+.head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.subnav { margin: -8px 0 26px; }
+.segmented > [aria-current="page"] { color: var(--ink); background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 0.5px var(--line); }
+.input.narrow { width: 180px; }
+@media (max-width: 640px) {
+	.item-side { margin-left: 0; width: 100%; }
+	.item-side .button { flex: 1; }
+	.item-side .chip { flex: none; }
+	.head-actions { width: 100%; }
+	.head-actions > * { flex: 1; min-width: 0; }
+	.section-head .search { max-width: none; flex: 1; }
+	.input.narrow { width: 100%; }
+	.subnav { display: flex; width: 100%; }
+	.sheet-foot { flex-wrap: wrap; }
+}

@@ -1,0 +1,19 @@
+{
+	"slug": "auth-demo",
+	"name": "Sign-in Demo",
+	"summary": "Shows who is visiting: the identity a celld site or a Hamstr grain receives.",
+	"description": "A small demo of platform sign-in. It shows the name, role and permissions the platform passes to the app, an admins-only page that the server guards, and where each value comes from.\n\nThe same code runs as a standalone celld site behind the celld auth service (X-Celld-User-* headers) and as a Hamstr grain (X-Hamstr-* headers). It has no sign-in code of its own, stores nothing and never reaches the network.",
+	"version": "1.0.0",
+	"instances": "single",
+	"license": "MIT",
+	"icon": "🪪",
+	"tags": ["demo", "sign-in"],
+	"egress": [],
+	"permissions": [
+		{
+			"id": "admin",
+			"title": "Open the admins page",
+			"description": "See the page that only admins can open."
+		}
+	]
+}

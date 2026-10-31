@@ -6,6 +6,14 @@
 
 	let open = $state(false);
 	let root = $state(null);
+	let menuEl = $state(null);
+	let flip = $state(false);
+
+	// The menu hangs off the button's right edge; when the button sits near the left of the
+	// screen that pushes it off-screen, so anchor it to the left edge instead.
+	$effect(() => {
+		flip = open && menuEl && root ? root.getBoundingClientRect().right - menuEl.offsetWidth < 8 : false;
+	});
 
 	function onWindowClick(event) {
 		if (open && !root?.contains(event.target)) open = false;
@@ -35,7 +43,7 @@
 		}}>{@html ICON.more}</button
 	>
 	{#if open}
-		<div class="menu" role="menu">
+		<div class="menu" class:flip role="menu" bind:this={menuEl}>
 			{#each items.filter((item) => !item.hidden) as item, i (item.label)}
 				{#if item.separator && i > 0}<div class="menu-sep" role="separator"></div>{/if}
 				<button type="button" class="menu-item" class:danger={item.danger} role="menuitem" onclick={(event) => choose(event, item)}>

@@ -47,3 +47,10 @@
 	.tile-badge { left: calc(50% + 18px); }
 	.grain-title { width: 40vw; }
 }
+
+/* --- an admin's nudge under the top bar: people waiting to be let in --- */
+.notice {
+	display: block; width: min(var(--page), calc(100% - 24px)); margin: 10px auto 0; padding: 9px 14px; border-radius: 12px;
+	background: var(--accent-soft); color: var(--accent); font-weight: 560; font-size: 0.9rem; text-decoration: none; text-align: center;
+}
+.notice:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }

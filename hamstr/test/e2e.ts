@@ -61,7 +61,6 @@ try {
 		proxyToken: node.proxyToken,
 		secret: "e2e-secret",
 		oidc: { issuer: idp.issuer, clientId: idp.clientId, clientSecret: idp.clientSecret },
-		admins: ["ada@example.com"],
 		logging: false,
 	});
 	const port = (await hamstr.listen(0, "127.0.0.1")).port;
@@ -69,7 +68,7 @@ try {
 	const signIn = async (user) => {
 		const b = new Browser(port);
 		idp.nextUser = user;
-		const start = await b.request("GET", "/auth/login", { host: SHELL });
+		const start = await b.request("GET", `/auth/login/${hamstr.core.seededProvider}`, { host: SHELL });
 		const back = await fetch(start.headers.location, { redirect: "manual" });
 		const cb = new URL(back.headers.get("location"));
 		assert.equal((await b.request("GET", cb.pathname + cb.search, { host: SHELL })).status, 303);
@@ -82,7 +81,9 @@ try {
 	};
 	const host = (id) => `grain-${id}.grains.test`;
 
+	// The first person in becomes the owner; everyone after is let in straight away.
 	const ada = await signIn({ sub: "u-ada", email: "ada@example.com", name: "Ada Lovelace" });
+	hamstr.core.accounts.setProvider("e2e", hamstr.core.seededProvider, { autoApprove: true });
 	let t = performance.now();
 	const installed = await api(ada, "POST", "/api/apps", { slug: "pinboard" });
 	assert.equal(installed.status, 200, installed.text);

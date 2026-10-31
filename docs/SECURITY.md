@@ -159,21 +159,20 @@ This is what lets [Hamstr](../hamstr/README.md) hand apps identity headers they
 can trust: another container on the bridge cannot reach a grain directly or
 forge them. Without `PROXY_TOKEN` grain sites answer nobody.
 
-## Sign-in (auth service)
+## Sign-in (Hamstr accounts)
 
 Sites that declare `auth` in `celld.json` get a verified identity from the
 router. The pieces and what each is trusted for:
 
-- **Auth service** (`auth/`, LAN-only). Authenticates people, decides who may
-  enter which site, and mints short-lived tokens. It holds `AUTH_KEY` and the
-  celld `ADMIN_TOKEN` (to list sites and push mode overrides), so treat it
-  like Hamstr: never expose it publicly without thinking about that.
+- **Hamstr** (LAN-only, `hamstr/lib/auth`). Authenticates people, decides who
+  may enter which site, and mints short-lived tokens. It already holds the
+  celld `ADMIN_TOKEN` and the proxy token; sign-in adds `AUTH_KEY`.
 - **Router.** Only verifies HMAC-signed tokens with `AUTH_KEY`; it never calls
-  the auth service. The mode (`required`/`optional`) is per site in KV
+  Hamstr. The mode (`required`/`optional`) is per site in KV
   (`auth:<site>`): set from `celld.json` when a deploy is activated, overridable
-  by the auth service, never stored on the content-addressed code record that
+  from Hamstr's Settings, never stored on the content-addressed code record that
   several sites may share. Three token types, each bound to a type and a hostname
-  (`aud`): `authreq` (router to auth service: "this host wants a person"; signed
+  (`aud`): `authreq` (router to Hamstr: "this host wants a person"; signed
   so a visitor cannot ask for another site's policy or an open redirect),
   `handoff` (30 s, single use per router isolate) and the `site` cookie (15 min).
 - **Site code** never sees the key or the cookie. The router strips every
@@ -188,12 +187,12 @@ Design choices and limits:
   all of them.
 - Spoofing: a site cannot mint a token (no key), and a token for host A fails
   on host B (`aud`). Headers on the incoming request are always removed.
-- CSRF: the auth service's JSON API refuses cross-site requests
+- CSRF: Hamstr's JSON API refuses cross-site requests
   (`Sec-Fetch-Site`/`Origin`); provider logins carry a `state` bound to the
   browser by a cookie, so a login started by someone else cannot be completed in
   your browser. Sites remain responsible for CSRF on their own POSTs;
   `SameSite=Lax` covers cross-site form posts.
-- Who may enter is decided only from the auth service's own database, so an
+- Who may enter is decided only from Hamstr's own accounts database, so an
   unreachable or misconfigured celld admin API cannot open a restricted site; a
   rule is pushed to the router before it is saved, so it never looks live when
   the router did not take it.
@@ -210,8 +209,9 @@ Design choices and limits:
   over an existing person. The first person to sign in on a fresh install
   becomes the owner, so do that before sharing the address.
 - Provider client secrets are encrypted at rest with a key derived from
-  `AUTH_KEY`; rotating `AUTH_KEY` signs everyone out and needs the secrets
-  re-entered.
+  `HAMSTR_SECRET`. Rotating `AUTH_KEY` only invalidates tokens in flight and
+  site cookies (people sign in to sites again); rotating `HAMSTR_SECRET` needs
+  the provider secrets re-entered.
 
 ## Hostile tenant checklist
 

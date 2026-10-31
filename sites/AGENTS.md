@@ -9,8 +9,8 @@ directory. Read these too:
   TanStack Start, with pitfalls actually hit and what was verified.
 
 New sites usually go in their **own checkout/repo**, not here: this repo
-gitignores everything under `sites/` except the five example templates
-(`example`, `sveltekit`, `nuxt`, `tanstack`, `static`). A site kept under
+gitignores everything under `sites/` except the example templates
+(`example`, `sveltekit`, `nuxt`, `tanstack`, `static`, `authdemo`). A site kept under
 `sites/<name>/` still builds and deploys normally with `tools/deploy.sh`; it
 just isn't part of the platform source. To add a new template here, un-ignore
 it in `.gitignore`.

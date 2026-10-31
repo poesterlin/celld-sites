@@ -4,7 +4,7 @@
 //
 //   node hamstr/test/dev.ts          (Ctrl+C to stop; everything is temporary)
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Node } from "../../tests/harness.ts";
@@ -34,6 +34,14 @@ for (const app of ["pinboard"]) {
 	);
 }
 await node.start();
+// A celld site that asks for sign-in, so Settings → Sites has something to show.
+{
+	const site = join(dir, "family-site");
+	mkdirSync(join(site, "public"), { recursive: true });
+	writeFileSync(join(site, "public/index.html"), "<h1>Family photos</h1>\n");
+	writeFileSync(join(site, "celld.json"), JSON.stringify({ assets: "public", auth: "required", check: false }));
+	node.deploy(site, "family-photo-archive-and-recipes.localhost");
+}
 const hamstr = createHamstr({
 	dataDir: join(dir, "hamstr"),
 	shellHost: "hamstr.localhost",
@@ -47,7 +55,6 @@ const hamstr = createHamstr({
 	proxyToken: node.proxyToken,
 	secret: "dev",
 	oidc: { issuer: idp.issuer, clientId: idp.clientId, clientSecret: idp.clientSecret },
-	admins: ["ada@example.com"],
 });
 await hamstr.listen(PORT, "127.0.0.1");
 
@@ -55,7 +62,8 @@ await hamstr.listen(PORT, "127.0.0.1");
 {
 	const shell = "hamstr.localhost";
 	const b = new Browser(PORT);
-	const start = await b.request("GET", "/auth/login", { host: shell });
+	// Ada signs in first, so she is the owner.
+	const start = await b.request("GET", `/auth/login/${hamstr.core.seededProvider}`, { host: shell });
 	const back = new URL((await fetch(start.headers.location, { redirect: "manual" })).headers.get("location"));
 	await b.request("GET", back.pathname + back.search, { host: shell });
 	const api = (method, path, json) => b.request(method, path, { host: shell, headers: { origin: `http://${shell}:${PORT}` }, json });

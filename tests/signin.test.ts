@@ -1,5 +1,5 @@
 // Sign-in tests: the router's cookie check, header injection and policy admin API,
-// against a local celld dev node. The auth service is played by this file (it signs
+// against a local celld dev node. The sign-in service (Hamstr) is played by this file (it signs
 // handoff tokens with the shared key).
 // Run: node --test tests/signin.test.ts
 import assert from "node:assert/strict";
@@ -57,7 +57,7 @@ after(async () => {
 });
 
 describe("sign-in: gating", () => {
-	it("redirects a navigation to the auth service with a signed request", async () => {
+	it("redirects a navigation to the sign-in service with a signed request", async () => {
 		const r = await get(node, "gated.test", "/page?x=1");
 		assert.equal(r.status, 302);
 		const loc = new URL(String(r.headers.location));
@@ -147,7 +147,7 @@ describe("sign-in: me and logout", () => {
 		const anon = (await get(node, "open.test", "/.celld/auth/me")).json();
 		assert.deepEqual(anon, { user: null, mode: "optional" });
 	});
-	it("logout clears the cookie and goes to the auth service", async () => {
+	it("logout clears the cookie and goes to the sign-in service", async () => {
 		const r = await get(node, "gated.test", "/.celld/auth/logout");
 		assert.equal(r.status, 303);
 		assert.match(String(r.headers.location), /^https:\/\/auth\.test\/logout/);

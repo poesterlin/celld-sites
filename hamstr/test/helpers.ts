@@ -37,6 +37,13 @@ export interface MockCelld {
 	close(): Promise<void>;
 }
 
+/** Client id and secret from a Basic header. RFC 6749 2.3.1: both are
+ *  form-encoded before the Basic encoding. */
+function basicCredentials(header: unknown): string[] {
+	const pair = Buffer.from(String(header ?? "").replace(/^Basic /, ""), "base64").toString();
+	return pair.split(":").map((v) => decodeURIComponent(v.replace(/\+/g, " ")));
+}
+
 /** OIDC provider. `users` maps a login hint to claims; `nextUser` picks who
  *  "signs in" at the next /authorize. `tamper` breaks the next ID token. */
 export async function mockIdp({ clientId = "hamstr-test", clientSecret = "s3cret" }: { clientId?: string; clientSecret?: string } = {}): Promise<MockIdp> {
@@ -77,8 +84,8 @@ export async function mockIdp({ clientId = "hamstr-test", clientSecret = "s3cret
 			let body = "";
 			for await (const chunk of req) body += chunk;
 			const form = new URLSearchParams(body);
-			const auth = Buffer.from(String(req.headers.authorization ?? "").replace(/^Basic /, ""), "base64").toString();
-			if (auth !== `${clientId}:${clientSecret}`) return send(401, { error: "invalid_client" });
+			const [id, secret] = basicCredentials(req.headers.authorization);
+			if (id !== clientId || secret !== clientSecret) return send(401, { error: "invalid_client" });
 			const entry = codes.get(form.get("code"));
 			codes.delete(form.get("code"));
 			if (!entry) return send(400, { error: "invalid_grant" });

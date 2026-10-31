@@ -1,8 +1,7 @@
 <script>
 	import { page } from "$app/state";
 	import Toaster from "@hamstr/ui/components/Toaster.svelte";
-	import TopBar from "@hamstr/ui/components/TopBar.svelte";
-	import AccountMenu from "@hamstr/ui/components/AccountMenu.svelte";
+	import ShellBar from "#lib/components/ShellBar.svelte";
 	import ContextMenu from "@hamstr/ui/components/ContextMenu.svelte";
 	import UninstallModal from "#lib/components/UninstallModal.svelte";
 	import RestoreModal from "#lib/components/RestoreModal.svelte";
@@ -25,18 +24,7 @@
 
 {#if me}
 	{#if !grainMode}
-		<TopBar
-			name={data.name}
-			links={[
-				{ href: "/", label: "Home", current: tab === "home" },
-				{ href: "/store", label: "Store", current: tab === "store" },
-				{ href: "/trash", label: "Trash", current: tab === "trash" },
-			]}
-		>
-			{#snippet end()}
-				<AccountMenu name={me.name} sub={me.email ?? ""} logout="/auth/logout" />
-			{/snippet}
-		</TopBar>
+		<ShellBar name={data.name} {me} pending={data.pending} {tab} />
 	{/if}
 
 	<main aria-live="polite">{@render children()}</main>
@@ -47,7 +35,7 @@
 			<h1>{data.name}</h1>
 			<p class="dim tagline">Your little apps, and everything you make with them, tucked safely into your own burrow.</p>
 			<div class="stack">
-				<a class="button" href="/auth/login?next={encodeURIComponent(page.url.pathname + page.url.search)}">Sign in with Tailscale</a>
+				<a class="button" href="/auth/login?next={encodeURIComponent(page.url.pathname + page.url.search)}">Sign in</a>
 			</div>
 		</div>
 	</div>

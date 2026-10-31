@@ -76,7 +76,8 @@ services:
       READ_TOKEN: ${READ_TOKEN:?Set READ_TOKEN in .env}
       # The admin API answers only on this hostname, which Traefik never routes.
       ADMIN_HOST: admin.internal
-      # Sign-in for sites that declare `auth` in celld.json; unset = those sites answer 503.
+      # Sign-in for sites that declare `auth` in celld.json, done by Hamstr
+      # (https://<HAMSTR_HOST>/auth); unset = those sites answer 503.
       AUTH_URL: ${AUTH_URL:-}
       AUTH_KEY: ${AUTH_KEY:-}
       # Delete write-log epochs no restore needs once they are this old (epoch GC,
@@ -312,8 +313,9 @@ services:
       - 'traefik.http.routers.store.priority=20'
       - 'traefik.http.services.store.loadbalancer.server.port=3000'
 
-  # Hamstr: the personal app shell (grains, sign-in via tsidp). It holds
-  # ADMIN_TOKEN and the proxy token, so it is LAN-only.
+  # Hamstr: the personal app shell (grains) and the sign-in for this node:
+  # people, groups and which celld sites they may open. It holds ADMIN_TOKEN,
+  # AUTH_KEY and the proxy token, so it is LAN-only.
   # Off unless COMPOSE_PROFILES includes "hamstr" (see .env.example).
   hamstr:
     profiles: ["hamstr"]
@@ -338,11 +340,18 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       PROXY_TOKEN: ${HAMSTR_PROXY_TOKEN:-}
       HAMSTR_SECRET: ${HAMSTR_SECRET:-}
+      # Seeds the first sign-in provider on a fresh install; afterwards
+      # Settings → Sign-in manages providers and these are ignored.
+      OIDC_NAME: ${HAMSTR_OIDC_NAME:-}
       OIDC_ISSUER: ${HAMSTR_OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${HAMSTR_OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${HAMSTR_OIDC_CLIENT_SECRET:-}
+      # Only read once, to bring over people who signed in before accounts.
       HAMSTR_ADMINS: ${HAMSTR_ADMINS:-}
-      HAMSTR_ALLOWED_USERS: ${HAMSTR_ALLOWED_USERS:-}
+      # Shared with the router so celld sites can sign people in here.
+      AUTH_KEY: ${AUTH_KEY:-}
+      # "Someone is waiting for approval" (an ntfy topic URL; empty = none).
+      NTFY_URL: ${HAMSTR_NTFY_URL:-}
     volumes:
       - hamstr-data:/data
     read_only: true
@@ -378,67 +387,8 @@ services:
       - 'traefik.http.routers.hamstr-grains.service=hamstr'
       - 'traefik.http.services.hamstr.loadbalancer.server.port=3000'
 
-  # Sign-in for sites that declare `auth` in celld.json: logins (OIDC, GitHub,
-  # passkeys), people, groups and per-site access. The router only checks the
-  # signed cookie this service's handoff produces. It holds ADMIN_TOKEN and
-  # AUTH_KEY, so it is LAN-only. Off unless COMPOSE_PROFILES includes "auth".
-  auth:
-    profiles: ["auth"]
-    build:
-      context: .
-      dockerfile: auth/Dockerfile
-    image: celld-sites-auth
-    restart: unless-stopped
-    init: true
-    environment:
-      PORT: 3000
-      AUTH_DATA: /data
-      AUTH_URL: https://${AUTH_HOST:-auth.example.com}
-      ORIGIN: https://${AUTH_HOST:-auth.example.com}
-      # Required; the service refuses to start without it. Not `:?` here: compose
-      # checks that for every service, so it would break the stack for nodes without sign-in.
-      AUTH_KEY: ${AUTH_KEY:-}
-      CELLD_ADMIN_API: http://admin.internal:8080
-      ADMIN_HOST: admin.internal
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-      NTFY_URL: ${AUTH_NTFY_URL:-}
-      # Seeds the first sign-in provider on a fresh install; afterwards providers
-      # are managed on the Providers page and these are ignored.
-      OIDC_NAME: ${AUTH_OIDC_NAME:-}
-      OIDC_ISSUER: ${AUTH_OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${AUTH_OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-}
-      OIDC_AUTO_APPROVE: ${AUTH_OIDC_AUTO_APPROVE:-0}
-    volumes:
-      - auth-data:/data
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m
-    mem_limit: 256m
-    pids_limit: 128
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging: *logging
-    networks:
-      - default
-      - traefik_web
-    labels:
-      - 'traefik.enable=true'
-      - 'traefik.docker.network=traefik_web'
-      - 'traefik.http.routers.auth.rule=Host(`${AUTH_HOST:-auth.example.com}`)'
-      - 'traefik.http.routers.auth.priority=20'
-      - 'traefik.http.services.auth.loadbalancer.server.port=3000'
-
   # tsidp: a Tailscale-backed OIDC provider ("Sign in with Tailscale") for the
-  # auth service. Optional; any OIDC issuer works instead. Off unless
+  # sign-in (Hamstr). Optional; any OIDC issuer works instead. Off unless
   # COMPOSE_PROFILES includes "tsidp". It joins the tailnet as TSIDP_HOSTNAME,
   # so a second copy under the same name would fight with this one.
   tsidp:
@@ -453,7 +403,7 @@ services:
       TS_STATE_DIR: /data
       TS_HOSTNAME: ${TSIDP_HOSTNAME:-idp}
       # Funnel publishes the IdP on the public internet. Off unless you choose it
-      # (TSIDP_FUNNEL=1): only needed when browsers or the auth service cannot
+      # (TSIDP_FUNNEL=1): only needed when browsers or Hamstr cannot
       # reach the tailnet name.
       TSIDP_USE_FUNNEL: ${TSIDP_FUNNEL:-0}
       TSIDP_ENABLE_STS: 1
@@ -486,7 +436,6 @@ volumes:
     name: celld-sites_cubby-data
   demo-state:
   hamstr-data:
-  auth-data:
   tsidp-data:
 
 networks:

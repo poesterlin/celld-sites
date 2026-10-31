@@ -1,0 +1,7 @@
+{
+	"worker": ".svelte-kit/cloudflare/_worker.js",
+	"assets": ".svelte-kit/cloudflare",
+	"immutable": ["_app/immutable/"],
+	"notFound": "none",
+	"auth": "required"
+}

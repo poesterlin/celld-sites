@@ -17,9 +17,18 @@ built on a celld-sites node. A hamster hoards *grains*; so does Hamstr.
   (a new one is called "Untitled …" until you rename it in the title bar). An
   app that declares `"instances": "single"` has one grain per person instead:
   its icon opens it directly, and the first open creates it.
-- **Sign-in is the platform's job.** Hamstr signs people in with OIDC (tsidp
-  here) and tells each app who is visiting and what they may do. Apps contain
-  no login code.
+- **Sign-in is the platform's job.** Hamstr signs people in (any OIDC provider
+  such as tsidp, GitHub, passkeys) and tells each app who is visiting and what
+  they may do. Apps contain no login code.
+- **People are managed in Hamstr.** Whoever signs in first owns it. Others
+  come with an invite link or wait for an admin to let them in (with an ntfy
+  notice); a trusted provider can let its people straight in. *Settings* has
+  People, Groups, Sites, Sign-in methods and Activity; *Your account* lists
+  your sign-in methods, passkeys and sessions.
+- **It signs people in for celld sites too.** A site with `"auth": "required"`
+  in its `celld.json` sends visitors here; *Settings → Sites* decides who may
+  open it (everyone let in, some groups and people, or anyone). See
+  [docs/SITES.md](../docs/SITES.md#sign-in).
 - **Private by default.** A grain belongs to the person who made it; nobody
   else on the Hamstr can list, open or download it. (Share links existed
   once and were removed; their old tables stay in the database, unused.)
@@ -119,19 +128,23 @@ Hamstr is a compose service behind the `hamstr` profile, LAN-only (it holds
 `ADMIN_TOKEN`). Setup:
 
 1. Register an OIDC client at the IdP with redirect URI
-   `https://<HAMSTR_HOST>/auth/callback` (tsidp: its web UI, or its
-   `/register` endpoint).
+   `https://<HAMSTR_HOST>/auth/callback/tailscale` (the last part is the
+   provider's id: its name in lowercase; tsidp: its web UI, or its `/register`
+   endpoint).
 2. In `.env`: `COMPOSE_PROFILES=hamstr`, `HAMSTR_HOST`, `HAMSTR_GRAIN_DOMAIN`,
-   `HAMSTR_GRAINS_RULE`, `HAMSTR_PROXY_TOKEN`, `HAMSTR_SECRET`, the three
-   `HAMSTR_OIDC_*` values and `HAMSTR_ADMINS` (see `.env.example`).
-3. Restart **celld** so the router learns the proxy token (`docker compose up -d
-   celld`); until then grain sites answer nobody.
-4. `docker compose up -d hamstr`.
+   `HAMSTR_GRAINS_RULE`, `HAMSTR_PROXY_TOKEN`, `HAMSTR_SECRET` and the three
+   `HAMSTR_OIDC_*` values (see `.env.example`). For celld sites that ask for
+   sign-in, also `AUTH_KEY` and `AUTH_URL=https://<HAMSTR_HOST>/auth`.
+3. Restart **celld** so the router learns the proxy token and `AUTH_*`
+   (`docker compose up -d celld`); until then grain sites answer nobody.
+4. `docker compose up -d hamstr`, open it and sign in first: that makes you
+   the owner.
 
-`HAMSTR_ALLOWED_USERS` limits who can sign in at all (emails or usernames);
-empty means anyone the IdP authenticates (for tsidp: anyone on the tailnet).
-`HAMSTR_ADMINS` can install, update and uninstall apps; `*` makes everyone who
-can sign in an admin.
+Admins (and the owner) install, update and uninstall apps and manage people;
+roles are set on *Settings → People*. `HAMSTR_ADMINS` is only read once, when
+upgrading from before accounts: everyone who had signed in is brought over by
+their identity at the OIDC provider, the earliest as owner and those listed
+there as admins.
 
 **Uninstalling** (an app's ⋯ menu, its right-click menu, the store) removes the
 app for everyone *and deletes every item made with it*, other people's and the
@@ -140,18 +153,22 @@ trash included; the dialog says how many and from whom first. In the API,
 answers 409 while items exist unless called with `?items=delete`. If any
 item's site cannot be deleted, the app stays installed.
 
-Data: `hamstr-data` holds Hamstr's SQLite (users, sessions, grains). The grains' data is in the celld bucket like any site's. Back up both.
+Data: `hamstr-data` holds Hamstr's SQLite databases: `hamstr.db` (apps,
+grains) and `auth.db` (people, groups, sign-in providers with their secrets
+encrypted, sessions, site rules, the activity log). The grains' data is in the celld bucket like any site's. Back up both.
 
 ### Develop and test
 
 The UI and the JSON API are a SvelteKit app in `hamstr/src` (SSR, Svelte 5
 runes). `hamstr/server.ts` is the HTTP entrypoint: it routes on the Host
 header, proxies the grain hosts, and hands everything else to adapter-node. The
-plain-Node modules in `hamstr/lib` hold the platform core, the celld and OIDC
-clients and the proxy, so the tests drive them without a browser.
+plain-Node modules in `hamstr/lib` hold the celld client, the proxy and
+`lib/auth` (accounts: people, groups, providers through `openid-client` and
+SimpleWebAuthn, per-site rules and the router's tokens), so the tests drive them
+without a browser.
 
 ```sh
-npm test --prefix hamstr            # 34 tests: mock IdP, mock celld, real Hamstr Store
+npm test --prefix hamstr            # mock IdP, mock celld, real Hamstr Store, accounts
 npm run e2e --prefix hamstr         # real celld dev node, real `hamstr publish`, Pinboard
 npm run playground --prefix hamstr  # http://hamstr.localhost:8795, seeded
 ```

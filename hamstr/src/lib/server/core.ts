@@ -9,18 +9,16 @@ import { DatabaseSync } from "node:sqlite";
 import { BundleError } from "../../../../packages/app-format/bundle.ts";
 import { ManifestError, validateManifest } from "../../../../packages/app-format/manifest.ts";
 import { CelldError, createCelld, downloadBundle } from "../../../lib/celld.ts";
-import { createOidc } from "../../../lib/oidc.ts";
+import { AuthError, createCore as createAccounts } from "../../../lib/auth/core.ts";
 import { safePath } from "../../../lib/path.ts";
 import { siteOf } from "../../../lib/site.ts";
 
-export { CelldError, ManifestError, BundleError, safePath };
+export { AuthError, CelldError, ManifestError, BundleError, safePath };
 
 const NAME = "Hamstr";
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-const SESSION_MS = 14 * 24 * 60 * 60 * 1000;
 const GRAIN_SESSION_MS = 12 * 60 * 60 * 1000;
 const TICKET_MS = 60 * 1000;
-const LOGIN_MS = 10 * 60 * 1000;
 const TRASH_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_GRAINS_PER_USER = 500;
 /** Largest backup Hamstr accepts for a restore or an import. */
@@ -101,9 +99,14 @@ export interface CoreOptions {
 	adminToken?: string;
 	proxyToken?: string;
 	secret?: string;
-	oidc?: { issuer: string; clientId: string; clientSecret: string };
+	/** Seeds the first sign-in provider on a fresh install; later the Settings page manages providers. */
+	oidc?: { issuer: string; clientId: string; clientSecret: string; name?: string };
+	/** HMAC key shared with the celld router, so celld sites can sign people in here. */
+	authKey?: string;
+	/** ntfy topic URL for "someone is waiting for approval". */
+	ntfy?: string;
+	/** Before accounts: who was an admin (HAMSTR_ADMINS). Only read to import existing people. */
 	admins?: string[];
-	allowed?: string[];
 	grainCookieMode?: string;
 	sitesApi?: string;
 	logging?: boolean;
@@ -131,21 +134,21 @@ export function createCore(options: CoreOptions = {}) {
 			issuer: env.OIDC_ISSUER ?? "",
 			clientId: env.OIDC_CLIENT_ID ?? "",
 			clientSecret: env.OIDC_CLIENT_SECRET ?? "",
+			name: env.OIDC_NAME ?? "",
 		},
+		authKey: options.authKey ?? env.AUTH_KEY ?? "",
+		ntfy: options.ntfy ?? env.NTFY_URL ?? "",
 		admins: options.admins ?? list(env.HAMSTR_ADMINS),
-		allowed: options.allowed ?? list(env.HAMSTR_ALLOWED_USERS),
 		logging: options.logging !== false,
 	};
 	for (const [key, value] of [
 		["ADMIN_TOKEN", config.adminToken],
 		["PROXY_TOKEN", config.proxyToken],
 		["HAMSTR_SECRET", config.secret],
-		["OIDC_ISSUER", config.oidc.issuer],
-		["OIDC_CLIENT_ID", config.oidc.clientId],
-		["OIDC_CLIENT_SECRET", config.oidc.clientSecret],
 	]) {
 		if (!value) throw new Error(`${key} is required`);
 	}
+	if (config.authKey && config.authKey.length < 32) throw new Error("AUTH_KEY must be at least 32 characters");
 	if (!/^[a-z0-9-]+$/.test(config.grainPrefix)) throw new Error("HAMSTR_GRAIN_PREFIX must be lowercase letters, digits and dashes");
 
 	const secure = config.scheme === "https";
@@ -171,7 +174,6 @@ export function createCore(options: CoreOptions = {}) {
 	rmSync(tmpDir, { recursive: true, force: true });
 	mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
 
-	const oidc = createOidc({ ...config.oidc, redirectUri: `${shellOrigin}/auth/callback` });
 	const celld = createCelld({ api: config.celldApi, adminHost: config.adminHost, adminToken: config.adminToken, tmpDir });
 	const sitesApi = new URL(options.sitesApi ?? env.CELLD_SITES_API ?? config.celldApi);
 
@@ -221,6 +223,55 @@ export function createCore(options: CoreOptions = {}) {
 			throw err;
 		}
 	}
+	// --- accounts ---------------------------------------------------------------------
+	// People, groups, sign-in providers, invites and sessions live in their own
+	// database (lib/auth); this one keeps a users row per person for the grains.
+	const accounts = createAccounts({
+		origin: shellOrigin,
+		base: "/auth",
+		peopleUrl: `${shellOrigin}/settings/people`,
+		secret: config.secret,
+		key: config.authKey || undefined,
+		dbPath: join(config.dataDir, "auth.db"),
+		celld: { call: (method, path, body) => celld.call(method, path, body) },
+		ntfy: config.ntfy || undefined,
+		hideSite: (site) => site.startsWith(config.grainPrefix),
+	});
+	const seeded = seedAccounts();
+
+	/** A fresh install gets the OIDC provider from the environment, and everyone
+	 *  who signed in before accounts existed is brought over (see importLegacyPeople).
+	 *  Returns the id of the provider the environment describes, if any. */
+	function seedAccounts() {
+		const issuer = config.oidc.issuer.replace(/\/$/, "");
+		const known = accounts.providersList().find((p) => p.kind === "oidc" && p.issuer === issuer)?.id;
+		const pid = known ?? seedProvider();
+		if (pid && Number(db.prepare("PRAGMA user_version").get()?.user_version ?? 0) < 2) importLegacyPeople(pid);
+		return pid ?? null;
+	}
+	function seedProvider() {
+		const { issuer, clientId, clientSecret } = config.oidc;
+		if (!issuer || !clientId || !clientSecret) return undefined;
+		if (accounts.providersList().some((p) => p.kind !== "passkey")) return undefined;
+		const name = config.oidc.name || (/\.ts\.net\/?$/.test(issuer) ? "Tailscale" : new URL(issuer).hostname);
+		return accounts.saveProvider("setup", { kind: "oidc", name, issuer, clientId, clientSecret });
+	}
+	/** Same ids (their grains stay theirs), their identity at `pid`; the earliest
+	 *  becomes the owner, HAMSTR_ADMINS decides who else is an admin. */
+	function importLegacyPeople(pid: string) {
+		const hasOwner = () => accounts.people().some((p) => p.role === "owner");
+		for (const u of db.prepare("SELECT * FROM users ORDER BY created_at").all() as any[]) {
+			const role = !hasOwner() ? "owner" : matchesLegacyAdmin(u) ? "admin" : "member";
+			accounts.importPerson({ id: u.id, name: u.name, email: u.email, pid, subject: u.sub, label: u.login ?? u.email, role });
+		}
+		// Shell sessions and pending logins now live with the accounts.
+		db.exec("DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS logins; PRAGMA user_version = 2");
+	}
+	function matchesLegacyAdmin(user) {
+		const names = [user.email, user.login, user.sub].filter(Boolean).map((s) => String(s).toLowerCase());
+		return config.admins.some((entry) => entry === "*" || names.includes(entry));
+	}
+
 	const tx = (fn) => {
 		db.exec("BEGIN IMMEDIATE");
 		try {
@@ -235,28 +286,33 @@ export function createCore(options: CoreOptions = {}) {
 	const q = {
 		user: db.prepare("SELECT * FROM users WHERE id = ?"),
 		userBySub: db.prepare("SELECT * FROM users WHERE sub = ?"),
-		session: db.prepare("SELECT s.*, u.name, u.email, u.login, u.sub FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.hash = ? AND s.expires_at > ?"),
 		app: db.prepare("SELECT * FROM apps WHERE slug = ?"),
 		grain: db.prepare("SELECT * FROM grains WHERE id = ?"),
 	};
 
 	// --- identity --------------------------------------------------------------------
-	const matches = (entries, user) => {
-		const names = [user.email, user.login, user.sub].filter(Boolean).map((s) => String(s).toLowerCase());
-		// "*" matches everyone the IdP signs in (HAMSTR_ADMINS=* makes every user an admin).
-		return entries.some((entry) => entry === "*" || names.includes(entry));
-	};
-	const isAdmin = (user) => matches(config.admins, user);
+	const isAdmin = (user) => user?.role === "owner" || user?.role === "admin";
 	/** What apps see as the user id: stable, but not the IdP's subject or email. */
 	const publicUserId = (userId) => createHmac("sha256", config.secret).update(`user:${userId}`).digest("hex").slice(0, 32);
 
+	/** The signed-in person for a shell request. The session is an accounts
+	 *  session; the users row here follows the account (name, email). */
 	function sessionFor(request) {
 		const value = parseCookies(request.headers.get("cookie"))[SHELL_COOKIE];
 		if (!value || value.length > 200) return null;
-		const hash = sha256(value);
-		const row = q.session.get(hash, Date.now());
-		return row ? { hash, user: { id: row.user_id, name: row.name, email: row.email, login: row.login, sub: row.sub } } : null;
+		const found = accounts.sessionUser(value);
+		if (!found) return null;
+		const a = found.user;
+		const login = accounts.person(a.id).identities[0]?.label ?? null;
+		const row = q.user.get(a.id);
+		if (!row) {
+			db.prepare("INSERT INTO users (id, sub, name, email, login, created_at, seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(a.id, `account:${a.id}`, a.name, a.email, login, now(), now());
+		} else if (row.name !== a.name || row.email !== a.email || Date.parse(String(row.seen_at)) < Date.now() - 60_000) {
+			db.prepare("UPDATE users SET name = ?, email = ?, seen_at = ? WHERE id = ?").run(a.name, a.email, now(), a.id);
+		}
+		return { hash: found.sessionId, token: value, user: { id: a.id, name: a.name, email: a.email, login, role: a.role } };
 	}
+	const sessionCookie = (value: string, maxAge: number) => `${SHELL_COOKIE}=${value}; ${cookieAttrs}; Max-Age=${maxAge}`;
 
 	// --- apps and the access model ---------------------------------------------------
 	const manifestOf = (app) => (app ? JSON.parse(app.manifest) : null);
@@ -633,7 +689,7 @@ export function createCore(options: CoreOptions = {}) {
 		if (!value || value.length > 200) return null;
 		const gs = db.prepare("SELECT * FROM grain_sessions WHERE hash = ? AND expires_at > ?").get(sha256(value), Date.now());
 		if (!gs || gs.grain_id !== grain.id) return null;
-		if (gs.parent && !db.prepare("SELECT 1 FROM sessions WHERE hash = ? AND expires_at > ?").get(gs.parent, Date.now())) return null;
+		if (gs.parent && !accounts.sessionAlive(String(gs.parent))) return null;
 		const access = accessFor(grain, { userId: gs.user_id });
 		if (!access) return null;
 		return { gs, access, user: gs.user_id ? q.user.get(gs.user_id) : null };
@@ -642,10 +698,9 @@ export function createCore(options: CoreOptions = {}) {
 	// --- housekeeping ------------------------------------------------------------------
 	async function housekeeping() {
 		const t = Date.now();
-		db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(t);
+		accounts.sweep();
 		db.prepare("DELETE FROM grain_sessions WHERE expires_at < ?").run(t);
 		db.prepare("DELETE FROM tickets WHERE expires_at < ?").run(t);
-		db.prepare("DELETE FROM logins WHERE created_at < ?").run(t - LOGIN_MS);
 		const cutoff = new Date(t - TRASH_MS).toISOString();
 		for (const grain of db.prepare("SELECT * FROM grains WHERE trashed_at IS NOT NULL AND trashed_at < ?").all(cutoff)) {
 			try {
@@ -666,7 +721,8 @@ export function createCore(options: CoreOptions = {}) {
 		config,
 		db,
 		celld,
-		oidc,
+		accounts,
+		seededProvider: seeded,
 		tmpDir,
 		sitesApi,
 		shellOrigin,
@@ -678,9 +734,8 @@ export function createCore(options: CoreOptions = {}) {
 		GRAIN_COOKIE,
 		cookieAttrs,
 		grainCookieAttrs,
-		SESSION_MS,
+		sessionCookie,
 		GRAIN_SESSION_MS,
-		LOGIN_MS,
 		TICKET_MS,
 		TRASH_MS,
 		MAX_GRAINS_PER_USER,
@@ -699,7 +754,6 @@ export function createCore(options: CoreOptions = {}) {
 		randomId,
 		tx,
 		q,
-		matches,
 		isAdmin,
 		publicUserId,
 		sessionFor,
@@ -720,6 +774,7 @@ export function createCore(options: CoreOptions = {}) {
 		close() {
 			clearInterval(timer);
 			db.close();
+			accounts.db.close();
 		},
 	};
 }
