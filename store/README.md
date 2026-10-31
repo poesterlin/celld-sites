@@ -129,7 +129,7 @@ data is yours" property.
 | `../packages/app-format/bundle.ts` | store, CLI, Hamstr | tar.gz validation: safe paths, regular files only, size caps, blob hash equality, `code.json` cross-check |
 | `cli/` | publisher/developer machine | the `hamstr` CLI (npm package `@hamstr/cli`, see [cli/README.md](cli/README.md)): register/login, publish (build + pack + upload), install into a celld node over its admin API or a compose stack, update/list/report. Needs no checkout of this repo |
 | `celld-demo` (compose) | separate node | disposable per-session copies for "Try it"; own bucket/token, no egress |
-| `examples/` | repo | demo apps: `secret-santa` (one worker, one Durable Object), `pinboard` (a Hamstr grain app), `gym-log` (a training log with charts) and `bookmarks` (a link manager with tags, search and import) |
+| `test/fixtures/` | repo | apps the tests publish: `secret-santa` (one worker, one Durable Object) and `pinboard` (a Hamstr grain app). The demo apps (gym-log, bookmarks, …) live outside this repo |
 
 The store joins only the Traefik network (it needs no app network and no bucket
 access) and holds no celld admin token. It shares that bridge with the celld

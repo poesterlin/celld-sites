@@ -1,0 +1,5 @@
+{
+	"worker": "worker.ts",
+	"objects": "objects.ts",
+	"check": "/health"
+}

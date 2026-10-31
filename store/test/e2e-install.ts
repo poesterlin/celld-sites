@@ -52,7 +52,7 @@ try {
 			});
 		});
 
-	console.log(await run(["publish", join(import.meta.dirname, "..", "examples", "secret-santa")], { HAMSTR_STORE: base }));
+	console.log(await run(["publish", join(import.meta.dirname, "fixtures", "secret-santa")], { HAMSTR_STORE: base }));
 	await node.start();
 	console.log(
 		await run(["install", "secret-santa", "--host", "demo.test", "--yes", "--watch", "0"], {
