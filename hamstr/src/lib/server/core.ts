@@ -386,6 +386,7 @@ export function createCore(options: CoreOptions = {}) {
 
 	// --- store ---------------------------------------------------------------------
 	async function storeJson(path) {
+		if (!config.store) throw new HttpError(503, "no app store is set up: set HAMSTR_STORE (in the Home Assistant add-on: the App store option)");
 		let res;
 		try {
 			res = await fetch(`${config.store}${path}`, { signal: AbortSignal.timeout(30_000) });

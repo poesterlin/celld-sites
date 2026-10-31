@@ -1,7 +1,7 @@
 # The Hamstr add-on: the appliance image (appliance/), settings from the
 # options below. Bump `version` to a released image tag (git tag vX.Y.Z).
 name: Hamstr
-version: "0.3.0"
+version: "0.3.1"
 slug: hamstr
 description: Little web apps in one click, with your data at home
 url: https://github.com/poesterlin/celld-sites
@@ -21,6 +21,7 @@ ports:
   8000/tcp: 8000
 webui: http://[HOST]:[PORT:8000]/
 options:
+  store: ""
   auth: none
   tls_mode: "off"
   env: []
@@ -40,5 +41,5 @@ schema:
   oidc_issuer: url?
   oidc_client_id: str?
   oidc_client_secret: password?
-  store: url?
+  store: str?
   ntfy_url: url?

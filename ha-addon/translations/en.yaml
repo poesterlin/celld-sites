@@ -1,0 +1,47 @@
+configuration:
+  store:
+    name: App store
+    description: Address of the Hamstr Store to install apps from, for example https://store.example.com
+  auth:
+    name: Sign-in
+    description: "none: home mode, anyone on your network is the owner. required: people sign in (needs tls_mode and a sign-in provider)."
+  tls_mode:
+    name: HTTPS
+    description: "off: plain HTTP (home mode). domain: your own domain at a DNS provider. names: a Hamstr names service."
+  env:
+    name: Extra settings
+    description: NAME=value lines, for example the DNS provider's token (CF_DNS_API_TOKEN=...).
+  domain:
+    name: Domain
+    description: With tls_mode domain, the name Hamstr answers on, for example hamstr.example.com.
+  dns_provider:
+    name: DNS provider
+    description: With tls_mode domain, the provider's name in lego, for example cloudflare.
+  name_service_url:
+    name: Names service
+    description: With tls_mode names, the address of the names service.
+  address:
+    name: Address
+    description: With tls_mode names, the IP address the name points at. Empty finds the Tailscale address.
+  acme_email:
+    name: Certificate email
+    description: Optional contact for Let's Encrypt.
+  hamstr_host:
+    name: Hostname
+    description: Only with tls_mode off and sign-in required.
+  grain_domain:
+    name: Grain domain
+    description: Only with tls_mode off and sign-in required.
+  oidc_name:
+    name: Sign-in provider name
+    description: Shown on the sign-in button, for example Tailscale.
+  oidc_issuer:
+    name: Sign-in provider address
+    description: The OIDC issuer, an HTTPS address.
+  oidc_client_id:
+    name: Client ID
+  oidc_client_secret:
+    name: Client secret
+  ntfy_url:
+    name: ntfy topic
+    description: Optional. Notified when someone waits for approval.

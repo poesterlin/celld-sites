@@ -14,7 +14,7 @@ That's it. You are the owner.
 
 ## Get apps
 
-Apps come from a Hamstr Store. Set its address in the `store` option,
+Apps come from a Hamstr Store. Set its address in the **App store** option,
 then restart the add-on.
 
 ## Home mode

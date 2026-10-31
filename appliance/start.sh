@@ -112,6 +112,8 @@ fi
 : "${HAMSTR_HOST:?Set HAMSTR_HOST (the Hamstr hostname)}"
 : "${HAMSTR_GRAIN_DOMAIN:?Set HAMSTR_GRAIN_DOMAIN (grains are grain-<id>.<this>)}"
 export HAMSTR_SCHEME="${HAMSTR_SCHEME:-https}"
+# No store unless one is set: Hamstr's own default is the compose stack's.
+export HAMSTR_STORE="${HAMSTR_STORE:-}"
 case "$HAMSTR_HOST" in "$ADMIN_HOST") log "HAMSTR_HOST must not be $ADMIN_HOST"; exit 1 ;; esac
 
 # --- celld node -------------------------------------------------------------
