@@ -99,8 +99,8 @@ format.
 backup…* on its menus, and an app's page has *Import a backup…* (a new item
 from a backup). A backup (`.hamstr-backup`) is a header line (app, app
 version, item name, time) followed by celld's dump of the item's objects:
-every table, row and stored key, no app code involved (see "Back up and
-restore" in the [celld-sites README](../README.md)). Restoring replaces the
+every table, row and stored key, no app code involved (see "Seed and back up
+data" in [docs/OPERATIONS.md](../docs/OPERATIONS.md)). Restoring replaces the
 item's data: Hamstr first takes a safety copy, holds the item's traffic (503)
 while it runs, and puts the safety copy back if the restore fails half-way.
 A backup only goes into the same app, and not into an older version of it than

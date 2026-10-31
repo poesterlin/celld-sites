@@ -6,7 +6,7 @@
 # This is the development stack: it builds the images locally and uses the
 # default `celld-sites-node` image tag. Production
 # runs the pull-only compose file in the celld-sites-deploy repo, which uses the
-# same project name so volumes carry over; see README, "Development vs hosting".
+# same project name so volumes carry over; see docs/OPERATIONS.md, "Development and hosting".
 # Both must not run at the same time.
 
 name: celld-sites
@@ -83,7 +83,7 @@ services:
       # Delete write-log epochs no restore needs once they are this old (epoch GC,
       # a pass at most every 5 min). Covers the router's KV (site code and assets)
       # and its root objects. celld 0.6.3 skips Durable Object facets, so site
-      # object logs still grow (~4-6 KB per write); see README.
+      # object logs still grow (~4-6 KB per write); see docs/OPERATIONS.md.
       CELLD_LTX_RETENTION_SECS: ${CELLD_LTX_RETENTION_SECS:-3600}
       # Wall-clock limit for a site's response and each Durable Object call (504 after).
       SITE_TIMEOUT_SECS: ${SITE_TIMEOUT_SECS:-30}

@@ -47,7 +47,7 @@ Design within these; none of them can be worked around from site code.
 
 EmDash (Astro CMS) sites are the exception to "only two bindings": deploy them
 with `tools/deploy-emdash.sh`, which maps their D1/R2/KV needs onto Durable
-Objects (README, "EmDash sites"). Don't hand-roll that in site code.
+Objects (docs/OPERATIONS.md, "EmDash sites"). Don't hand-roll that in site code.
 
 ## celld.json
 

@@ -42,7 +42,7 @@ relative to the site directory):
 
 Without `celld.json` the SvelteKit `adapter-cloudflare` layout is assumed.
 EmDash (Astro) sites need more than a `celld.json`: deploy them with
-`tools/deploy-emdash.sh` (README, "EmDash sites").
+`tools/deploy-emdash.sh` (docs/OPERATIONS.md, "EmDash sites").
 The site needs `esbuild` in its devDependencies.
 
 ## Request handling
