@@ -10,9 +10,11 @@
 	import { shortDate, size } from "@hamstr/ui/format.ts";
 	import { toast } from "@hamstr/ui/state.svelte.ts";
 	import { api, latestRelease } from "#lib/api.ts";
+	import { CATEGORIES } from "../../../../../../packages/app-format/manifest.ts";
 	import { appInHome, home, parseHome, setHome } from "#lib/hamstr.svelte.ts";
 
 	const slug = $derived(page.params.slug);
+	const categoryLabel = (id) => CATEGORIES[id] ?? id;
 
 	let detail = $state(null);
 	let error = $state("");
@@ -164,6 +166,7 @@
 					<h2>Information</h2>
 					<dl class="facts small">
 						<dt>Publisher</dt><dd>{app.publisher}</dd>
+						{#if app.category}<dt>Category</dt><dd><a href="/?category={encodeURIComponent(app.category)}">{categoryLabel(app.category)}</a></dd>{/if}
 						<dt>Version</dt><dd>{app.version}{latest?.publishedAt ? ` · ${shortDate(latest.publishedAt)}` : ""}</dd>
 						{#if latest?.bundleSize}<dt>Size</dt><dd>{size(latest.bundleSize)}</dd>{/if}
 						<dt>Downloads</dt><dd>{app.downloads}</dd>

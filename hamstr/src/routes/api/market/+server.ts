@@ -4,7 +4,7 @@ export const GET = guard(async (event) => {
 	const c = event.locals.core;
 	requireUser(event);
 	const params = new URLSearchParams();
-	for (const key of ["q", "tag", "limit", "offset"]) {
+	for (const key of ["q", "tag", "category", "limit", "offset"]) {
 		const value = event.url.searchParams.get(key);
 		if (value) params.set(key, value.slice(0, 100));
 	}

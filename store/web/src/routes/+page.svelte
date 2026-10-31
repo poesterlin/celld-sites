@@ -8,18 +8,28 @@
 
 	const query = $derived(page.url.searchParams.get("q") ?? "");
 	const tag = $derived(page.url.searchParams.get("tag") ?? "");
+	const category = $derived(page.url.searchParams.get("category") ?? "");
 
 	let result = $state({ apps: [], total: 0 });
 	let error = $state("");
 	let loading = $state(true);
-	// Tags seen so far, so the filter row does not shrink while filtering.
-	let tags = $state([]);
+	// The store's fixed sections; only the ones holding apps get a button.
+	let categories = $state([]);
+	const shown = $derived(categories.filter((c) => c.count > 0 || c.id === category));
+	const labelOf = $derived(new Map(categories.map((c) => [c.id, c.label])));
+
+	$effect(() => {
+		api("/api/v1/categories")
+			.then((body) => (categories = body.categories))
+			.catch(() => {});
+	});
 
 	let request = 0;
 	$effect(() => {
 		const params = new URLSearchParams({ limit: "60" });
 		if (query) params.set("q", query);
 		if (tag) params.set("tag", tag);
+		if (category) params.set("category", category);
 		const seq = ++request;
 		loading = true;
 		api(`/api/v1/apps?${params}`)
@@ -27,7 +37,6 @@
 				if (seq !== request) return;
 				result = body;
 				error = "";
-				tags = [...new Set([...tags, ...body.apps.flatMap((a) => a.tags)])].sort();
 			})
 			.catch((err) => seq === request && (error = err.message))
 			.finally(() => seq === request && (loading = false));
@@ -69,15 +78,22 @@
 			{@html ICON.search}
 			<input type="search" placeholder="Search apps" aria-label="Search apps" value={query} oninput={search} />
 		</label>
-		{#if tags.length}
-			<div class="segmented" role="group" aria-label="Filter by tag">
-				<button type="button" aria-pressed={!tag} onclick={() => filter({ tag: "" })}>All</button>
-				{#each tags as t (t)}
-					<button type="button" aria-pressed={tag === t} onclick={() => filter({ tag: t })}>{t}</button>
-				{/each}
-			</div>
+		{#if tag}
+			<button type="button" class="chip accent removable" onclick={() => filter({ tag: "" })} aria-label="Stop filtering by #{tag}">
+				#{tag} <span aria-hidden="true">×</span>
+			</button>
 		{/if}
 	</div>
+	{#if shown.length > 1}
+		<div class="segmented categories" role="group" aria-label="Category">
+			<button type="button" aria-pressed={!category} onclick={() => filter({ category: "" })}>All</button>
+			{#each shown as c (c.id)}
+				<button type="button" aria-pressed={category === c.id} onclick={() => filter({ category: c.id })}>
+					{c.label} <span class="count">{c.count}</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
 
 	{#if error}
 		<p class="callout error">{error}</p>
@@ -88,14 +104,18 @@
 			{#each result.apps as app (app.slug)}
 				<AppCard {app} href="/apps/{app.slug}" meta="by {app.publisher} · v{app.version}">
 					{#snippet actions()}
-						{#each app.tags.slice(0, 3) as t (t)}<span class="chip">#{t}</span>{/each}
+						{#if app.category}<span class="chip">{labelOf.get(app.category) ?? app.category}</span>{/if}
 						<a class="button ghost small push" href="/apps/{app.slug}">Details</a>
 					{/snippet}
 				</AppCard>
 			{:else}
 				<div class="empty span-all">
 					<h2>No apps match</h2>
-					<p>Try another word, or <a href="/publish">publish one</a>.</p>
+					{#if category || tag}
+						<p>Nothing here matches yet. <button type="button" class="link-button" onclick={() => filter({ category: "", tag: "", q: "" })}>Show all apps</button></p>
+					{:else}
+						<p>Try another word, or <a href="/publish">publish one</a>.</p>
+					{/if}
 				</div>
 			{/each}
 		</div>
