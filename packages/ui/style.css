@@ -151,6 +151,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .menu-item:hover { background: var(--accent); color: var(--accent-ink); }
 .menu-item.danger { color: var(--danger); }
 .menu-item.danger:hover { background: var(--danger); color: #fff; }
+/* The account menu sits inside the top bar, which already blurs what is behind
+   it, and a nested backdrop-filter blurs nothing: give it a solid surface. */
+.me .menu { background: var(--surface); border-color: var(--line); }
+a.menu-item { color: var(--ink); text-decoration: none; }
 
 /* --- pages --- */
 .page { width: min(var(--page), calc(100% - 24px)); margin: 0 auto; padding: 40px 14px 72px; }
