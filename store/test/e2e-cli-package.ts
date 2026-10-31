@@ -38,8 +38,8 @@ try {
 	await store.listen(0, "127.0.0.1");
 	const storeUrl = `http://127.0.0.1:${(store.server.address() as import("node:net").AddressInfo).port}`;
 	await node.start();
-	const app = join(work, "pinboard");
-	cpSync(join(repo, "store", "test", "fixtures", "pinboard"), app, { recursive: true });
+	const app = join(work, "secret-santa");
+	cpSync(join(repo, "store", "test", "fixtures", "secret-santa"), app, { recursive: true });
 	const tokenFile = join(work, "admin-token");
 	writeFileSync(tokenFile, `${node.adminToken}\n`, { mode: 0o600 });
 
@@ -64,23 +64,23 @@ try {
 	// 3. Publish.
 	await run(["register", "outsider", "--store", storeUrl]);
 	const published = await run(["publish", app]);
-	assert.match(published, /published pinboard@/);
-	const version = /published pinboard@(\S+)/.exec(published)[1];
-	console.log(`published pinboard@${version} with the packaged CLI`);
+	assert.match(published, /published secret-santa@/);
+	const version = /published secret-santa@(\S+)/.exec(published)[1];
+	console.log(`published secret-santa@${version} with the packaged CLI`);
 
 	// 4. Remember the node, install, and use the app.
 	await assert.rejects(run(["node", `http://127.0.0.1:${node.port}`, "--admin-token-file", join(work, "missing")]), /cannot read the admin token file/);
 	const saved = await run(["node", `http://127.0.0.1:${node.port}`, "--admin-token-file", tokenFile]);
 	assert.match(saved, /saved: installs go to/);
-	const installed = await run(["install", "pinboard", "--host", "santa.test", "--yes", "--watch", "2"]);
-	assert.match(installed, /installed pinboard@/);
+	const installed = await run(["install", "secret-santa", "--host", "santa.test", "--yes", "--watch", "2"]);
+	assert.match(installed, /installed secret-santa@/);
 	assert.match(installed, /check passed/);
 	const home = await node.request("GET", "/", { host: "santa.test" });
 	assert.equal(home.status, 200);
 	assert.match(home.text, /Secret Santa/);
 	const form = { headers: { "content-type": "application/x-www-form-urlencoded" } };
 	assert.equal((await node.request("POST", "/add", { host: "santa.test", body: "name=Ada", ...form })).status, 303);
-	assert.match(await run(["list"]), /pinboard@\S+\s+santa\.test/);
+	assert.match(await run(["list"]), /secret-santa@\S+\s+santa\.test/);
 	console.log("installed into celld dev over the admin API, no repo, no Docker");
 
 	// 5. An update keeps the data.
@@ -89,7 +89,7 @@ try {
 	manifest.version = bump(version);
 	writeFileSync(manifestPath, `${JSON.stringify(manifest, null, "\t")}\n`);
 	await run(["publish", app]);
-	const updated = await run(["update", "pinboard", "--yes", "--watch", "0"]);
+	const updated = await run(["update", "secret-santa", "--yes", "--watch", "0"]);
 	assert.match(updated, new RegExp(`${version.replace(/\./g, "\\.")} -> ${manifest.version.replace(/\./g, "\\.")}`));
 	const after = await node.request("GET", "/", { host: "santa.test" });
 	assert.match(after.text, /Ada/, "data survives the update");
@@ -97,7 +97,7 @@ try {
 
 	// 6. Refusals: an existing site it did not install, a version that exists.
 	await assert.rejects(
-		run(["install", "pinboard", "--host", "santa.test", "--yes"], { XDG_CONFIG_HOME: join(work, "other-config"), CELLD_ADMIN_API: `http://127.0.0.1:${node.port}`, ADMIN_TOKEN: node.adminToken }),
+		run(["install", "secret-santa", "--host", "santa.test", "--yes"], { XDG_CONFIG_HOME: join(work, "other-config"), CELLD_ADMIN_API: `http://127.0.0.1:${node.port}`, ADMIN_TOKEN: node.adminToken }),
 		/already a site on this node that this CLI did not install/,
 	);
 	await assert.rejects(run(["publish", app]), /already exists/);
