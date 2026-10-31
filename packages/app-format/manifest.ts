@@ -15,7 +15,23 @@ const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TLD = /^(?:[a-z][a-z0-9-]*|xn--[a-z0-9-]+)$/;
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const INTERNAL = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example", ".onion"];
-const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "tags", "egress", "permissions", "roles", "instances", "export"]);
+const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "category", "tags", "egress", "permissions", "roles", "instances", "export"]);
+// The store's browse sections. Fixed and short on purpose: a publisher picks
+// one, and free-form `tags` stay keywords for search, so the filter row never
+// grows with the catalog. Adding one is a store change, not a publisher's.
+export const CATEGORIES = {
+	productivity: "Productivity",
+	family: "Family & home",
+	social: "Social",
+	health: "Health & fitness",
+	creative: "Creative",
+	games: "Games & fun",
+	money: "Money",
+	learning: "Learning",
+	tools: "Tools",
+	developer: "Developer",
+} as const;
+
 const PERMISSION_ID = /^[a-z][a-z0-9-]{0,30}$/;
 
 const fail = (msg) => {
@@ -102,6 +118,12 @@ export function validateManifest(input) {
 	const icon = input.icon === undefined ? "" : str(input.icon, "icon", 0, 16);
 	if (/[\u0000-\u001f\u007f]/.test(icon)) fail("icon must not contain control characters");
 
+	let category = null;
+	if (input.category !== undefined) {
+		category = String(input.category).trim().toLowerCase();
+		if (!Object.hasOwn(CATEGORIES, category)) fail(`category must be one of: ${Object.keys(CATEGORIES).join(", ")}`);
+	}
+
 	let tags = [];
 	if (input.tags !== undefined) {
 		if (!Array.isArray(input.tags) || input.tags.length > 8) fail("tags must be an array of at most 8 strings");
@@ -135,7 +157,7 @@ export function validateManifest(input) {
 	}
 	const exportPath = input.export === undefined ? {} : { export: input.export };
 
-	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, tags, egress, permissions, ...instances, ...exportPath };
+	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, ...(category && { category }), tags, egress, permissions, ...instances, ...exportPath };
 }
 
 /** Optional permissions, read by Hamstr: what the app checks (sent in

@@ -17,6 +17,11 @@ describe("manifest validation", () => {
 		assert.deepEqual(m.egress, ["api.example.com"]);
 		assert.equal(m.schema, 1);
 	});
+	it("accepts one of the fixed categories and leaves it out when unset", () => {
+		assert.equal(validateManifest({ ...manifest(), category: " Games " }).category, "games");
+		assert.equal("category" in validateManifest(manifest()), false);
+		assert.throws(() => validateManifest({ ...manifest(), category: "misc" }), /category must be one of/);
+	});
 	it("accepts permissions, and ignores the retired roles", () => {
 		const m = validateManifest({
 			...manifest(),
