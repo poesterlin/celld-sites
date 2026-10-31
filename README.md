@@ -18,7 +18,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | --- | --- |
 | `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `hamstr` (profile `hamstr`), `tsidp` (profile `tsidp`), and `store` + `celld-demo` (profile `store`) |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node), `push.sh` and `admin.sh`; `Dockerfile` (target `hosting`) |
-| `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
+| `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image, the dashboard image and the appliance (amd64 and arm64) to GHCR |
 | `.github/workflows/test.yml` | CI: unit suites, integration tests against `celld dev` (router API, the `hamstr` CLI from the repo and as a packed npm package, Hamstr end to end), the names service against Pebble, and the store, Hamstr and names image builds |
 | `router/` | The host-header router Worker (`index.ts` plus modules by concern) and its config template |
 | `tools/pack.ts` | Packs a built site into a deploy bundle |
@@ -36,6 +36,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `packages/ui/` | Hamstr's design system: styles, icons and Svelte components shared by Hamstr and the Hamstr Store |
 | `packages/app-format/` | The app format (`hamstr.json` manifests, packed bundles), validated the same way by the store, the CLI and Hamstr |
 | `hamstr/` | Hamstr: a Sandstorm-style app shell: grains (one site per document), accounts (people, groups, invites, OIDC/GitHub/passkey sign-in) that also gate celld sites, identity headers for apps, revocable share links ([hamstr/README.md](hamstr/README.md)) |
+| `appliance/` | Everything in one container (S3, celld, Hamstr, names agent, Caddy) for Home Assistant, NAS app stores and Pis; amd64 and arm64 ([appliance/README.md](appliance/README.md)) |
 | `names/` | Hamstr names: hostnames `<id>.<zone>` with a wildcard and DNS-01 for installs, so a Hamstr install needs no domain or DNS setup ([names/README.md](names/README.md)) |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |
 | `docs/SECURITY.md` | Threat model: what a site can reach, what it can break, hostile-tenant checklist |
@@ -76,6 +77,7 @@ The platform has two halves that share one codebase:
 | --- | --- | --- |
 | `ghcr.io/poesterlin/celld-sites-node` | `node/Dockerfile` `hosting` | no bundled sites |
 | `ghcr.io/poesterlin/celld-sites-dashboard` | `dashboard/Dockerfile` | dashboard |
+| `ghcr.io/poesterlin/celld-sites-appliance` | `appliance/Dockerfile` | everything in one container, amd64 and arm64 |
 
 Tags are `:latest` on `main`, `X.Y.Z`/`X.Y` on `v*` tags and `:main`; pull
 requests build without pushing. Build a target by hand with

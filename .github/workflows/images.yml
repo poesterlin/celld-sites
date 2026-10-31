@@ -1,8 +1,9 @@
 name: images
 
-# Builds the two images the production stack pulls:
+# Builds the two images the production stack pulls, and the appliance:
 #   ghcr.io/<owner>/celld-sites-node         (node/Dockerfile, target "hosting")
 #   ghcr.io/<owner>/celld-sites-dashboard    (dashboard/Dockerfile)
+#   ghcr.io/<owner>/celld-sites-appliance    (appliance/Dockerfile; amd64 + arm64)
 # The node image bundles no sites; sites are deployed at runtime.
 #
 # Tags: :latest on main, :X.Y.Z / :X.Y on v* tags, :main on main, :sha-<short>
@@ -35,13 +36,26 @@ jobs:
             dockerfile: node/Dockerfile
             target: hosting
             image: celld-sites-node
+            platforms: ${{ matrix.platforms }}
           - name: dashboard
             context: dashboard
             dockerfile: dashboard/Dockerfile
             target: ""
             image: celld-sites-dashboard
+            platforms: ${{ matrix.platforms }}
+          # One container for Home Assistant, NAS app stores and Pis (aarch64).
+          - name: appliance
+            context: .
+            dockerfile: appliance/Dockerfile
+            target: ""
+            image: celld-sites-appliance
+            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
+
+      # Emulation for the arm64 build (only the appliance has one).
+      - uses: docker/setup-qemu-action@v3
+        if: contains(matrix.platforms, 'arm64')
 
       - uses: docker/setup-buildx-action@v3
 
@@ -71,7 +85,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
-          platforms: linux/amd64
+          platforms: ${{ matrix.platforms }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

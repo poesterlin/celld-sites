@@ -7,6 +7,8 @@ name: test
 #   integration  router API suite, CLI install (from the repo and as a packed
 #                npm package run from an empty directory), Hamstr end to end
 #   names        names server + agent + Pebble (Let's Encrypt's test CA)
+#   appliance    the one-container image: Hamstr, a grain and a site end to end,
+#                restarts; HTTPS with the names agent against Pebble
 #   images       store and Hamstr images build (never pushed)
 
 on:
@@ -98,6 +100,28 @@ jobs:
       - uses: actions/checkout@v4
       - name: Names server + agent + Pebble
         run: names/agent/test/e2e.sh
+
+  appliance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - name: Install dependencies (store, CLI, pack, the example site)
+        run: |
+          for dir in tools packages/app-format store store/cli sites/example; do
+            npm ci --prefix "$dir" --no-audit --no-fund
+          done
+      - name: Build the appliance image
+        run: docker build -f appliance/Dockerfile -t celld-appliance .
+      - name: End to end (TLS_MODE=off)
+        run: node appliance/test/e2e.ts
+      - name: HTTPS with the names agent and Pebble
+        run: appliance/test/tls.sh
 
   images:
     runs-on: ubuntu-latest

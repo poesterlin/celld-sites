@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs a command with the appliance's generated secrets, e.g. a deploy:
+#   tar -C <bundle> -cf - . | docker exec -i <container> /app/with-env /app/push.sh <hostname>
+set -a
+. /data/secrets.env
+set +a
+export ADMIN_HOST="${ADMIN_HOST:-admin.internal}"
+exec "$@"
