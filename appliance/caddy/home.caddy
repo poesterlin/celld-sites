@@ -15,3 +15,5 @@ http://127.0.0.1:{$HEALTH_PORT} {
 http://:{$HTTP_PORT} {
 	reverse_proxy 127.0.0.1:{$HAMSTR_PORT}
 }
+
+import /app/caddy/panel.caddy

@@ -86,6 +86,7 @@ describe("home mode", () => {
 		assert.equal(opened.json.url, `http://homeassistant.local:${FIRST_PORT}/list?x=1`, "the host the browser used, no ticket");
 		// The same port every time; the next grain gets the next one.
 		assert.equal((await api("POST", `/api/grains/${board.id}/open`, { path: "/" })).json.url, `http://homeassistant.local:${FIRST_PORT}/`);
+		assert.equal((await shell.request("GET", `/api/grains/${board.id}`, { host: SHELL })).json.grain.origin, null, "no fixed origin to report");
 		const other = (await api("POST", `/api/grains/${notes.id}/open`, { path: "/" }, "192.168.1.5:8000")).json.url;
 		assert.equal(other, `http://192.168.1.5:${FIRST_PORT + 1}/`);
 	});

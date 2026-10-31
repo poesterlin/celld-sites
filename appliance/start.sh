@@ -117,6 +117,8 @@ export HAMSTR_STORE="${HAMSTR_STORE:-}"
 case "$HAMSTR_HOST" in "$ADMIN_HOST") log "HAMSTR_HOST must not be $ADMIN_HOST"; exit 1 ;; esac
 
 # --- celld node -------------------------------------------------------------
+# celld's info log is a few lines a second of routine; CELLD_LOG=info for them.
+RUST_LOG="${CELLD_LOG:-warn}" \
 CELLD_BUCKET=s3://celld S3_ENDPOINT="http://127.0.0.1:$S3_PORT" AWS_REGION=us-east-1 \
 	CELLD_LISTEN="127.0.0.1:$CELLD_PORT" CELLD_INTERNAL_LISTEN="127.0.0.1:$CELLD_INTERNAL_PORT" \
 	AWS_ACCESS_KEY_ID=$S3_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$S3_SECRET_KEY \
@@ -140,6 +142,7 @@ log "celld is up"
 	exec node hamstr/server.ts) &
 pid_hamstr=$!; pids+=("$pid_hamstr")
 
+node /app/panel.mjs /tmp/panel
 # What the Caddyfiles read, also for cert-changed.sh's reload.
 printf 'export ADMIN_HOST=%q HAMSTR_HOST=%q HAMSTR_GRAIN_DOMAIN=%q TLS_HOSTNAME=%q\n' \
 	"$ADMIN_HOST" "$HAMSTR_HOST" "$HAMSTR_GRAIN_DOMAIN" "${TLS_HOSTNAME:-}" > /tmp/caddy.env

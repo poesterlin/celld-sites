@@ -55,7 +55,8 @@ Release: tag `vX.Y.Z`, then set `version` in `ha-addon/config.yaml` to it.
 | --- | --- | --- |
 | `HAMSTR_AUTH` | `required` | `none`: home mode (below) |
 | `HAMSTR_GRAIN_PORTS` | `20000-20999` | Home mode: the ports grains get |
-| `HTTP_PORT`, `HTTPS_PORT` | `8000`, `8443` | The only ports open outside. Everything else is on loopback, ports 47101-47181 |
+| `HTTP_PORT`, `HTTPS_PORT` | `8000`, `8443` | The ports for browsers. Everything else is on loopback, ports 47101-47181, except the panel below |
+| `CELLD_LOG` | `warn` | celld's log level (`RUST_LOG`); `info` adds its routine lines, several a second |
 | `TLS_MODE` | `off` | `off`: HTTP on :8000, for a proxy in front that terminates TLS. `names`: a name from a Hamstr names service (`NAME_SERVICE_URL`). `domain`: your own domain at a DNS provider |
 | `NAME_SERVICE_URL` | — | `names` mode: the names service ([names/README.md](../names/README.md); not deployed publicly yet, so this is your own for now) |
 | `DOMAIN`, `DNS_PROVIDER` + the provider's variables | — | `domain` mode: lego's DNS-01 provider (`lego dnshelp`), and a `*.DOMAIN` record pointing at this host |
@@ -86,6 +87,15 @@ one) restarts the container, since Hamstr was started for the old one.
   identity from Hamstr, not from cookies.
 - Publish the grain ports, or use the host's network (`--network host`, which
   the Home Assistant add-on does).
+
+### The Home Assistant panel
+
+Port 8099 serves a small page for Home Assistant's sidebar (ingress) with links
+to Hamstr on the box's own addresses (`panel.mjs`): `homeassistant.local` and
+its IPs, or the TLS hostname. Only Home Assistant's ingress proxy
+(`172.30.32.2`) and loopback get it. Hamstr itself cannot run inside the panel:
+in home mode it is plain HTTP, which browsers refuse inside Home Assistant's
+HTTPS page.
 
 ### Tailscale
 

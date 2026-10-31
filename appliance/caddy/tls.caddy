@@ -19,3 +19,5 @@ https://{$TLS_HOSTNAME}, https://*.{$TLS_HOSTNAME} {
 	tls /data/tls/cert.pem /data/tls/key.pem
 	import /app/caddy/routes.caddy
 }
+
+import /app/caddy/panel.caddy

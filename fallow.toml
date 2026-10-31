@@ -10,6 +10,7 @@ entry = [
 	"tools/pack.ts",                # tools/deploy.sh, node/push.sh
 	"tools/seed.ts",
 	"appliance/ha-options.mjs",     # appliance/run.sh (Home Assistant options)
+	"appliance/panel.mjs",          # appliance/start.sh (Home Assistant sidebar panel)
 	"adapters/emdash/entry.ts",     # copied into a site as celld-adapter/
 	"adapters/emdash/objects.ts",
 	"tests/**/*.ts",                # API and security suites

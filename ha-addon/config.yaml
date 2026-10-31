@@ -1,7 +1,7 @@
 # The Hamstr add-on: the appliance image (appliance/), settings from the
 # options below. Bump `version` to a released image tag (git tag vX.Y.Z).
 name: Hamstr
-version: "0.3.1"
+version: "0.3.2"
 slug: hamstr
 description: Little web apps in one click, with your data at home
 url: https://github.com/poesterlin/celld-sites
@@ -19,7 +19,12 @@ timeout: 60
 host_network: true
 ports:
   8000/tcp: 8000
-webui: http://[HOST]:[PORT:8000]/
+# The sidebar panel links to Hamstr on the box's own address (appliance/panel.mjs):
+# a "web UI" link would reuse Home Assistant's address, which is often HTTPS-only.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:rodent
+panel_title: Hamstr
 options:
   store: ""
   auth: none

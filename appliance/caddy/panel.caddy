@@ -1,0 +1,10 @@
+# The Home Assistant sidebar panel (panel.mjs), for Home Assistant's ingress
+# proxy only (172.30.32.2), and loopback for checks.
+http://:{$INGRESS_PORT} {
+	@ingress remote_ip 172.30.32.2 127.0.0.1
+	handle @ingress {
+		root * /tmp/panel
+		file_server
+	}
+	respond 403
+}

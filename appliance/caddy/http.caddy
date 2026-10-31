@@ -14,3 +14,5 @@ http://127.0.0.1:{$HEALTH_PORT} {
 http://:{$HTTP_PORT} {
 	import /app/caddy/routes.caddy
 }
+
+import /app/caddy/panel.caddy

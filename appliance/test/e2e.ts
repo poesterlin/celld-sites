@@ -151,6 +151,13 @@ try {
 	assert.equal((await grain.request("POST", "/pin", { host: "127.0.0.1:20000", headers: grainHeaders, body: "text=From+home+mode&color=sun" })).status, 303);
 	const homeWho = (await grain.request("GET", "/whoami", { host: "127.0.0.1:20000" })).json;
 	assert.deepEqual([homeWho.name, homeWho.role], ["Owner", "owner"]);
+	// The Home Assistant panel links to the shell; only ingress and loopback get it.
+	const panel = sh("docker", ["exec", HOME, "curl", "-s", "http://127.0.0.1:8099/"]);
+	assert.match(panel, /Open Hamstr/);
+	assert.match(panel, /href="http:\/\/homeassistant\.local:8000\/"/);
+	const homeIp = sh("docker", ["inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", HOME]).trim();
+	assert.doesNotMatch(panel, /http:\/\/172\./, "Docker's bridge addresses are left out");
+	assert.equal(sh("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", `http://${homeIp}:8099/`]), "403", "the panel is for ingress only");
 	sh("docker", ["restart", "-t", "60", HOME]);
 	await waitHealthy(HOME);
 	assert.match((await new Browser(20000).request("GET", "/", { host: "127.0.0.1:20000" })).text, /From home mode/, "the grain's port and data survive a restart");

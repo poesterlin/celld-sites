@@ -53,7 +53,7 @@ COPY names/agent/agent.ts names/agent/package.json /app/names/
 COPY router /app/router
 COPY --chmod=755 node/entrypoint.sh node/push.sh node/admin.sh /app/
 COPY --chmod=755 appliance/run.sh appliance/start.sh appliance/with-env appliance/cert-changed.sh appliance/health.sh /app/
-COPY appliance/ha-options.mjs appliance/ports.env /app/
+COPY appliance/ha-options.mjs appliance/panel.mjs appliance/ports.env /app/
 COPY appliance/caddy /app/caddy
 ENV CELLD_ESBUILD=/usr/local/bin/esbuild \
     CELLD_WATCH=/data/celld \

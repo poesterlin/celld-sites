@@ -378,7 +378,8 @@ export function createCore(options: CoreOptions = {}) {
 			createdAt: grain.created_at,
 			openedAt: grain.opened_at,
 			trashedAt: grain.trashed_at,
-			origin: grainOrigin(grain.id),
+			// Home mode: the grain's port on whatever host the browser uses, so no fixed origin.
+			origin: home ? null : grainOrigin(grain.id),
 			...(access && { role: access.role, permissions: access.permissions, isOwner: access.owner }),
 			...extra,
 		};
