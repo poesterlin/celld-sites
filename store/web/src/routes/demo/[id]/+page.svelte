@@ -50,7 +50,7 @@
 {#if error || ended}
 	<div class="welcome">
 		<div class="welcome-card">
-			<img src="/favicon.svg" alt="" />
+			<img src="/store.svg" alt="" />
 			<h1>{error ? "This demo is gone" : "This demo has ended"}</h1>
 			<p class="dim">{error || "Demos last a few minutes and are deleted afterwards. Start a fresh one from the app's page."}</p>
 			<div class="stack"><a class="button" href={back}>Back to the app</a></div>

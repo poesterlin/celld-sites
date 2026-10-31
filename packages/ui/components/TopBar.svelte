@@ -1,7 +1,7 @@
 <script>
 	// The floating glass bar at the top of every page: brand, main links and
 	// whatever the app puts on the right (an account menu, a button).
-	let { name, href = "/", links = [], end } = $props();
+	let { name, href = "/", links = [], end, logo = "/favicon.svg", tag = "" } = $props();
 
 	let scrolled = $state(false);
 </script>
@@ -10,8 +10,9 @@
 
 <header class="bar" class:scrolled>
 	<a class="brand" {href}>
-		<img src="/favicon.svg" width="30" height="30" alt="" />
+		<img src={logo} width="30" height="30" alt="" />
 		<span>{name}</span>
+		{#if tag}<span class="brand-tag">{tag}</span>{/if}
 	</a>
 	<nav class="nav" aria-label="Main">
 		{#each links as link (link.href)}

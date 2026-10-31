@@ -11,7 +11,9 @@
 
 {#if !demo}
 	<TopBar
-		name="Hamstr Store"
+		name="Hamstr"
+		tag="Store"
+		logo="/store.svg"
 		links={[
 			{ href: "/", label: "Apps", current: path === "/" || path.startsWith("/apps/") },
 			{ href: "/about", label: "How it works", current: path === "/about" },

@@ -15,3 +15,43 @@
 .grain-bar .tile-icon { width: 28px; height: 28px; font-size: 0.95rem; border-radius: 8px; flex: none; box-shadow: none; }
 .foot { width: min(var(--page), calc(100% - 24px)); margin: 0 auto; padding: 24px 14px 40px; border-top: 1px solid var(--line); }
 .foot p { margin: 4px 0; }
+
+/* --- Store identity: teal instead of the shell's indigo, a striped awning
+   along the top and a "Store" tag in the bar, so the catalog is never mistaken
+   for your own Hamstr. --- */
+:root {
+	--accent: #0d9488;
+	--accent-strong: #0f766e;
+	--accent-soft: rgba(13, 148, 136, 0.13);
+	--wall-1: rgba(20, 184, 166, 0.17);
+	--wall-2: rgba(245, 158, 11, 0.11);
+	--wall-3: rgba(16, 185, 129, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--accent: #2dd4bf;
+		--accent-strong: #5eead4;
+		--accent-soft: rgba(45, 212, 191, 0.15);
+		--accent-ink: #042f2e;
+		--wall-1: rgba(20, 184, 166, 0.2);
+		--wall-2: rgba(245, 158, 11, 0.09);
+		--wall-3: rgba(16, 185, 129, 0.07);
+	}
+}
+body::before {
+	content: ""; position: fixed; inset: 0 0 auto 0; height: 6px; z-index: 20; pointer-events: none;
+	background: repeating-linear-gradient(90deg, var(--accent) 0 28px, #f59e0b 28px 56px);
+}
+.brand-tag {
+	padding: 1px 8px; border-radius: 99px; background: var(--accent); color: var(--accent-ink);
+	font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.bar { border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-line)); }
+.foot { border-top-color: var(--accent); }
+
+/* Catalog filters: a fixed category row (scrolls rather than wraps) and the
+   active tag as a removable chip. */
+.segmented.categories { display: flex; width: fit-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; margin: -6px 0 18px; }
+.segmented.categories > * { white-space: nowrap; }
+.chip.removable { border: 0; cursor: pointer; font: inherit; font-size: 0.8rem; padding: 4px 10px; }
+.chip.removable:hover { filter: brightness(0.95); }
