@@ -1,0 +1,30 @@
+{
+	"name": "celld-auth",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "node --env-file-if-exists=.env node_modules/vite/bin/vite.js dev",
+		"build": "vite build",
+		"start": "node build",
+		"prepare": "svelte-kit sync || echo ''",
+		"test": "node --test test/*.test.ts",
+		"sync-ui": "node ../packages/ui/sync.ts static",
+		"predev": "npm run sync-ui",
+		"prebuild": "npm run sync-ui"
+	},
+	"imports": {
+		"#lib/*": "./src/lib/*"
+	},
+	"devDependencies": {
+		"@hamstr/ui": "file:../packages/ui",
+		"@simplewebauthn/browser": "^13.3.0",
+		"@simplewebauthn/server": "^13.3.3",
+		"@sveltejs/adapter-node": "^6.0.0",
+		"@sveltejs/kit": "^3.1.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"openid-client": "^6.8.8",
+		"svelte": "^5.57.1",
+		"vite": "^8.3.0"
+	}
+}
