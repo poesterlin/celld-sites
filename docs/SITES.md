@@ -61,6 +61,56 @@ identity and permissions (`X-Hamstr-User-Id`, `-Username`, `-Permissions`,
 `-Role`); see the Hamstr README for the header contract. Outside Hamstr those
 headers are not set and must not be trusted.
 
+## Sign-in
+
+A site that needs to know who is visiting declares it in `celld.json`; there is
+no auth code to write:
+
+```json
+{ "auth": "required" }
+```
+
+`"required"`: visitors sign in before they see anything. `"optional"`: anyone
+may open the site, and signed-in people are recognised. That is all a site
+says. *Who* may enter is decided in one place, the auth service's **Sites** page:
+by default everyone the operator has let in, or only some groups and people. The
+page can also protect a site that declares nothing, or open one up.
+
+Sign-in is the platform's: the router sends a visitor without a valid cookie to
+the [auth service](../auth/README.md), which signs them in with whichever
+provider they use (OIDC, GitHub, passkey), checks the rule, and sends them back.
+The site then receives these headers (the router removes any it finds on the
+incoming request first, so they cannot be forged):
+
+| Header | Value |
+| --- | --- |
+| `X-Celld-User-Id` | stable id of the person |
+| `X-Celld-User-Name` | display name, URI-encoded |
+| `X-Celld-User-Email` | email, when the provider gave one |
+| `X-Celld-User-Groups` | comma-separated group names, each URI-encoded |
+| `X-Celld-User-Role` | `owner`, `admin` or `member` |
+
+On a `public` site the headers are absent for visitors who are not signed in.
+Static sites (no worker) can ask `GET /.celld/auth/me` for
+`{"user": {id, name, email, groups, role} | null, "mode"}`; `/.celld/auth/logout`
+signs out. The router keeps these paths and the session cookie
+(`celld_auth` / `__Host-celld_auth`) to itself: the cookie is never forwarded to
+the site, and it is host-only, so one site's cookie means nothing to another.
+
+Things to know:
+
+- A navigation without a cookie is redirected to sign in; other requests (fetch,
+  images, POSTs) get a plain `401`. A node without `AUTH_URL`/`AUTH_KEY` answers
+  `503` for gated sites rather than serving them open.
+- Removing a person or group takes effect when their site cookie expires: up to
+  15 minutes. Disabling a person ends their auth-service sessions at once.
+- The mode belongs to the site, not the build: a deploy records it when it is
+  activated, a rollback restores the mode that version was deployed with, and
+  the same build on another host has no effect on this one. It is not part of
+  the version id, so changing only `auth` needs no rebuild.
+- Do not trust the headers outside a gated site. They exist only after the
+  router has verified the cookie.
+
 ## Bindings
 
 A site's `env` has exactly two bindings, both in the `fetch` handler's `env`

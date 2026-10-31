@@ -21,3 +21,4 @@ backups/
 
 # Store example apps live outside this repo
 /store/examples/
+secrets/

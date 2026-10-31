@@ -76,6 +76,9 @@ services:
       READ_TOKEN: ${READ_TOKEN:?Set READ_TOKEN in .env}
       # The admin API answers only on this hostname, which Traefik never routes.
       ADMIN_HOST: admin.internal
+      # Sign-in for sites that declare `auth` in celld.json; unset = those sites answer 503.
+      AUTH_URL: ${AUTH_URL:-}
+      AUTH_KEY: ${AUTH_KEY:-}
       # Delete write-log epochs no restore needs once they are this old (epoch GC,
       # a pass at most every 5 min). Covers the router's KV (site code and assets)
       # and its root objects. celld 0.6.3 skips Durable Object facets, so site
@@ -375,6 +378,105 @@ services:
       - 'traefik.http.routers.hamstr-grains.service=hamstr'
       - 'traefik.http.services.hamstr.loadbalancer.server.port=3000'
 
+  # Sign-in for sites that declare `auth` in celld.json: logins (OIDC, GitHub,
+  # passkeys), people, groups and per-site access. The router only checks the
+  # signed cookie this service's handoff produces. It holds ADMIN_TOKEN and
+  # AUTH_KEY, so it is LAN-only. Off unless COMPOSE_PROFILES includes "auth".
+  auth:
+    profiles: ["auth"]
+    build:
+      context: .
+      dockerfile: auth/Dockerfile
+    image: celld-sites-auth
+    restart: unless-stopped
+    init: true
+    environment:
+      PORT: 3000
+      AUTH_DATA: /data
+      AUTH_URL: https://${AUTH_HOST:-auth.example.com}
+      ORIGIN: https://${AUTH_HOST:-auth.example.com}
+      # Required; the service refuses to start without it. Not `:?` here: compose
+      # checks that for every service, so it would break the stack for nodes without sign-in.
+      AUTH_KEY: ${AUTH_KEY:-}
+      CELLD_ADMIN_API: http://admin.internal:8080
+      ADMIN_HOST: admin.internal
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      NTFY_URL: ${AUTH_NTFY_URL:-}
+      # Seeds the first sign-in provider on a fresh install; afterwards providers
+      # are managed on the Providers page and these are ignored.
+      OIDC_NAME: ${AUTH_OIDC_NAME:-}
+      OIDC_ISSUER: ${AUTH_OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${AUTH_OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-}
+      OIDC_AUTO_APPROVE: ${AUTH_OIDC_AUTO_APPROVE:-0}
+    volumes:
+      - auth-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 256m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.auth.rule=Host(`${AUTH_HOST:-auth.example.com}`)'
+      - 'traefik.http.routers.auth.priority=20'
+      - 'traefik.http.services.auth.loadbalancer.server.port=3000'
+
+  # tsidp: a Tailscale-backed OIDC provider ("Sign in with Tailscale") for the
+  # auth service. Optional; any OIDC issuer works instead. Off unless
+  # COMPOSE_PROFILES includes "tsidp". It joins the tailnet as TSIDP_HOSTNAME,
+  # so a second copy under the same name would fight with this one.
+  tsidp:
+    profiles: ["tsidp"]
+    build:
+      context: https://github.com/tailscale/tsidp.git#8fa860f333d9b0ed7eee66e0c7c08531f743fd16
+    image: tsidp:authkey-file
+    restart: unless-stopped
+    init: true
+    environment:
+      TAILSCALE_USE_WIP_CODE: 1
+      TS_STATE_DIR: /data
+      TS_HOSTNAME: ${TSIDP_HOSTNAME:-idp}
+      # Funnel publishes the IdP on the public internet. Off unless you choose it
+      # (TSIDP_FUNNEL=1): only needed when browsers or the auth service cannot
+      # reach the tailnet name.
+      TSIDP_USE_FUNNEL: ${TSIDP_FUNNEL:-0}
+      TSIDP_ENABLE_STS: 1
+      TS_AUTHKEY_FILE: /run/secrets/ts_authkey
+    # A loopback listener only for the healthcheck (the container's own network
+    # namespace; nothing else can reach it).
+    command: ["-local-port", "8081"]
+    secrets:
+      - ts_authkey
+    volumes:
+      - tsidp-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/.well-known/openid-configuration"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
 volumes:
   s3-data:
   celld-state:
@@ -384,7 +486,14 @@ volumes:
     name: celld-sites_cubby-data
   demo-state:
   hamstr-data:
+  auth-data:
+  tsidp-data:
 
 networks:
   traefik_web:
     external: true
+
+secrets:
+  # The tailnet auth key for tsidp (a file, so it never shows up in `docker inspect`).
+  ts_authkey:
+    file: ${TSIDP_AUTHKEY_FILE:-./secrets/ts_authkey}

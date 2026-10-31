@@ -16,7 +16,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 
 | Path | What |
 | --- | --- |
-| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `hamstr` (profile `hamstr`), and `store` + `celld-demo` (profile `store`) |
+| `compose.yaml` | Development stack: `s3` (VersityGW, files in a Docker volume), `celld` (the node), `dashboard`, `hamstr` (profile `hamstr`), `auth` (profile `auth`) and `tsidp` (profile `tsidp`), and `store` + `celld-demo` (profile `store`) |
 | `node/` | celld node image: entrypoint (bucket setup, router deploy, node), `push.sh` and `admin.sh`; `Dockerfile` (target `hosting`) |
 | `.github/workflows/images.yml` | CI: builds and publishes the hosting `celld` image and the dashboard image to GHCR |
 | `.github/workflows/test.yml` | CI: unit suites, integration tests against `celld dev` (router API, the `hamstr` CLI from the repo and as a packed npm package, Hamstr end to end), the names service against Pebble, and the store, Hamstr and names image builds |
@@ -35,6 +35,7 @@ browser → Traefik → celld (router Worker) → site isolate → its Durable O
 | `store/` | Hamstr Store: the hosted app catalog, its web UI and the `hamstr` CLI; the store never runs or builds apps ([store/README.md](store/README.md)) |
 | `packages/ui/` | Hamstr's design system: styles, icons and Svelte components shared by Hamstr and the Hamstr Store |
 | `packages/app-format/` | The app format (`hamstr.json` manifests, packed bundles), validated the same way by the store, the CLI and Hamstr |
+| `auth/` | The auth service: sign-in (OIDC, GitHub, passkeys), people and groups, per-site access for sites that declare `auth` ([auth/README.md](auth/README.md)) |
 | `hamstr/` | Hamstr: a Sandstorm-style app shell: grains (one site per document), tsidp sign-in, identity headers for apps, revocable share links ([hamstr/README.md](hamstr/README.md)) |
 | `names/` | Hamstr names: hostnames `<id>.<zone>` with a wildcard and DNS-01 for installs, so a Hamstr install needs no domain or DNS setup ([names/README.md](names/README.md)) |
 | `docs/SITES.md` | The site contract: build output, `celld.json`, bindings, migrations |

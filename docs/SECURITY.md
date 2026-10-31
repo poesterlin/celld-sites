@@ -159,6 +159,60 @@ This is what lets [Hamstr](../hamstr/README.md) hand apps identity headers they
 can trust: another container on the bridge cannot reach a grain directly or
 forge them. Without `PROXY_TOKEN` grain sites answer nobody.
 
+## Sign-in (auth service)
+
+Sites that declare `auth` in `celld.json` get a verified identity from the
+router. The pieces and what each is trusted for:
+
+- **Auth service** (`auth/`, LAN-only). Authenticates people, decides who may
+  enter which site, and mints short-lived tokens. It holds `AUTH_KEY` and the
+  celld `ADMIN_TOKEN` (to list sites and push mode overrides), so treat it
+  like Hamstr: never expose it publicly without thinking about that.
+- **Router.** Only verifies HMAC-signed tokens with `AUTH_KEY`; it never calls
+  the auth service. The mode (`required`/`optional`) is per site in KV
+  (`auth:<site>`): set from `celld.json` when a deploy is activated, overridable
+  by the auth service, never stored on the content-addressed code record that
+  several sites may share. Three token types, each bound to a type and a hostname
+  (`aud`): `authreq` (router to auth service: "this host wants a person"; signed
+  so a visitor cannot ask for another site's policy or an open redirect),
+  `handoff` (30 s, single use per router isolate) and the `site` cookie (15 min).
+- **Site code** never sees the key or the cookie. The router strips every
+  `x-celld-user-*` header from incoming requests and the cookie from the
+  forwarded request, then sets the headers itself.
+
+Design choices and limits:
+
+- The cookie is **host-only** (`__Host-` over https), `HttpOnly`,
+  `SameSite=Lax`. There is deliberately no shared parent-domain cookie: sibling
+  sites are mutually untrusted tenants, and a `.domain` cookie would be sent to
+  all of them.
+- Spoofing: a site cannot mint a token (no key), and a token for host A fails
+  on host B (`aud`). Headers on the incoming request are always removed.
+- CSRF: the auth service's JSON API refuses cross-site requests
+  (`Sec-Fetch-Site`/`Origin`); provider logins carry a `state` bound to the
+  browser by a cookie, so a login started by someone else cannot be completed in
+  your browser. Sites remain responsible for CSRF on their own POSTs;
+  `SameSite=Lax` covers cross-site form posts.
+- Who may enter is decided only from the auth service's own database, so an
+  unreachable or misconfigured celld admin API cannot open a restricted site; a
+  rule is pushed to the router before it is saved, so it never looks live when
+  the router did not take it.
+- Provider protocols are not hand-rolled: OIDC goes through `openid-client`
+  (discovery, PKCE, state, nonce and ID token claims; plain http only for an
+  issuer on loopback) and passkeys through `@simplewebauthn/server`.
+- Revocation is delayed by up to the site cookie lifetime (15 minutes). Handoff
+  single-use is enforced per router isolate in memory, which is enough on one
+  node but not a distributed guarantee; the 30 s lifetime and `aud` binding
+  bound the damage of a leaked link.
+- Identities are never linked by email automatically: an unknown login from any
+  provider lands in a queue (or follows an invite, or the provider's
+  auto-approve setting) so a provider that does not verify emails cannot take
+  over an existing person. The first person to sign in on a fresh install
+  becomes the owner, so do that before sharing the address.
+- Provider client secrets are encrypted at rest with a key derived from
+  `AUTH_KEY`; rotating `AUTH_KEY` signs everyone out and needs the secrets
+  re-entered.
+
 ## Hostile tenant checklist
 
 Before running untrusted apps on a shared node:
