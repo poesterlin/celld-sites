@@ -13,8 +13,10 @@
 //                                  version, of any site, that has the file)
 //   asset:<version>:<path>      -> file bytes, metadata { type }  (versions uploaded
 //                                  before blobs: code has assets: [paths], no files)
-//   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes }  (history)
-//   staged:<site>:<version>     -> ""  (uploaded for that site, not necessarily active)
+//   deploy:<site>:<iso time>    -> version, metadata { assets, sourceBytes, auth }  (history)
+//   staged:<site>:<version>     -> "", metadata { at, auth }  (uploaded for that site, not
+//                                  necessarily active; auth = its celld.json sign-in mode)
+//   auth:<site>                 -> { declared, override }  (sign-in mode; see "Sign-in")
 //   obj:<site>|<class>|<name>   -> "", metadata { id, firstSeen }  (object index)
 // Deploying uploads a version piece by piece (the files the router doesn't have
 // yet, then the code and file list), then activates it by flipping site:<site>,
@@ -32,6 +34,9 @@
 //            supervisor that runs the site's class as a facet with its own
 //            SQLite database. The hostname is fixed by the router, so a site
 //            can never address another site's objects.
+//   AUTH     (not a binding) sites that declare `auth` in celld.json get a verified
+//            identity as x-celld-user-* headers; see "Sign-in" at the end of this
+//            file and docs/SECURITY.md.
 //   EGRESS   outbound fetch() to the hosts the operator allowlisted for that
 //            site (egress:<site> in KV). Off by default: celld's operator API
 //            on 127.0.0.1 has no authentication, and a site that can fetch it
@@ -57,6 +62,8 @@ interface Env {
 	SITE_MAX_SUBREQUESTS: string;
 	PROXY_TOKEN_SHA256: string;
 	PROXY_SITE_PREFIX: string;
+	AUTH_URL: string;
+	AUTH_KEY: string;
 }
 
 // Runs in each site isolate before the site's own code, papering over APIs that
@@ -886,7 +893,7 @@ async function putCode(request, env, url) {
 	} catch {
 		return fail(400, "body is not JSON");
 	}
-	const { compatibilityDate, source = "", files, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none", check = "/" } = body;
+	const { compatibilityDate, source = "", files, immutable = DEFAULT_IMMUTABLE, mutable = [], notFound = "none", check = "/", auth } = body;
 	const strings = (a) => Array.isArray(a) && a.every((x) => typeof x === "string");
 	const entries = files && typeof files === "object" && !Array.isArray(files) ? Object.entries(files) : null;
 	const valid =
@@ -912,11 +919,15 @@ async function putCode(request, env, url) {
 		strings(immutable) &&
 		strings(mutable) &&
 		(notFound === "none" || notFound === "spa") &&
-		(check === false || (typeof check === "string" && check.startsWith("/") && check.length <= 400));
+		(check === false || (typeof check === "string" && check.startsWith("/") && check.length <= 400)) &&
+		(auth === undefined || validAuth(auth));
 	if (!valid) return fail(400, "bad code record");
 	const stored = await storedBlobs(env, entries.map(([, f]) => f[0]));
 	const missing = entries.filter(([, f]) => !stored.has(f[0])).map(([path]) => path);
 	if (missing.length) return fail(409, `missing ${missing.length} files, e.g. ${missing.slice(0, 3).join(", ")}`);
+	// `auth` (celld.json) is not part of the code record: identical builds share one
+	// record across sites, and a policy must only ever change its own site. It
+	// travels with the staging record and is applied on activation.
 	const record = { compatibilityDate, source, files, immutable, mutable, notFound, check };
 	const existing = await env.CODE.get(`code:${version}`, "json");
 	// A version stored before content-addressed files has no file list; replacing
@@ -939,11 +950,12 @@ async function putCode(request, env, url) {
 		metas.delete(version);
 		codes.delete(version);
 	} else if ((existing.check ?? "/") !== check) {
-		// `check` is deploy metadata, not part of the version id: editing only that
-		// in celld.json must not force a new build. The code fields stay immutable.
+		// `check` is deploy metadata, not part of the version id: editing only it in
+		// celld.json must not force a new build. The code fields stay immutable.
 		await env.CODE.put(`code:${version}`, JSON.stringify(record), { metadata: { files: entries.length } });
+		codes.delete(version);
 	}
-	if (site !== null) await env.CODE.put(`staged:${site}:${version}`, "", { metadata: { at: Date.now() } });
+	if (site !== null) await env.CODE.put(`staged:${site}:${version}`, "", { metadata: { at: Date.now(), auth: auth ?? null } });
 	return json({ version, files: entries.length, sourceBytes: source.length, ...(site !== null && { site }), ...(existing !== null && !upgrade && { unchanged: true }) });
 }
 
@@ -1005,17 +1017,48 @@ async function activate(env, url) {
 		return fail(409, `version ${version} was not uploaded for ${site} (use PUT /code?host=${site} or POST /stage)`);
 	}
 	const previous = await env.CODE.get(`site:${site}`);
-	const summary = { assets: code.files ? Object.keys(code.files).length : (code.assets?.length ?? 0), sourceBytes: code.source?.length ?? 0 };
+	const auth = await authForSwitch(env, site, version);
+	const summary = { assets: code.files ? Object.keys(code.files).length : (code.assets?.length ?? 0), sourceBytes: code.source?.length ?? 0, auth: auth.mode };
 	// History first, then the switch: KV has no transactions, and a crash between the
 	// two then leaves a history entry for a version that never went live (harmless:
 	// prune keeps one version more) rather than a live version prune can't see in
 	// the history. The suffix keeps two activations in the same millisecond apart.
+	await auth.before();
 	await env.CODE.put(`deploy:${site}:${new Date().toISOString()}~${crypto.randomUUID().slice(0, 8)}`, version, { metadata: summary });
 	await env.CODE.put(`site:${site}`, version); // the switch
+	await auth.after();
 	// The deploy is done: the staging hint has served its purpose (the version is
 	// now in the history, which is what rollback and seeding check).
 	await env.CODE.delete(`staged:${site}:${version}`);
 	return json({ host, site, version, previous, ...summary });
+}
+
+/** The celld.json sign-in mode (null: none) that activating `version` gives the
+ *  site: from the staging record for a new deploy, from the history for a
+ *  rollback, so rolling back restores that version's protection too. A version
+ *  staged by POST /stage, or deployed before sign-in existed, keeps the site's
+ *  current mode. A stricter mode is applied before the switch (`before`), a
+ *  looser one after it (`after`), so the site is never briefly less protected
+ *  than either version. `mode` is what the deploy history records. */
+async function authForSwitch(env, site, version) {
+	const declared = await declaredAuthFor(env, site, version);
+	const apply = (when) => async () => {
+		if (declared !== undefined && (declared === "required") === (when === "before")) await setDeclaredAuth(env, site, declared);
+	};
+	const mode = declared !== undefined ? declared : ((await env.CODE.get(`auth:${site}`, "json"))?.declared ?? null);
+	return { mode, before: apply("before"), after: apply("after") };
+}
+
+/** The sign-in mode `version` was deployed to `site` with: "required", "optional",
+ *  null (none), or undefined when nothing says (keep the current one). */
+async function declaredAuthFor(env, site, version) {
+	const staged = await env.CODE.getWithMetadata(`staged:${site}:${version}`);
+	if (staged?.metadata && "auth" in staged.metadata) return validAuth(staged.metadata.auth) ? staged.metadata.auth : null;
+	let latest;
+	for (const k of await listAll(env.CODE, `deploy:${site}:`)) {
+		if (k.metadata && "auth" in k.metadata && (!latest || k.name > latest.name) && (await env.CODE.get(k.name)) === version) latest = k;
+	}
+	return latest ? (validAuth(latest.metadata.auth) ? latest.metadata.auth : null) : undefined;
 }
 
 // --- Deploy check ---------------------------------------------------------------
@@ -1274,6 +1317,8 @@ async function deleteSite(env, url) {
 	for (const k of await listAll(env.CODE, `staged:${id}:`)) await env.CODE.delete(k.name);
 	await env.CODE.delete(`egress:${id}`);
 	egressCache.delete(id);
+	await env.CODE.delete(`auth:${id}`);
+	authCache.clear();
 	try {
 		await env.SITE_OBJECTS.getByName(`~quota~|${id}`).clear();
 	} catch (e) {
@@ -1686,21 +1731,31 @@ async function getEgress(env, url) {
 	return json({ host, site, allow: await egressHosts(env, site) });
 }
 
+/** The site a per-site admin call (?host=H) is about, or the answer refusing it. */
+async function siteParam(env, url) {
+	const host = url.searchParams.get("host") ?? "";
+	if (!hostOk(env, host)) return { refused: fail(400, "bad host") };
+	const refusal = await aliasRefusal(env, host);
+	if (refusal) return { refused: refusal };
+	return { host, site: await siteFor(env, host) };
+}
+
+/** The request body as JSON, or undefined when it is not JSON. */
+async function jsonOrUndefined(request) {
+	try {
+		return await request.json();
+	} catch {
+		return undefined;
+	}
+}
+
 const MAX_EGRESS_HOSTS = 20;
 async function putEgress(request, env, url) {
-	const host = url.searchParams.get("host") ?? "";
-	if (!hostOk(env, host)) return fail(400, "bad host");
-	const refusal = await aliasRefusal(env, host);
-	if (refusal) return refusal;
 	// Allowed before the site exists: the store installer grants the declared
 	// hosts first, so the deploy check runs with the permissions the app needs.
-	const site = await siteFor(env, host);
-	let list;
-	try {
-		list = await request.json();
-	} catch {
-		return fail(400, "body must be a JSON array of hostnames");
-	}
+	const { host, site, refused } = await siteParam(env, url);
+	if (refused) return refused;
+	const list = await jsonOrUndefined(request);
 	if (!Array.isArray(list)) return fail(400, "body must be a JSON array of hostnames");
 	const allow = [];
 	for (const raw of list) {
@@ -1721,11 +1776,8 @@ async function putEgress(request, env, url) {
 }
 
 async function deleteEgress(env, url) {
-	const host = url.searchParams.get("host") ?? "";
-	if (!hostOk(env, host)) return fail(400, "bad host");
-	const refusal = await aliasRefusal(env, host);
-	if (refusal) return refusal;
-	const site = await siteFor(env, host);
+	const { host, site, refused } = await siteParam(env, url);
+	if (refused) return refused;
 	await env.CODE.delete(`egress:${site}`);
 	egressCache.delete(site);
 	await abortFacets(env, site);
@@ -1804,6 +1856,11 @@ async function admin(request, env, ctx, url) {
 	if (method === "POST" && pathname === "/__admin/call") return adminCall(request, env, url);
 	if (method === "GET" && pathname === "/__admin/dump") return dumpSite(env, ctx, url);
 	if (method === "POST" && pathname === "/__admin/restore") return restoreSite(request, env, url);
+	if (pathname === "/__admin/auth") {
+		if (method === "GET") return getAuth(env, url);
+		if (method === "PUT") return putAuth(request, env, url);
+		if (method === "DELETE") return deleteAuth(env, url);
+	}
 	if (pathname === "/__admin/egress") {
 		if (method === "GET") return getEgress(env, url);
 		if (method === "PUT") return putEgress(request, env, url);
@@ -1841,7 +1898,7 @@ export default {
 			headers.delete(PROXY_HEADER);
 			request = new Request(request, { headers });
 		}
-		return serveWithLimit(request, env, ctx, site, version);
+		return signIn(request, env, ctx, site, version);
 	},
 };
 
@@ -1891,4 +1948,237 @@ async function serve(request, env, ctx, site, version) {
 		if (e instanceof Timeout) return new Response(`${e.message}\n`, { status: 504 });
 		throw e;
 	}
+}
+
+
+// --- Sign-in ---------------------------------------------------------------------
+// A site can ask for sign-in with `auth` in celld.json; a deploy records that
+// mode on the site (auth:<site>.declared, applied on activation, see activate),
+// never on the shared code record. The auth service can override it
+// (auth:<site>.override, it wins). Either way it reduces to a mode:
+//   required  no valid cookie -> send the browser to the auth service
+//   optional  anyone gets in; a valid cookie adds the person's headers
+// The auth service decides WHO may enter (users, groups) before it issues the
+// handoff token, so the router only verifies a signed cookie and never calls it.
+// Cookies are host-only and short-lived: expiry sends the browser through the
+// auth service again, which re-checks that the person is still allowed.
+//
+// Tokens are `<base64url(JSON)>.<base64url(HMAC-SHA256)>`, the format of
+// auth/lib/token.ts, keyed by AUTH_KEY. Three kinds:
+//   authreq  router -> auth service: "this host wants a person" (carries the host,
+//            site and return path; signed so a visitor cannot ask for another
+//            site's policy)
+//   handoff  auth service -> router: "this person may enter this host" (30 s)
+//   site     the cookie the router sets from a handoff
+// Site code never gets the key. It sees only x-celld-user-* headers, which the
+// router strips from every incoming request and sets itself.
+const AUTH_COOKIE = "celld_auth";
+const USER_HEADER = "x-celld-user-";
+const SITE_COOKIE_SECS = 900;
+const AUTHREQ_SECS = 600;
+
+/** celld.json `auth`: "required" (sign in to enter) or "optional" (everyone may
+ *  enter; signed-in people are recognised). Who may enter is the auth service's. */
+const validAuth = (a) => a === "required" || a === "optional";
+
+const b64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64u = (text) => Uint8Array.from(atob(String(text).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+const hmacKeys = new Map();
+const hmacKey = async (secret) => {
+	let key = hmacKeys.get(secret);
+	if (!key) {
+		key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+		hmacKeys.set(secret, key);
+	}
+	return key;
+};
+async function signTok(secret, payload) {
+	const body = b64u(new TextEncoder().encode(JSON.stringify(payload)));
+	return `${body}.${b64u(await crypto.subtle.sign("HMAC", await hmacKey(secret), new TextEncoder().encode(body)))}`;
+}
+async function verifyTok(secret, token, typ, aud) {
+	if (typeof token !== "string" || token.length > 4096) return null;
+	const dot = token.indexOf(".");
+	if (dot < 1 || token.indexOf(".", dot + 1) !== -1) return null;
+	try {
+		const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), unb64u(token.slice(dot + 1)), new TextEncoder().encode(token.slice(0, dot)));
+		if (!ok) return null;
+		const payload = JSON.parse(new TextDecoder().decode(unb64u(token.slice(0, dot))));
+		if (!payload || payload.typ !== typ || payload.aud !== aud || typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000) return null;
+		return payload;
+	} catch {
+		return null;
+	}
+}
+
+/** A same-host path: "/x?y", never "//host" or "/\host". */
+const safeNext = (v, fallback = "/") => (typeof v === "string" && v.length <= 2048 && /^\/(?![/\\])/.test(v) && !/[\u0000-\u001f]/.test(v) ? v : fallback);
+
+/** The effective policy of a site: { mode, declared, override } or null (no sign-in). */
+const AUTH_TTL_MS = 30_000;
+/** auth:<site> -> { declared, override }: the mode from the active deploy's
+ *  celld.json, and the auth service's override, which wins. Per site, never per
+ *  version, and cached for AUTH_TTL_MS so every router isolate converges. */
+const authCache = new Map(); // site -> { policy, until }
+async function authPolicy(env, site) {
+	const owner = ownerOf(site);
+	const hit = authCache.get(owner);
+	if (hit && hit.until > Date.now()) return hit.policy;
+	const record = (await env.CODE.get(`auth:${owner}`, "json")) ?? {};
+	const declared = validAuth(record.declared) ? record.declared : null;
+	const override = validAuth(record.override) ? record.override : null;
+	const mode = override ?? declared;
+	const policy = mode ? { mode, declared, override } : null;
+	if (authCache.size > 1000) authCache.clear();
+	authCache.set(owner, { policy, until: Date.now() + AUTH_TTL_MS });
+	return policy;
+}
+
+/** Change one half of auth:<site>, dropping the key when both are empty. */
+async function updateAuth(env, site, patch) {
+	const record = { ...((await env.CODE.get(`auth:${site}`, "json")) ?? {}), ...patch };
+	if (!record.declared && !record.override) await env.CODE.delete(`auth:${site}`);
+	else await env.CODE.put(`auth:${site}`, JSON.stringify({ declared: record.declared ?? null, override: record.override ?? null }));
+	authCache.delete(site);
+}
+const setDeclaredAuth = (env, site, mode) => updateAuth(env, site, { declared: mode });
+
+function cookieOf(request, name) {
+	for (const part of (request.headers.get("cookie") ?? "").split(";")) {
+		const eq = part.indexOf("=");
+		if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+	}
+	return null;
+}
+const secureCookies = (request) => new URL(request.url).protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
+// __Host- makes browsers refuse a cookie set from a sibling subdomain or with a Domain.
+const cookieName = (request) => (secureCookies(request) ? `__Host-${AUTH_COOKIE}` : AUTH_COOKIE);
+const cookieLine = (request, value, maxAge) =>
+	`${cookieName(request)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secureCookies(request) ? "; Secure" : ""}`;
+
+const plain = (status, text, headers = {}) => new Response(`${text}\n`, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...headers } });
+
+/** Handoff tokens are single use: a link in a history or a log cannot sign anyone in again. */
+const usedHandoffs = new Map(); // jti -> exp
+function spendHandoff(jti, exp) {
+	const now = Date.now() / 1000;
+	for (const [id, until] of usedHandoffs) if (until <= now) usedHandoffs.delete(id);
+	if (typeof jti !== "string" || !jti || usedHandoffs.has(jti)) return false;
+	usedHandoffs.set(jti, exp);
+	return true;
+}
+
+async function signIn(request, env, ctx, site, version) {
+	// Whatever the visitor sends, site code only ever sees headers set below.
+	const headers = new Headers(request.headers);
+	for (const name of request.headers.keys()) if (name.startsWith(USER_HEADER)) headers.delete(name);
+	const policy = await authPolicy(env, site);
+	if (!policy) return serveWithLimit(new Request(request, { headers }), env, ctx, site, version);
+	if (!env.AUTH_KEY || !env.AUTH_URL) return plain(503, "Sign-in is not configured on this node");
+
+	const url = new URL(request.url);
+	if (url.pathname === "/.celld/auth/callback") return authCallback(request, env, url);
+	if (url.pathname === "/.celld/auth/logout") return authLogout(request, env, url);
+	const raw = cookieOf(request, cookieName(request));
+	const user = raw ? await verifyTok(env.AUTH_KEY, raw, "site", url.hostname) : null;
+	if (url.pathname === "/.celld/auth/me") return noStoreJson({ user: user ? publicUser(user) : null, mode: policy.mode });
+	if (!user && policy.mode === "required") return askToSignIn(request, env, url, site);
+	forwardIdentity(request, headers, user);
+	return serveWithLimit(new Request(request, { headers }), env, ctx, site, version);
+}
+
+const noStoreJson = (body) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+
+function authLogout(request, env, url) {
+	return new Response(null, {
+		status: 303,
+		headers: { location: `${env.AUTH_URL}/logout?host=${encodeURIComponent(url.hostname)}`, "set-cookie": cookieLine(request, "", 0), "cache-control": "no-store" },
+	});
+}
+
+/** A page load goes to the auth service; anything else (fetch, images, POST) gets a 401. */
+async function askToSignIn(request, env, url, site) {
+	const dest = request.headers.get("sec-fetch-dest") ?? "";
+	const wantsJson = (request.headers.get("accept") ?? "").startsWith("application/json");
+	const navigation = (request.method === "GET" || request.method === "HEAD") && !/^(empty|script|style|image|font)$/.test(dest) && !wantsJson;
+	if (!navigation) return plain(401, "Sign in required", { "www-authenticate": `Login realm="${url.hostname}"` });
+	const req = await signTok(env.AUTH_KEY, { typ: "authreq", aud: url.hostname, site: ownerOf(site), next: safeNext(url.pathname + url.search), exp: Math.floor(Date.now() / 1000) + AUTHREQ_SECS });
+	return new Response(null, { status: 302, headers: { location: `${env.AUTH_URL}/authorize?req=${req}`, "cache-control": "no-store" } });
+}
+
+/** Drop the session cookie (the site does not need it) and add the person's headers. */
+function forwardIdentity(request, headers, user) {
+	const rest = (headers.get("cookie") ?? "")
+		.split(";")
+		.filter((c) => c.trim() && c.trim().split("=")[0] !== cookieName(request))
+		.join(";");
+	if (rest) headers.set("cookie", rest);
+	else headers.delete("cookie");
+	if (!user) return;
+	const u = publicUser(user);
+	headers.set(`${USER_HEADER}id`, u.id);
+	headers.set(`${USER_HEADER}name`, encodeURIComponent(u.name));
+	if (u.email) headers.set(`${USER_HEADER}email`, encodeURIComponent(u.email));
+	headers.set(`${USER_HEADER}groups`, u.groups.map(encodeURIComponent).join(","));
+	headers.set(`${USER_HEADER}role`, u.role);
+}
+
+const publicUser = (t) => ({
+	id: String(t.sub ?? ""),
+	name: String(t.name ?? ""),
+	email: typeof t.email === "string" ? t.email : null,
+	groups: Array.isArray(t.groups) ? t.groups.map(String) : [],
+	role: t.role === "owner" || t.role === "admin" ? t.role : "member",
+});
+
+async function authCallback(request, env, url) {
+	const host = url.hostname;
+	const handoff = await verifyTok(env.AUTH_KEY, url.searchParams.get("token"), "handoff", host);
+	if (!handoff || !spendHandoff(handoff.jti, handoff.exp)) {
+		return plain(400, "That sign-in link is invalid or has expired. Open the site again to sign in.");
+	}
+	const { typ, aud, exp, jti, ...claims } = handoff;
+	const site = await signTok(env.AUTH_KEY, { ...claims, typ: "site", aud: host, exp: Math.floor(Date.now() / 1000) + SITE_COOKIE_SECS });
+	return new Response(null, {
+		status: 303,
+		headers: { location: safeNext(url.searchParams.get("next")), "set-cookie": cookieLine(request, site, SITE_COOKIE_SECS), "cache-control": "no-store" },
+	});
+}
+
+/** GET /__admin/auth[?host=H]: the sign-in policy of H's site (declared, operator
+ *  override, effective mode), or of every site. */
+async function getAuth(env, url) {
+	const one = async (site) => {
+		if (!(await env.CODE.get(`site:${site}`))) return null;
+		const record = (await env.CODE.get(`auth:${site}`, "json")) ?? {};
+		const declared = validAuth(record.declared) ? record.declared : null;
+		const override = validAuth(record.override) ? record.override : null;
+		return { site, mode: override ?? declared, declared, override };
+	};
+	const host = url.searchParams.get("host");
+	if (host !== null) {
+		if (!HOSTNAME.test(host)) return fail(400, "bad host");
+		const found = await one(await siteFor(env, host));
+		return found ? json({ host, ...found }) : fail(404, "no such site");
+	}
+	const ids = (await listAll(env.CODE, "site:")).map((k) => k.name.slice(5));
+	return json({ sites: (await Promise.all(ids.map(one))).filter(Boolean) });
+}
+
+/** PUT /__admin/auth?host=H  body {"mode":"required"|"optional"}: override the policy. */
+async function putAuth(request, env, url) {
+	const { host, site, refused } = await siteParam(env, url);
+	if (refused) return refused;
+	const body = await jsonOrUndefined(request);
+	if (!validAuth(body?.mode)) return fail(400, 'body must be {"mode": "required" | "optional"}');
+	if ((await env.CODE.get(`site:${site}`)) === null) return fail(404, "no such site");
+	await updateAuth(env, site, { override: body.mode });
+	return json({ host, site, mode: body.mode });
+}
+
+async function deleteAuth(env, url) {
+	const { host, site, refused } = await siteParam(env, url);
+	if (refused) return refused;
+	await updateAuth(env, site, { override: null });
+	return json({ host, site });
 }

@@ -59,6 +59,7 @@ proxy_hash=""
 sed -e "s/@ADMIN_TOKEN_SHA256@/$admin_hash/" -e "s/@READ_TOKEN_SHA256@/$read_hash/" -e "s/@ADMIN_HOST@/$ADMIN_HOST/" -e "s/@DEFAULT_SITE@//" -e "s#@OPERATOR_URL@#http://127.0.0.1:8081#" -e "s/@SITE_TIMEOUT_SECS@/${SITE_TIMEOUT_SECS:-30}/" \
 	-e "s/@SITE_MAX_INFLIGHT@/${SITE_MAX_INFLIGHT:-128}/" -e "s/@SITE_MAX_OBJECTS@/${SITE_MAX_OBJECTS:-1000}/" -e "s/@SITE_MAX_SUBREQUESTS@/${SITE_MAX_SUBREQUESTS:-1000}/" \
 	-e "s/@PROXY_TOKEN_SHA256@/$proxy_hash/" -e "s/@PROXY_SITE_PREFIX@/${PROXY_SITE_PREFIX-grain-}/" \
+	-e "s#@AUTH_URL@#${AUTH_URL:-}#" -e "s/@AUTH_KEY@/${AUTH_KEY:-}/" \
 	/app/router/wrangler.template.json > "$work/wrangler.json"
 log "deploying the router"
 # shellcheck disable=SC2086

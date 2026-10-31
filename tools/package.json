@@ -7,6 +7,6 @@
 		"esbuild": "0.28.2"
 	},
 	"scripts": {
-		"test": "node --test --test-concurrency=1 ../tests/api.test.ts ../tests/security.test.ts"
+		"test": "node --test --test-concurrency=1 ../tests/api.test.ts ../tests/security.test.ts ../tests/signin.test.ts"
 	}
 }

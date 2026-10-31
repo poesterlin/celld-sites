@@ -34,6 +34,8 @@ export class Node {
 	readToken: string;
 	proxyToken: string;
 	proxyPrefix: string;
+	authKey = "test-auth-key-" + "k".repeat(32);
+	authUrl = "https://auth.test";
 	dir: string;
 	env: NodeJS.ProcessEnv;
 	proc?: ReturnType<typeof spawn>;
@@ -69,7 +71,9 @@ export class Node {
 			.replace("@SITE_MAX_OBJECTS@", process.env.TEST_SITE_MAX_OBJECTS ?? "1000")
 			.replace("@SITE_MAX_SUBREQUESTS@", process.env.TEST_SITE_MAX_SUBREQUESTS ?? "1000")
 			.replace("@PROXY_TOKEN_SHA256@", sha256(this.proxyToken))
-			.replace("@PROXY_SITE_PREFIX@", this.proxyPrefix);
+			.replace("@PROXY_SITE_PREFIX@", this.proxyPrefix)
+			.replace("@AUTH_URL@", this.authUrl)
+			.replace("@AUTH_KEY@", this.authKey);
 		writeFileSync(join(router, "wrangler.json"), template);
 		return this.#launch();
 	}

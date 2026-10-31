@@ -22,6 +22,9 @@
 //   mutable    exact paths under those prefixes that do change between builds
 //              (never cached for long). _nuxt/builds/latest.json is always added.
 //   compatibilityDate  workerd compatibility date, YYYY-MM-DD (default 2026-10-01).
+//   auth       "required": visitors sign in first; "optional": everyone gets in,
+//              signed-in people are recognised (see docs/SITES.md, "Sign-in").
+//              Recorded per site on activation, not in the version.
 //   check      path a deploy requests before activating, and probes after it
 //              (default "/"); false skips both. See node/push.sh.
 //   notFound   "none" (default) or "spa": a static-only site answers unknown
@@ -53,9 +56,10 @@ const config = existsSync(configFile)
 			assets: ".svelte-kit/cloudflare",
 			objects: existsSync(join(siteDir, "src/objects.ts")) ? "src/objects.ts" : undefined,
 		};
-const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01", check = "/", minify = false } = config;
+const { notFound = "none", exclude = [], compatibilityDate = "2026-10-01", check = "/", minify = false, auth } = config;
 if (typeof minify !== "boolean") fail("minify must be true or false");
 if (check !== false && (typeof check !== "string" || !check.startsWith("/"))) fail(`check must be a path starting with "/", or false`);
+if (auth !== undefined && auth !== "required" && auth !== "optional") fail(`auth must be "required" or "optional"`);
 if (notFound !== "none" && notFound !== "spa") fail(`notFound must be "none" or "spa"`);
 // celld 0.6.3 accepts any string here (even a non-date), so check it ourselves.
 if (typeof compatibilityDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) fail("compatibilityDate must be YYYY-MM-DD");
@@ -201,7 +205,7 @@ writeFileSync(join(outDir, "version"), `${version}\n`);
 writeFileSync(
 	join(outDir, "code.json"),
 	// `check` is how to deploy, not what is served, so it is not part of the version id.
-	JSON.stringify({ compatibilityDate, source, files: fileMap, immutable, mutable: relevantMutable, notFound, check }),
+	JSON.stringify({ compatibilityDate, source, files: fileMap, immutable, mutable: relevantMutable, notFound, check, ...(auth !== undefined && { auth }) }),
 );
 console.error(
 	`packed ${relative(process.cwd(), siteDir) || "."}: version ${version}, ${assets.length} assets, ` +
