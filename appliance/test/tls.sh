@@ -6,6 +6,7 @@
 #
 #   docker build -f appliance/Dockerfile -t celld-appliance . && appliance/test/tls.sh
 #
+# The appliance is configured the way Home Assistant does it (options.json).
 # Removes its containers, volume and the names server image when done.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -40,12 +41,16 @@ for _ in $(seq 30); do
 	sleep 0.5
 done
 
+# Configured like a Home Assistant add-on: settings in /data/options.json, /data
+# owned by root, no environment variables.
+docker volume create "$RUN-data" >/dev/null
+docker run --rm -i -v "$RUN-data:/data" alpine:3 sh -c 'cat > /data/options.json && chown -R root:root /data && chmod 755 /data' <<JSON
+{"tls_mode": "names", "name_service_url": "http://127.0.0.1:9080", "address": "100.82.130.136", "oidc_name": "Tailscale",
+ "env": ["ALLOW_INSECURE_SERVICE=1", "ACME_SERVER=https://127.0.0.1:14000/dir", "LEGO_CA_CERTIFICATES=/pebble-ca.pem",
+         "DNS_RESOLVERS=127.0.0.1:53", "LEGO_DNS_PROPAGATION_DISABLE_ANS=true"]}
+JSON
 docker run -d --name "$RUN" --init --restart on-failure --stop-timeout 60 --network "container:$RUN-server" \
 	-v "$RUN-data:/data" -v "$WORK/pebble-ca.pem:/pebble-ca.pem:ro" \
-	-e TLS_MODE=names -e NAME_SERVICE_URL=http://127.0.0.1:9080 -e ALLOW_INSECURE_SERVICE=1 \
-	-e ADDRESS_IPV4=100.82.130.136 \
-	-e ACME_SERVER=https://127.0.0.1:14000/dir -e LEGO_CA_CERTIFICATES=/pebble-ca.pem \
-	-e DNS_RESOLVERS=127.0.0.1:53 -e LEGO_DNS_PROPAGATION_DISABLE_ANS=true \
 	"$IMAGE" >/dev/null
 
 healthy() {
@@ -59,6 +64,9 @@ healthy() {
 echo "== fresh start: register, certificate, then serve ($(healthy) s to healthy)"
 HOST=$(docker exec "$RUN" cat /data/tls/hostname)
 echo "hostname: $HOST"
+[ "$(docker exec "$RUN" sh -c 'for p in /proc/[0-9]*; do tr "\\0" " " < $p/cmdline 2>/dev/null | grep -q "^celld " && stat -c %u $p; done' | sort -u)" = 10001 ] \
+	|| fail "celld does not run as uid 10001"
+echo "options.json read, root-owned /data taken over, services run as uid 10001"
 
 # Pebble signs with a root it makes at start; trust exactly that one.
 docker exec "$RUN-server" wget -q --no-check-certificate -O - https://127.0.0.1:15000/roots/0 > "$WORK/root.pem"
@@ -84,12 +92,12 @@ code=$(c --resolve admin.internal:8443:127.0.0.1 https://admin.internal:8443/__a
 echo "admin.internal through the front door: refused ($code)"
 
 echo "== renewal: the agent's hook reloads Caddy"
-docker exec "$RUN" /app/cert-changed.sh 2>/dev/null || fail "reload"
+docker exec -u 10001 "$RUN" /app/cert-changed.sh 2>/dev/null || fail "reload"
 [ "$(c $(resolve "$HOST") "https://$HOST:8443/api/health")" = 200 ] || fail "after reload"
 echo "reloaded, still serving"
 
 echo "== new hostname: release the name; the next refresh registers a new one and restarts"
-docker exec -e HAMSTR_DATA=/data "$RUN" node /app/names/agent.ts release
+docker exec -u 10001 -e HAMSTR_DATA=/data -e NAME_SERVICE_URL=http://127.0.0.1:9080 -e ALLOW_INSECURE_SERVICE=1 "$RUN" node /app/names/agent.ts release
 docker restart -t 60 "$RUN" >/dev/null
 t0=$SECONDS
 until [ "$(docker inspect -f '{{.RestartCount}}' "$RUN")" -ge 1 ]; do

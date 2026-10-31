@@ -1,0 +1,48 @@
+# The Hamstr add-on: the appliance image (appliance/), settings from the
+# options below. Bump `version` to a released image tag (git tag vX.Y.Z).
+name: Hamstr
+version: "0.2.0"
+slug: hamstr
+description: Little web apps in one click, with your data at home
+url: https://github.com/poesterlin/celld-sites
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/poesterlin/celld-sites-appliance
+startup: application
+boot: auto
+init: true
+# celld drains for about 15 s when it stops.
+timeout: 60
+ports:
+  8443/tcp: 443
+  8000/tcp: 80
+ports_description:
+  8443/tcp: HTTPS
+  8000/tcp: HTTP (redirects to HTTPS)
+options:
+  tls_mode: domain
+  domain: ""
+  dns_provider: ""
+  env: []
+  oidc_name: Tailscale
+  oidc_issuer: ""
+  oidc_client_id: ""
+  oidc_client_secret: ""
+schema:
+  tls_mode: list(off|names|domain)
+  domain: str?
+  dns_provider: str?
+  env:
+    - match(^[A-Z_][A-Z0-9_]*=.*$)
+  name_service_url: url?
+  address: str?
+  acme_email: email?
+  hamstr_host: str?
+  grain_domain: str?
+  oidc_name: str?
+  oidc_issuer: url?
+  oidc_client_id: str?
+  oidc_client_secret: password?
+  store: url?
+  ntfy_url: url?

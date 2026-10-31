@@ -9,6 +9,7 @@ entry = [
 	"router/index.ts",              # deployed as the router Worker
 	"tools/pack.ts",                # tools/deploy.sh, node/push.sh
 	"tools/seed.ts",
+	"appliance/ha-options.mjs",     # appliance/run.sh (Home Assistant options)
 	"adapters/emdash/entry.ts",     # copied into a site as celld-adapter/
 	"adapters/emdash/objects.ts",
 	"tests/**/*.ts",                # API and security suites

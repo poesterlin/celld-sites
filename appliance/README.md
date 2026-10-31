@@ -37,6 +37,18 @@ docker run -d --name hamstr --init --restart unless-stopped --stop-timeout 60 \
 
 Give `docker stop` 60 s (`--stop-timeout 60`): celld drains for about 15 s.
 
+The container starts as root only to take over `/data` if someone else owns
+it (Home Assistant), then runs everything as uid 10001 (`run.sh`). With
+`--user 10001` it skips that step.
+
+### Home Assistant
+
+`ha-addon/` and `repository.yaml` make this repo an add-on repository. The
+add-on's options (`/data/options.json`) become the variables below
+(`ha-options.mjs`); `env` takes extra `NAME=value` entries, such as the DNS
+provider's token. Setup for users: [ha-addon/DOCS.md](../ha-addon/DOCS.md).
+Release: tag `vX.Y.Z`, then set `version` in `ha-addon/config.yaml` to it.
+
 ## Settings
 
 | Variable | Default | Meaning |
@@ -96,7 +108,7 @@ tar -C /tmp/bundle -cf - . | docker exec -i hamstr /app/with-env /app/push.sh bl
 ```sh
 docker build -f appliance/Dockerfile -t celld-appliance .
 node appliance/test/e2e.ts      # sign-in, app install, grain, site deploy, restarts (TLS_MODE=off)
-appliance/test/tls.sh           # HTTPS with the names agent and Pebble, reload, new hostname
+appliance/test/tls.sh           # HTTPS with the names agent and Pebble, configured like Home Assistant
 ```
 
 Both run in CI (`.github/workflows/test.yml`, job `appliance`), and clean up

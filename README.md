@@ -45,7 +45,15 @@ docker build -f appliance/Dockerfile -t hamstr .
 ```
 
 Settings are in [appliance/README.md](appliance/README.md).
-A Home Assistant add-on is coming.
+
+On Home Assistant, add this repository under
+Settings → Add-ons → Add-on Store → ⋮ → Repositories:
+
+```
+https://github.com/poesterlin/celld-sites
+```
+
+Then install **Hamstr**. Setup steps are in [ha-addon/DOCS.md](ha-addon/DOCS.md).
 
 ## Learn more
 

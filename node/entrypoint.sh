@@ -71,7 +71,7 @@ rm -rf "$work"
 # The public listener serves the sites; the internal (operator) listener has an
 # unauthenticated API, so it stays on loopback inside this container.
 # shellcheck disable=SC2086
-celld $STORE --listen 0.0.0.0:8080 --internal-listen 127.0.0.1:8081 &
+celld $STORE --listen "${CELLD_LISTEN:-0.0.0.0:8080}" --internal-listen 127.0.0.1:8081 &
 node=$!
 trap 'kill -TERM "$node" 2>/dev/null' TERM INT
 

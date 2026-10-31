@@ -1,0 +1,5 @@
+# Home Assistant add-on repository: add https://github.com/poesterlin/celld-sites
+# under Settings → Add-ons → Add-on Store → ⋮ → Repositories.
+name: Hamstr
+url: https://github.com/poesterlin/celld-sites
+maintainer: Philip Oesterlin

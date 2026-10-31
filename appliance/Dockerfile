@@ -52,13 +52,16 @@ COPY --from=hamstr /src/hamstr/server.ts /src/hamstr/package.json /app/hamstr/
 COPY names/agent/agent.ts names/agent/package.json /app/names/
 COPY router /app/router
 COPY --chmod=755 node/entrypoint.sh node/push.sh node/admin.sh /app/
-COPY --chmod=755 appliance/start.sh appliance/with-env appliance/cert-changed.sh /app/
+COPY --chmod=755 appliance/run.sh appliance/start.sh appliance/with-env appliance/cert-changed.sh /app/
+COPY appliance/ha-options.mjs /app/
 COPY appliance/caddy /app/caddy
 ENV CELLD_ESBUILD=/usr/local/bin/esbuild \
     CELLD_WATCH=/data/celld \
     HOME=/tmp \
-    NODE_ENV=production
-USER celld
+    NODE_ENV=production \
+    CELLD_LISTEN=127.0.0.1:8080
+# Starts as root only to take over a root-owned /data (Home Assistant), then
+# runs everything as celld (run.sh). `--user 10001` skips that step.
 VOLUME /data
 # 8000 HTTP (redirects to HTTPS when TLS_MODE is set), 8443 HTTPS.
 EXPOSE 8000 8443
@@ -69,4 +72,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 \
    && curl -fsS -o /dev/null http://127.0.0.1:8001/
 # celld drains for about 15 s on stop: give `docker stop` 60 s (-t 60).
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/app/start.sh"]
+ENTRYPOINT ["/app/run.sh"]
