@@ -55,7 +55,7 @@ hash=$(printf '%s' "$token" | sha256sum | cut -d' ' -f1)
 
 # The router app, regenerated each run so router changes are picked up on restart.
 mkdir -p "$state/router"
-cp "$project/router/index.ts" "$state/router/index.ts"
+cp -r "$project/router/." "$state/router/"
 sed -e "s/@ADMIN_TOKEN_SHA256@/$hash/" -e "s/@READ_TOKEN_SHA256@/$hash/" \
 	-e "s/@ADMIN_HOST@/admin.internal/" -e "s/@DEFAULT_SITE@/preview/" -e "s/@OPERATOR_URL@//" -e "s/@SITE_TIMEOUT_SECS@/30/" \
 	-e "s/@SITE_MAX_INFLIGHT@/${SITE_MAX_INFLIGHT:-128}/" -e "s/@SITE_MAX_OBJECTS@/${SITE_MAX_OBJECTS:-1000}/" -e "s/@SITE_MAX_SUBREQUESTS@/${SITE_MAX_SUBREQUESTS:-1000}/" \

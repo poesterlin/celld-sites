@@ -24,7 +24,7 @@
 		"noUnusedParameters": false
 	},
 	"include": [
-		"./*.ts",
+		"./**/*.ts",
 		"../types/celld.d.ts"
 	]
 }

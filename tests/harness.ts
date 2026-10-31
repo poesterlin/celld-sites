@@ -82,7 +82,8 @@ export class Node {
 	async restart(routerSource?: string): Promise<this> {
 		await this.#kill();
 		const router = join(this.dir, "router");
-		writeFileSync(join(router, "index.ts"), routerSource ?? readFileSync(join(project, "router/index.ts")));
+		if (routerSource === undefined) cpSync(join(project, "router"), router, { recursive: true, filter: (from) => !from.endsWith("wrangler.template.json") });
+		else writeFileSync(join(router, "index.ts"), routerSource);
 		return this.#launch();
 	}
 
