@@ -439,6 +439,7 @@ async function info(slug, opts) {
 	console.log(`${app.icon || "▫"}  ${app.name} (${app.slug})`);
 	console.log(app.summary);
 	console.log(`publisher ${app.publisher} · version ${app.version} · license ${app.license}`);
+	if (app.category) console.log(`category: ${app.category}`);
 	if (app.tags.length) console.log(`tags: ${app.tags.join(", ")}`);
 	const latest = releases.find((r) => r.status === "published");
 	console.log(`network: ${latest?.manifest?.egress?.length ? latest.manifest.egress.join(", ") : "none"}`);

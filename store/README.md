@@ -188,7 +188,8 @@ API: `POST /api/v1/apps/:slug/demo` → `{id, url, expiresAt}`,
 publishers(id, name UNIQUE, password_hash, created_at)
 tokens(id, publisher_id, hash, created_at, last_used_at)
 apps(id, slug UNIQUE, publisher_id, name, summary, description,
-     homepage, source, license, icon, tags, created_at, updated_at)
+     homepage, source, license, icon, category, tags, created_at, updated_at)
+app_tags(tag, app_id, PRIMARY KEY(tag, app_id))   -- index behind ?tag=
 releases(id, app_id, version, manifest, status,
          bundle_sha, bundle_size, source_sha, source_size,
          created_at, published_at, downloads,
@@ -272,7 +273,8 @@ id.
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | GET | `/api/health` | – | liveness and counts |
-| GET | `/api/v1/apps?q=&tag=&limit=&offset=` | – | catalog search |
+| GET | `/api/v1/apps?q=&category=&tag=&limit=&offset=` | – | catalog search (`q` also matches tags) |
+| GET | `/api/v1/categories` | – | the fixed categories with listed-app counts |
 | GET | `/api/v1/apps/:slug` | – | app + published releases (owner token also sees pending) |
 | GET | `/api/v1/apps/:slug/releases/:version/download` | – | bundle, `X-Bundle-Sha256` |
 | GET | `/api/v1/apps/:slug/releases/:version/source` | – | optional source archive |
@@ -312,12 +314,21 @@ downloads per IP. Limits are in-memory for the prototype and reset on restart.
 	"version": "1.0.0",
 	"license": "MIT",
 	"icon": "🎁",
-	"tags": ["family", "fun"],
+	"category": "family",
+	"tags": ["gifts", "christmas"],
 	"homepage": "https://example.com/secret-santa",
 	"source": "https://example.com/source",
 	"egress": ["api.example.com"]
 }
 ```
+
+`category` is one of the store's fixed sections, which make up its filter row:
+`productivity`, `family`, `social`, `health`, `creative`, `games`, `money`,
+`learning`, `tools`, `developer` (see `CATEGORIES` in
+`packages/app-format/manifest.ts`). It is optional; an app without one is only
+listed under *All*. `tags` (at most 8) are free keywords: search matches them,
+and the app page links each to the apps sharing it, but they are never a
+browse list, so their number does not matter.
 
 Optional, for apps that run as [Hamstr](../hamstr/README.md) grains:
 `permissions` (`[{ "id", "title", "description"? }]`, at most 16; the grain's

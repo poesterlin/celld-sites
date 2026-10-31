@@ -271,6 +271,35 @@ describe("store API", () => {
 		assert.equal(badEgress.status, 422);
 	});
 
+	it("filters by category and exact tag, and keeps both current on update", async () => {
+		assert.equal((await publish("board", "1.0.0", { category: "family", tags: ["family", "fun"] })).uploaded.status, 201);
+		assert.equal((await publish("chess", "1.0.0", { category: "games", tags: ["fun", "family-game"] })).uploaded.status, 201);
+		const slugs = async (query) => (await call(base, `/api/v1/apps?${query}`)).body.apps.map((a) => a.slug).sort();
+
+		assert.deepEqual(await slugs("tag=family"), ["board"]);
+		assert.deepEqual(await slugs("tag=fun"), ["board", "chess"]);
+		assert.deepEqual(await slugs("category=games"), ["chess"]);
+		assert.deepEqual(await slugs("category=games&tag=family"), []);
+		assert.deepEqual(await slugs("q=family-game"), ["chess"]);
+		assert.equal((await call(base, "/api/v1/apps/board")).body.app.category, "family");
+
+		const counts = async () => Object.fromEntries((await call(base, "/api/v1/categories")).body.categories.map((c) => [c.id, c.count]));
+		const before = await counts();
+		assert.equal(before.family, 1);
+		assert.equal(before.games, 1);
+		assert.equal(before.money, 0);
+
+		assert.equal((await publish("board", "1.1.0", { category: "productivity", tags: ["notes"] })).uploaded.status, 201);
+		assert.deepEqual(await slugs("tag=family"), []);
+		assert.deepEqual(await slugs("tag=notes"), ["board"]);
+		const after = await counts();
+		assert.equal(after.family, 0);
+		assert.equal(after.productivity, 1);
+
+		const bad = await call(base, "/api/v1/apps/board/releases", { method: "POST", token, json: { manifest: manifest({ slug: "board", version: "1.2.0", category: "misc" }) } });
+		assert.equal(bad.status, 422);
+	});
+
 	it("can require review before listing a release", async () => {
 		const dir2 = mkdtempSync(join(tmpdir(), "store-api-review-"));
 		const reviewed = createStore({ dataDir: dir2, adminToken: "review-secret", rateLimit: false, logging: false, requireReview: true });

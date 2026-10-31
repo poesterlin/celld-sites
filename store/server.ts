@@ -18,7 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { BUNDLE_LIMITS, BundleError, readBundle } from "../packages/app-format/bundle.ts";
-import { ManifestError, validateManifest, validatePublisherName, validateSlug, validateVersion } from "../packages/app-format/manifest.ts";
+import { CATEGORIES, ManifestError, validateManifest, validatePublisherName, validateSlug, validateVersion } from "../packages/app-format/manifest.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // The web UI: a SvelteKit single-page app built into web/build (see web/).
@@ -188,6 +188,12 @@ export function createStore(options: StoreOptions = {}) {
 			UNIQUE(app_id, version)
 		);
 		CREATE INDEX IF NOT EXISTS releases_by_app ON releases(app_id, status, published_at);
+		-- apps.tags keeps the manifest's order for display; this is the index.
+		CREATE TABLE IF NOT EXISTS app_tags (
+			tag TEXT NOT NULL,
+			app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+			PRIMARY KEY (tag, app_id)
+		) WITHOUT ROWID;
 		CREATE TABLE IF NOT EXISTS reports (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			release_id INTEGER NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
@@ -220,6 +226,14 @@ export function createStore(options: StoreOptions = {}) {
 	try {
 		db.exec("ALTER TABLE demos ADD COLUMN end_hash TEXT");
 	} catch {}
+	// Older catalogs predate categories and the tag index.
+	try {
+		db.exec("ALTER TABLE apps ADD COLUMN category TEXT");
+	} catch {}
+	db.exec("CREATE INDEX IF NOT EXISTS apps_by_category ON apps(category)");
+	if (!db.prepare("SELECT 1 FROM app_tags LIMIT 1").get()) {
+		db.exec("INSERT OR IGNORE INTO app_tags (tag, app_id) SELECT j.value, a.id FROM apps a, json_each(a.tags) j WHERE json_valid(a.tags)");
+	}
 
 	// Abandoned publishes (metadata created, bundle never uploaded) do not hold a
 	// slot forever.
@@ -251,6 +265,12 @@ export function createStore(options: StoreOptions = {}) {
 			"SELECT r.* FROM releases r JOIN apps a ON a.id = r.app_id WHERE a.slug = ? AND r.version = ?",
 		),
 	};
+
+	function setTags(appId, tags) {
+		db.prepare("DELETE FROM app_tags WHERE app_id = ?").run(appId);
+		const add = db.prepare("INSERT OR IGNORE INTO app_tags (tag, app_id) VALUES (?, ?)");
+		for (const tag of tags) add.run(tag, appId);
+	}
 
 	const tx = <T>(fn: () => T): T => {
 		db.exec("BEGIN IMMEDIATE");
@@ -433,6 +453,7 @@ export function createStore(options: StoreOptions = {}) {
 			summary: app.summary,
 			icon: app.icon,
 			license: app.license,
+			category: app.category ?? null,
 			tags: tagsOf(app),
 			publisher: app.publisher,
 			version: app.version,
@@ -717,11 +738,14 @@ export function createStore(options: StoreOptions = {}) {
 		if (pathname === "/api/v1/apps" && method === "GET") {
 			const search = String(url.searchParams.get("q") ?? "").trim().toLowerCase().slice(0, 100);
 			const tag = String(url.searchParams.get("tag") ?? "").trim().toLowerCase().slice(0, 20);
+			const category = String(url.searchParams.get("category") ?? "").trim().toLowerCase().slice(0, 20);
 			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 30) || 30));
 			const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
 			const where = `EXISTS (SELECT 1 FROM releases r WHERE r.app_id = a.id AND r.status = 'published')
-				AND (? = '' OR instr(lower(a.name || ' ' || a.summary || ' ' || a.description), ?) > 0)
-				AND (? = '' OR instr(a.tags, ?) > 0)`;
+				AND (? = '' OR instr(lower(a.name || ' ' || a.summary || ' ' || a.description || ' ' || a.tags), ?) > 0)
+				AND (? = '' OR EXISTS (SELECT 1 FROM app_tags t WHERE t.tag = ? AND t.app_id = a.id))
+				AND (? = '' OR a.category = ?)`;
+			const args = [search, search, tag, tag, category, category];
 			const rows = db
 				.prepare(
 					`SELECT a.*, p.name AS publisher,
@@ -732,9 +756,28 @@ export function createStore(options: StoreOptions = {}) {
 					 WHERE ${where}
 					 ORDER BY a.updated_at DESC LIMIT ? OFFSET ?`,
 				)
-				.all(search, search, tag, tag ? `"${tag}"` : "", limit, offset);
-			const total = db.prepare(`SELECT COUNT(*) AS n FROM apps a WHERE ${where}`).get(search, search, tag, tag ? `"${tag}"` : "").n;
+				.all(...args, limit, offset);
+			const total = db.prepare(`SELECT COUNT(*) AS n FROM apps a WHERE ${where}`).get(...args).n;
 			return json(res, 200, { apps: rows.map(cardView), total, limit, offset });
+		}
+
+		// The browse sections, in their fixed order, with how many listed apps
+		// each holds. `uncategorized` counts listed apps without one.
+		if (pathname === "/api/v1/categories" && method === "GET") {
+			const counts = new Map(
+				db
+					.prepare(
+						`SELECT a.category, COUNT(*) AS n FROM apps a
+						 WHERE EXISTS (SELECT 1 FROM releases r WHERE r.app_id = a.id AND r.status = 'published')
+						 GROUP BY a.category`,
+					)
+					.all()
+					.map((r) => [r.category, Number(r.n)]),
+			);
+			return json(res, 200, {
+				categories: Object.entries(CATEGORIES).map(([id, label]) => ({ id, label, count: counts.get(id) ?? 0 })),
+				uncategorized: counts.get(null) ?? 0,
+			});
 		}
 
 		const appMatch = /^\/api\/v1\/apps\/([a-z0-9-]+)$/.exec(pathname);
@@ -921,10 +964,11 @@ export function createStore(options: StoreOptions = {}) {
 				if (!appId) {
 					const info = db
 						.prepare(
-							"INSERT INTO apps (slug, publisher_id, name, summary, description, homepage, source, license, icon, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+							"INSERT INTO apps (slug, publisher_id, name, summary, description, homepage, source, license, icon, category, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 						)
-						.run(slug, me.id, manifest.name, manifest.summary, manifest.description, manifest.homepage ?? null, manifest.source ?? null, manifest.license, manifest.icon, JSON.stringify(manifest.tags), now(), now());
+						.run(slug, me.id, manifest.name, manifest.summary, manifest.description, manifest.homepage ?? null, manifest.source ?? null, manifest.license, manifest.icon, manifest.category ?? null, JSON.stringify(manifest.tags), now(), now());
 					appId = info.lastInsertRowid;
+					setTags(appId, manifest.tags);
 				}
 				const info = db
 					.prepare("INSERT INTO releases (app_id, version, manifest, status, created_at) VALUES (?, ?, ?, 'uploading', ?)")
@@ -989,7 +1033,7 @@ export function createStore(options: StoreOptions = {}) {
 						.run(received.sha, received.size, status, status === "published" ? now() : null, row.id);
 					if (!changed.changes) return false;
 					db.prepare(
-						"UPDATE apps SET name = ?, summary = ?, description = ?, homepage = ?, source = ?, license = ?, icon = ?, tags = ?, updated_at = ? WHERE id = ?",
+						"UPDATE apps SET name = ?, summary = ?, description = ?, homepage = ?, source = ?, license = ?, icon = ?, category = ?, tags = ?, updated_at = ? WHERE id = ?",
 					).run(
 						manifest.name,
 						manifest.summary,
@@ -998,10 +1042,12 @@ export function createStore(options: StoreOptions = {}) {
 						manifest.source ?? null,
 						manifest.license,
 						manifest.icon,
+						manifest.category ?? null,
 						JSON.stringify(manifest.tags),
 						now(),
 						row.app_id,
 					);
+					setTags(row.app_id, manifest.tags ?? []);
 					return true;
 				});
 				if (!won) {

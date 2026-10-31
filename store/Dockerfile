@@ -4,6 +4,7 @@
 FROM node:24-bookworm-slim AS web
 WORKDIR /src
 COPY packages/ui ./packages/ui
+COPY packages/app-format/manifest.ts ./packages/app-format/
 COPY store/web/package.json store/web/package-lock.json ./store/web/
 RUN cd store/web && npm ci --no-audit --no-fund
 COPY store/web ./store/web
