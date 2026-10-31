@@ -36,13 +36,13 @@ jobs:
             dockerfile: node/Dockerfile
             target: hosting
             image: celld-sites-node
-            platforms: ${{ matrix.platforms }}
+            platforms: linux/amd64
           - name: dashboard
             context: dashboard
             dockerfile: dashboard/Dockerfile
             target: ""
             image: celld-sites-dashboard
-            platforms: ${{ matrix.platforms }}
+            platforms: linux/amd64
           # One container for Home Assistant, NAS app stores and Pis (aarch64).
           - name: appliance
             context: .
