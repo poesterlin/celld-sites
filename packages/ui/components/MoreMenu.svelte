@@ -1,8 +1,9 @@
 <script>
-	// A "⋯" button with a small menu. Items: { label, icon?, onclick, danger?, hidden? }.
+	// A "⋯" button with a small menu. Items: { label, icon?, onclick, danger?, hidden?, separator? }.
+	// `icon` and `button` restyle the trigger, e.g. as the caret half of a split button.
 	import { ICON } from "../icons.ts";
 
-	let { items, label = "More", extra = "" } = $props();
+	let { items, label = "More", extra = "", icon = "more", button = "icon-button" } = $props();
 
 	let open = $state(false);
 	let root = $state(null);
@@ -31,7 +32,7 @@
 <div class="me more {extra}" class:open bind:this={root}>
 	<button
 		type="button"
-		class="icon-button"
+		class={button}
 		aria-haspopup="menu"
 		aria-expanded={open}
 		aria-label={label}
@@ -40,7 +41,7 @@
 			event.preventDefault();
 			event.stopPropagation();
 			open = !open;
-		}}>{@html ICON.more}</button
+		}}>{@html ICON[icon]}</button
 	>
 	{#if open}
 		<div class="menu" class:flip role="menu" bind:this={menuEl}>

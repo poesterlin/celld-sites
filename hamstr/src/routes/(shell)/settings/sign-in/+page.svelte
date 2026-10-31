@@ -2,12 +2,30 @@
 	import { invalidateAll } from "$app/navigation";
 	import { call } from "#lib/client/accounts.ts";
 	import ProviderModal from "#lib/components/accounts/ProviderModal.svelte";
+	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
 
 	let { data } = $props();
 	let editing = $state(null);
 	let results = $state({});
 
 	const blank = (kind) => ({ kind, name: kind === "github" ? "GitHub" : "", issuer: "", clientId: "", clientSecret: "" });
+	// Common providers. `issuer` is filled in when it is the same for everyone; `hint` shows
+	// the shape of a self-hosted or per-tenant issuer.
+	const preset = (label, fields, separator = false) => ({
+		label,
+		separator,
+		onclick: () => (editing = { ...blank(fields.kind ?? "oidc"), name: label, title: `Add ${label}`, ...fields }),
+	});
+	let presetItems = $derived([
+		preset("GitHub", { kind: "github", redirectUri: `${data.callbackBase}github` }),
+		preset("Google", { issuer: "https://accounts.google.com" }, true),
+		preset("Microsoft Entra ID", { name: "Microsoft", hint: "https://login.microsoftonline.com/<tenant-id>/v2.0" }),
+		preset("GitLab", { issuer: "https://gitlab.com" }),
+		preset("Tailscale (tsidp)", { name: "Tailscale", hint: "https://idp.<tailnet>.ts.net" }),
+		preset("Authentik", { hint: "https://auth.example.com/application/o/<app-slug>/" }),
+		preset("Keycloak", { hint: "https://keycloak.example.com/realms/<realm>" }),
+		preset("Pocket ID", { hint: "https://id.example.com" }),
+	]);
 	const edit = (p) => (editing = { id: p.id, kind: p.kind, name: p.name, issuer: p.issuer ?? "", clientId: p.clientId ?? "", clientSecret: "", redirectUri: p.redirectUri, hasSecret: p.hasSecret });
 	const kindName = { oidc: "OpenID Connect", github: "GitHub", passkey: "Passkeys" };
 	const patch = async (p, body) => {
@@ -32,8 +50,10 @@
 		<p class="dim">How people prove who they are. With auto-approve on, a provider's people skip the waiting list.</p>
 	</div>
 	<div class="head-actions">
-		<button class="button ghost" type="button" onclick={() => (editing = { ...blank("github"), redirectUri: `${data.callbackBase}github` })}>Add GitHub</button>
-		<button class="button" type="button" onclick={() => (editing = blank("oidc"))}>Add OpenID Connect</button>
+		<div class="split">
+			<button class="button" type="button" onclick={() => (editing = blank("oidc"))}>Add OpenID Connect</button>
+			<MoreMenu items={presetItems} label="Common providers" icon="chevron" button="button split-caret" />
+		</div>
 	</div>
 </div>
 
