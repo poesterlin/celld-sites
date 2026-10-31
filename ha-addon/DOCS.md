@@ -5,38 +5,45 @@ Your data stays on this Home Assistant box.
 
 > Work in progress. Expect changes.
 
-## Before you start
+## Start
 
-You need two things:
+1. Start the add-on.
+2. Click **Open Web UI**.
 
-1. **A domain** with a DNS provider that has an API, for example Cloudflare.
-2. **A sign-in provider** (OIDC) with an HTTPS address, for example
-   [tsidp](https://github.com/tailscale/tsidp) for "Sign in with Tailscale".
+That's it. You are the owner.
 
-## Set up
+## Get apps
 
-1. Point `*.your-domain` and `your-domain` at this box.
-   Use its Tailscale address to keep it private to your tailnet.
-2. Fill in the options:
-   - `tls_mode`: `domain`
-   - `domain`: for example `hamstr.example.com`
-   - `dns_provider`: for example `cloudflare` (see `lego dnshelp`)
-   - `env`: the provider's token, for example `CF_DNS_API_TOKEN=...`
-   - `oidc_*`: your sign-in provider
-3. In the sign-in provider, allow this redirect address:
-   `https://<domain>/auth/callback/<oidc_name in lowercase>`
-4. Start the add-on. The first start gets a certificate, which takes a minute.
-5. Open `https://<domain>`. The first person to sign in becomes the owner.
+Apps come from a Hamstr Store. Set its address in the `store` option,
+then restart the add-on.
 
-## Options
+## Home mode
 
-| Option | What it does |
+The add-on starts in home mode (`auth: none`):
+
+- There is no sign-in. **Anyone who can reach this box is the owner.**
+  That includes guests on your Wi-Fi.
+- It uses plain HTTP. Browsers show "Not secure".
+- Some app features need HTTPS and do not work: passkeys, the clipboard,
+  the camera and microphone, and installing apps to the home screen.
+- Each item you make gets its own port, from 20000 up.
+
+Use home mode on a network you trust.
+
+## Sign-in and HTTPS
+
+For sign-in and HTTPS, set `auth: required` and a `tls_mode`:
+
+| `tls_mode` | What you need |
 | --- | --- |
-| `tls_mode` | `domain`: your own domain. `names`: a Hamstr names service. `off`: plain HTTP on port 80 |
-| `name_service_url`, `address` | For `names` mode: the service, and the address the name points at |
-| `hamstr_host`, `grain_domain` | Only for `off`. Otherwise they come from the domain |
-| `store` | The Hamstr Store to install apps from |
-| `ntfy_url` | Notify an ntfy topic when someone waits for approval |
+| `domain` | Your own domain at a DNS provider with an API. Set `domain`, `dns_provider`, and the provider's token in `env` (for example `CF_DNS_API_TOKEN=...`). Point `domain` and `*.domain` at this box. |
+| `names` | A Hamstr names service: `name_service_url`. |
+
+You also need a sign-in provider (OIDC) with an HTTPS address: set the
+`oidc_*` options. Its redirect address is
+`https://<domain>/auth/callback/<oidc_name in lowercase>`.
+
+HTTPS is on port 8443, HTTP on port 8000.
 
 ## Data
 

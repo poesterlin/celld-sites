@@ -74,7 +74,9 @@ export function sameOrigin(event, core) {
 	const site = event.request.headers.get("sec-fetch-site");
 	if (site !== null) return site === "same-origin";
 	const origin = event.request.headers.get("origin");
-	return origin === null || origin === core.shellOrigin;
+	// Home mode answers on whatever host the browser uses.
+	const shell = core.home ? `${core.config.scheme}://${event.request.headers.get("host")}` : core.shellOrigin;
+	return origin === null || origin === shell;
 }
 
 async function readBody(request, limit = 64 * 1024) {

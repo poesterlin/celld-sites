@@ -159,6 +159,16 @@ This is what lets [Hamstr](../hamstr/README.md) hand apps identity headers they
 can trust: another container on the bridge cannot reach a grain directly or
 forge them. Without `PROXY_TOKEN` grain sites answer nobody.
 
+## Home mode (no sign-in)
+
+`HAMSTR_AUTH=none` turns sign-in off: anyone who can reach Hamstr's port is its
+owner and can install apps, grant egress, and read or delete every grain. Only
+use it on a network where everyone is trusted. Grains are told apart by port:
+browsers keep their storage and scripts apart (separate origins), but share
+cookies across ports, so a grain can read and set another grain's cookies.
+The grain proxy still refuses cross-origin writes, and the shell API still
+refuses requests from other origins, including grains.
+
 ## Sign-in (Hamstr accounts)
 
 Sites that declare `auth` in `celld.json` get a verified identity from the

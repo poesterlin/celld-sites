@@ -1,0 +1,17 @@
+# HAMSTR_AUTH=none (home mode): plain HTTP on HTTP_PORT, every hostname is the
+# shell. Grains have ports of their own, served by Hamstr itself.
+{
+	admin off
+	auto_https off
+	persist_config off
+	storage file_system /data/caddy
+}
+
+http://127.0.0.1:{$HEALTH_PORT} {
+	bind 127.0.0.1
+	respond 200
+}
+
+http://:{$HTTP_PORT} {
+	reverse_proxy 127.0.0.1:{$HAMSTR_PORT}
+}

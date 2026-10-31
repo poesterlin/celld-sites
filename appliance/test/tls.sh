@@ -16,7 +16,7 @@ RUN=appliance-tls-$$
 WORK=$(mktemp -d)
 cleanup() {
 	[ -n "${KEEP:-}" ] && return
-	docker rm -f "$RUN" "$RUN-server" "$RUN-pebble" >/dev/null 2>&1 || true
+	docker rm -fv "$RUN" "$RUN-server" "$RUN-pebble" >/dev/null 2>&1 || true
 	docker volume rm "$RUN-data" >/dev/null 2>&1 || true
 	docker image rm "$RUN-server" >/dev/null 2>&1 || true
 	rm -rf "$WORK"

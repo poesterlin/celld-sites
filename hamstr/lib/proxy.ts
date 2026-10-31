@@ -9,8 +9,19 @@ const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "p
 
 const text = (status, body) => new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 
-function grainNotice(core, status, grain, message) {
-	const target = `${core.shellOrigin}/g/${grain.id}`;
+/** The shell's origin as this grain request's browser sees it. In home mode the
+ *  shell is the same host on the public port. */
+function shellOriginFor(core, event) {
+	if (!core.home) return core.shellOrigin;
+	const hostname = String(event.locals.browserHost ?? "").replace(/:\d+$/, "");
+	return `http://${hostname}${core.config.publicPort ? `:${core.config.publicPort}` : ""}`;
+}
+
+/** The grain's own origin. In home mode, the host and port the browser used. */
+const grainOriginFor = (core, event, grain) => (core.home ? `http://${event.locals.browserHost}` : core.grainOrigin(grain.id));
+
+function grainNotice(core, status, grain, message, shellOrigin = core.shellOrigin) {
+	const target = `${shellOrigin}/g/${grain.id}`;
 	return new Response(
 		`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${core.NAME}</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#18181b;background:#f4f4f6}
@@ -21,7 +32,7 @@ a{color:#5452e8}@media(prefers-color-scheme:dark){body{color:#f4f4f6;background:
 			headers: {
 				"content-type": "text/html; charset=utf-8",
 				"cache-control": "no-store",
-				"content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors ${core.shellOrigin}`,
+				"content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors ${shellOrigin}`,
 				"x-content-type-options": "nosniff",
 			},
 		},
@@ -33,8 +44,9 @@ export async function grainRequest(event: any, grainId: string): Promise<Respons
 	const request = event.request;
 	const grain = core.q.grain.get(grainId);
 	if (!grain || grain.trashed_at) return text(404, "No such grain\n");
+	const shellOrigin = shellOriginFor(core, event);
 	// Mid-restore the data is half old, half new: nobody gets to see or change it.
-	if (core.isRestoring(grain.id)) return grainNotice(core, 503, grain, "This item is being restored from a backup. Reload in a moment.");
+	if (core.isRestoring(grain.id)) return grainNotice(core, 503, grain, "This item is being restored from a backup. Reload in a moment.", shellOrigin);
 
 	const rawPath = event.url.pathname + event.url.search;
 	const pathname = event.url.pathname;
@@ -44,7 +56,7 @@ export async function grainRequest(event: any, grainId: string): Promise<Respons
 	if (pathname === "/.hamstr/enter") {
 		const value = event.url.searchParams.get("ticket") ?? "";
 		const ticket = core.db.prepare("DELETE FROM tickets WHERE hash = ? RETURNING *").get(core.sha256(value));
-		if (!ticket || ticket.grain_id !== grain.id || ticket.expires_at < Date.now()) return grainNotice(core, 403, grain, "This link to the grain has expired.");
+		if (!ticket || ticket.grain_id !== grain.id || ticket.expires_at < Date.now()) return grainNotice(core, 403, grain, "This link to the grain has expired.", shellOrigin);
 		const sessionValue = core.token(32);
 		core.db
 			.prepare(
@@ -77,7 +89,7 @@ export async function grainRequest(event: any, grainId: string): Promise<Respons
 	const unsafe = !["GET", "HEAD", "OPTIONS"].includes(request.method);
 	if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none" && !navigate) return text(403, "cross-origin request refused\n");
 	if (unsafe) {
-		const ok = fetchSite !== null ? fetchSite === "same-origin" : request.headers.get("origin") === null || request.headers.get("origin") === core.grainOrigin(grain.id);
+		const ok = fetchSite !== null ? fetchSite === "same-origin" : request.headers.get("origin") === null || request.headers.get("origin") === grainOriginFor(core, event, grain);
 		if (!ok) return text(403, "cross-origin request refused\n");
 	}
 
@@ -90,7 +102,7 @@ export async function grainRequest(event: any, grainId: string): Promise<Respons
 				headers: { location: `${core.shellOrigin}/g/${grain.id}/open?path=${encodeURIComponent(safePath(rawPath))}`, "cache-control": "no-store" },
 			});
 		}
-		if (navigate) return grainNotice(core, 401, grain, "Your session for this grain ended.");
+		if (navigate) return grainNotice(core, 401, grain, "Your session for this grain ended.", shellOrigin);
 		return text(401, "sign in to this grain first\n");
 	}
 
@@ -141,7 +153,7 @@ export async function grainRequest(event: any, grainId: string): Promise<Respons
 				out.set(key, String(value));
 			}
 			const policy = out.get("content-security-policy");
-			out.set("content-security-policy", [...(policy === null ? [] : [policy]), `frame-ancestors ${core.shellOrigin}`].join(", "));
+			out.set("content-security-policy", [...(policy === null ? [] : [policy]), `frame-ancestors ${shellOrigin}`].join(", "));
 			out.set("x-robots-tag", "noindex");
 			const status = up.statusCode ?? 502;
 			// 101/204/205/304 must not carry a body: `new Response` throws for one,

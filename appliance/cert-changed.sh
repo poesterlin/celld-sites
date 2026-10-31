@@ -4,6 +4,7 @@
 # again): Hamstr and Caddy were started for the old one, so restart everything.
 set -eu
 . /tmp/caddy.env
+. /app/ports.env
 if [ "$(cat /data/tls/hostname)" != "$TLS_HOSTNAME" ]; then
 	echo "appliance: hostname changed to $(cat /data/tls/hostname); restarting" >&2
 	kill -USR1 "$(cat /tmp/supervisor.pid)"

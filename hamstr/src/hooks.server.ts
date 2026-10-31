@@ -37,7 +37,8 @@ export async function handle({ event, resolve }) {
 		.replace(/:\d+$/, "");
 	const grain = c.grainPattern.exec(host);
 	if (grain) return grainRequest(event, grain[1]);
-	if (host !== c.config.shellHost) {
+	// Home mode: the shell answers on any hostname (an IP, homeassistant.local…).
+	if (host !== c.config.shellHost && !c.home) {
 		if (event.url.pathname === "/api/health") return json(c, 200, { ok: true });
 		return new Response("unknown host\n", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
 	}

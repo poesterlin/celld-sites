@@ -1,7 +1,7 @@
 # The Hamstr add-on: the appliance image (appliance/), settings from the
 # options below. Bump `version` to a released image tag (git tag vX.Y.Z).
 name: Hamstr
-version: "0.2.0"
+version: "0.3.0"
 slug: hamstr
 description: Little web apps in one click, with your data at home
 url: https://github.com/poesterlin/celld-sites
@@ -14,22 +14,18 @@ boot: auto
 init: true
 # celld drains for about 15 s when it stops.
 timeout: 60
+# Home mode opens a port per grain (20000 and up) as grains are made, so the
+# add-on shares the host's network instead of mapping fixed ports.
+host_network: true
 ports:
-  8443/tcp: 443
-  8000/tcp: 80
-ports_description:
-  8443/tcp: HTTPS
-  8000/tcp: HTTP (redirects to HTTPS)
+  8000/tcp: 8000
+webui: http://[HOST]:[PORT:8000]/
 options:
-  tls_mode: domain
-  domain: ""
-  dns_provider: ""
+  auth: none
+  tls_mode: "off"
   env: []
-  oidc_name: Tailscale
-  oidc_issuer: ""
-  oidc_client_id: ""
-  oidc_client_secret: ""
 schema:
+  auth: list(none|required)
   tls_mode: list(off|names|domain)
   domain: str?
   dns_provider: str?

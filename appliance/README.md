@@ -53,6 +53,9 @@ Release: tag `vX.Y.Z`, then set `version` in `ha-addon/config.yaml` to it.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `HAMSTR_AUTH` | `required` | `none`: home mode (below) |
+| `HAMSTR_GRAIN_PORTS` | `20000-20999` | Home mode: the ports grains get |
+| `HTTP_PORT`, `HTTPS_PORT` | `8000`, `8443` | The only ports open outside. Everything else is on loopback, ports 47101-47181 |
 | `TLS_MODE` | `off` | `off`: HTTP on :8000, for a proxy in front that terminates TLS. `names`: a name from a Hamstr names service (`NAME_SERVICE_URL`). `domain`: your own domain at a DNS provider |
 | `NAME_SERVICE_URL` | — | `names` mode: the names service ([names/README.md](../names/README.md); not deployed publicly yet, so this is your own for now) |
 | `DOMAIN`, `DNS_PROVIDER` + the provider's variables | — | `domain` mode: lego's DNS-01 provider (`lego dnshelp`), and a `*.DOMAIN` record pointing at this host |
@@ -68,6 +71,21 @@ With TLS, the install's name is the shell (`https://k3x9.hamstr.app`), grains
 are `grain-<id>.k3x9.hamstr.app`, and any other name below it is a celld site.
 A renewal reloads Caddy; a new name (after the names service released the old
 one) restarts the container, since Hamstr was started for the old one.
+
+### Home mode
+
+`HAMSTR_AUTH=none` needs no settings at all:
+
+- No sign-in: every visitor is the owner. Use it on a network you trust.
+- Plain HTTP on `HTTP_PORT`, on any hostname (an IP, `homeassistant.local`).
+  `TLS_MODE` is ignored.
+- Each grain gets a port of its own (`HAMSTR_GRAIN_PORTS`), opened when the
+  grain is first opened. A separate port is a separate origin, so grains stay
+  isolated from each other and from the shell without hostnames. They are not
+  isolated in cookies, which browsers share across ports; apps get their
+  identity from Hamstr, not from cookies.
+- Publish the grain ports, or use the host's network (`--network host`, which
+  the Home Assistant add-on does).
 
 ### Tailscale
 

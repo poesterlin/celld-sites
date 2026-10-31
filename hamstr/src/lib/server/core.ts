@@ -108,6 +108,11 @@ export interface CoreOptions {
 	/** Before accounts: who was an admin (HAMSTR_ADMINS). Only read to import existing people. */
 	admins?: string[];
 	grainCookieMode?: string;
+	/** "none": home mode. No sign-in: every request is the owner, and each grain
+	 *  gets its own port (grainPorts) instead of its own hostname. */
+	auth?: string;
+	/** Home mode: the port range for grains, e.g. "20000-20999". */
+	grainPorts?: string;
 	sitesApi?: string;
 	logging?: boolean;
 }
@@ -139,8 +144,17 @@ export function createCore(options: CoreOptions = {}) {
 		authKey: options.authKey ?? env.AUTH_KEY ?? "",
 		ntfy: options.ntfy ?? env.NTFY_URL ?? "",
 		admins: options.admins ?? list(env.HAMSTR_ADMINS),
+		auth: String(options.auth ?? env.HAMSTR_AUTH ?? "required"),
+		grainPorts: String(options.grainPorts ?? env.HAMSTR_GRAIN_PORTS ?? "20000-20999"),
 		logging: options.logging !== false,
 	};
+	if (!["required", "none"].includes(config.auth)) throw new Error('HAMSTR_AUTH must be "required" or "none"');
+	const home = config.auth === "none";
+	const portRange = /^(\d+)-(\d+)$/.exec(config.grainPorts);
+	if (!portRange || Number(portRange[1]) < 1024 || Number(portRange[2]) > 65535 || Number(portRange[1]) > Number(portRange[2])) {
+		throw new Error('HAMSTR_GRAIN_PORTS must be a range like "20000-20999"');
+	}
+	const [firstPort, lastPort] = [Number(portRange[1]), Number(portRange[2])];
 	for (const [key, value] of [
 		["ADMIN_TOKEN", config.adminToken],
 		["PROXY_TOKEN", config.proxyToken],
@@ -201,6 +215,8 @@ export function createCore(options: CoreOptions = {}) {
 		CREATE TABLE IF NOT EXISTS tickets (
 			hash TEXT PRIMARY KEY, grain_id TEXT NOT NULL, user_id TEXT, parent TEXT,
 			path TEXT NOT NULL, expires_at INTEGER NOT NULL);
+		CREATE TABLE IF NOT EXISTS grain_ports (
+			grain_id TEXT PRIMARY KEY REFERENCES grains(id) ON DELETE CASCADE, port INTEGER UNIQUE NOT NULL);
 		CREATE TABLE IF NOT EXISTS grain_sessions (
 			hash TEXT PRIMARY KEY, grain_id TEXT NOT NULL REFERENCES grains(id) ON DELETE CASCADE,
 			user_id TEXT, parent TEXT, public_id TEXT NOT NULL,
@@ -298,11 +314,18 @@ export function createCore(options: CoreOptions = {}) {
 	/** The signed-in person for a shell request. The session is an accounts
 	 *  session; the users row here follows the account (name, email). */
 	function sessionFor(request) {
+		if (home) return homeSession();
 		const value = parseCookies(request.headers.get("cookie"))[SHELL_COOKIE];
 		if (!value || value.length > 200) return null;
 		const found = accounts.sessionUser(value);
 		if (!found) return null;
-		const a = found.user;
+		return sessionOf(found.user, found.sessionId, value);
+	}
+	/** Home mode: every request is the owner, with no cookie and no session row. */
+	function homeSession() {
+		return sessionOf(accounts.homeOwner(), "home", "");
+	}
+	function sessionOf(a, sessionId, value) {
 		const login = accounts.person(a.id).identities[0]?.label ?? null;
 		const row = q.user.get(a.id);
 		if (!row) {
@@ -310,7 +333,7 @@ export function createCore(options: CoreOptions = {}) {
 		} else if (row.name !== a.name || row.email !== a.email || Date.parse(String(row.seen_at)) < Date.now() - 60_000) {
 			db.prepare("UPDATE users SET name = ?, email = ?, seen_at = ? WHERE id = ?").run(a.name, a.email, now(), a.id);
 		}
-		return { hash: found.sessionId, token: value, user: { id: a.id, name: a.name, email: a.email, login, role: a.role } };
+		return { hash: sessionId, token: value, user: { id: a.id, name: a.name, email: a.email, login, role: a.role } };
 	}
 	const sessionCookie = (value: string, maxAge: number) => `${SHELL_COOKIE}=${value}; ${cookieAttrs}; Max-Age=${maxAge}`;
 
@@ -631,6 +654,7 @@ export function createCore(options: CoreOptions = {}) {
 	async function purgeGrain(grain) {
 		await celld.deleteSite(grainHost(grain.id));
 		db.prepare("DELETE FROM grains WHERE id = ?").run(grain.id);
+		portHooks.close(grain.id);
 	}
 
 	/** What uninstalling an app would delete, as seen by `user`. */
@@ -668,7 +692,31 @@ export function createCore(options: CoreOptions = {}) {
 	}
 
 	// --- tickets and grain sessions ----------------------------------------------------
-	function issueTicket(grain, { userId, parent = null, path = "/" }) {
+	/** Home mode: the grain's port, given out on first use and kept. */
+	function grainPort(id) {
+		const row = db.prepare("SELECT port FROM grain_ports WHERE grain_id = ?").get(id);
+		if (row) return Number(row.port);
+		const taken = new Set(db.prepare("SELECT port FROM grain_ports").all().map((r) => Number(r.port)));
+		let port = firstPort;
+		while (taken.has(port)) port++;
+		if (port > lastPort) throw new HttpError(503, `all ${lastPort - firstPort + 1} grain ports (${config.grainPorts}) are in use`);
+		db.prepare("INSERT INTO grain_ports (grain_id, port) VALUES (?, ?)").run(id, port);
+		portHooks.open(id, port);
+		return port;
+	}
+	/** server.ts listens on grain ports; it sets these once it runs. */
+	const portHooks = { open: (_id: string, _port: number) => {}, close: (_id: string) => {} };
+	const grainPorts = () => db.prepare("SELECT grain_id AS id, port FROM grain_ports").all().map((r) => ({ id: String(r.id), port: Number(r.port) }));
+
+	/** Where the browser opens a grain. Normally a one-time ticket on the grain's
+	 *  hostname; in home mode the grain's port on the hostname the browser used
+	 *  for the shell (`host`), with no handshake: nobody signs in. */
+	function issueTicket(grain, { userId, parent = null, path = "/", host = "" }) {
+		if (home) {
+			db.prepare("UPDATE grains SET opened_at = ? WHERE id = ?").run(now(), grain.id);
+			const hostname = String(host).replace(/:\d+$/, "") || "localhost";
+			return `http://${hostname}:${grainPort(grain.id)}${safePath(path)}`;
+		}
 		const value = token();
 		db.prepare("INSERT INTO tickets (hash, grain_id, user_id, parent, path, expires_at) VALUES (?, ?, ?, ?, ?, ?)").run(
 			sha256(value),
@@ -685,6 +733,12 @@ export function createCore(options: CoreOptions = {}) {
 	/** The visitor behind a grain request, or null. Re-checked on every request,
 	 *  so revoking a link, trashing a grain or signing out takes effect at once. */
 	function grainVisitor(request, grain) {
+		if (home) {
+			// Everyone who reaches the grain's port is its owner.
+			const access = accessFor(grain, { userId: grain.owner_id });
+			if (!access) return null;
+			return { gs: { public_id: createHmac("sha256", config.secret).update(`home:${grain.id}`).digest("hex").slice(0, 16) }, access, user: q.user.get(grain.owner_id) };
+		}
 		const value = parseCookies(request.headers.get("cookie"))[GRAIN_COOKIE];
 		if (!value || value.length > 200) return null;
 		const gs = db.prepare("SELECT * FROM grain_sessions WHERE hash = ? AND expires_at > ?").get(sha256(value), Date.now());
@@ -729,7 +783,11 @@ export function createCore(options: CoreOptions = {}) {
 		grainHost,
 		grainOrigin,
 		grainPattern,
-		grainSources: `${config.scheme}://*.${config.grainDomain}${portSuffix}`,
+		// Home mode: grains are other ports of whatever host the browser uses.
+		grainSources: home ? "http:" : `${config.scheme}://*.${config.grainDomain}${portSuffix}`,
+		home,
+		grainPorts,
+		portHooks,
 		SHELL_COOKIE,
 		GRAIN_COOKIE,
 		cookieAttrs,

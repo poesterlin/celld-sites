@@ -4,5 +4,6 @@
 set -a
 . /data/secrets.env
 set +a
-export ADMIN_HOST="${ADMIN_HOST:-admin.internal}"
+. /app/ports.env
+export ADMIN_HOST="${ADMIN_HOST:-admin.internal}" CELLD_ADMIN_API="http://127.0.0.1:$CELLD_PORT"
 exec "$@"

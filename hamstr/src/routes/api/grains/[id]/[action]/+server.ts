@@ -13,7 +13,7 @@ export const POST = guard(async (event) => {
 	if (action === "open") {
 		if (!access) return json(c, 404, { error: "no such grain" });
 		const body = await readJson(event.request);
-		return json(c, 200, { url: c.issueTicket(grain, { userId: me.id, parent: event.locals.session.hash, path: body.path }) });
+		return json(c, 200, { url: c.issueTicket(grain, { userId: me.id, parent: event.locals.session.hash, path: body.path, host: event.request.headers.get("host") }) });
 	}
 	if (!owner) return json(c, grain.trashed_at || !access ? 404 : 403, { error: "only the owner can do that" });
 

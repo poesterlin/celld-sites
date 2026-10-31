@@ -5,6 +5,7 @@
 # Home Assistant's watchdog) restarts it as a whole.
 set -euo pipefail
 log() { echo "appliance: $*" >&2; }
+. /app/ports.env
 umask 077
 echo $$ > /tmp/supervisor.pid
 mkdir -p /data/s3 /data/celld /data/hamstr /data/caddy
@@ -28,6 +29,22 @@ set -a; . /data/secrets.env; set +a
 
 export ADMIN_HOST="${ADMIN_HOST:-admin.internal}"
 TLS_MODE="${TLS_MODE:-off}"
+# Home mode: no sign-in, plain HTTP, a port per grain. Hostnames are only used
+# inside the container then; the browser reaches the shell on any name.
+HAMSTR_AUTH="${HAMSTR_AUTH:-required}"
+case "$HAMSTR_AUTH" in
+required) ;;
+none)
+	if [ "$TLS_MODE" != off ]; then
+		log "home mode is plain HTTP: ignoring TLS_MODE=$TLS_MODE (set HAMSTR_AUTH=required for sign-in and HTTPS)"
+		TLS_MODE=off
+	fi
+	export HAMSTR_AUTH HAMSTR_HOST="${HAMSTR_HOST:-hamstr.internal}" HAMSTR_GRAIN_DOMAIN="${HAMSTR_GRAIN_DOMAIN:-grains.internal}"
+	export HAMSTR_SCHEME=http HAMSTR_PUBLIC_PORT="$HTTP_PORT" HAMSTR_GRAIN_PORTS="${HAMSTR_GRAIN_PORTS:-20000-20999}"
+	log "home mode: no sign-in. Anyone who can reach port $HTTP_PORT is the owner."
+	;;
+*) log "HAMSTR_AUTH must be required or none"; exit 1 ;;
+esac
 case "$TLS_MODE" in
 off) ;;
 names) export HOSTNAME_MODE=service ;;
@@ -53,7 +70,7 @@ trap 'stop; exit 0' TERM INT
 trap 'stop; exit 75' USR1
 
 ROOT_ACCESS_KEY_ID=$S3_ACCESS_KEY ROOT_SECRET_ACCESS_KEY=$S3_SECRET_KEY VGW_FSYNC="${S3_FSYNC:-true}" \
-	versitygw --quiet --port 127.0.0.1:7070 posix /data/s3 &
+	versitygw --quiet --port "127.0.0.1:$S3_PORT" posix /data/s3 &
 pid_s3=$!; pids+=("$pid_s3")
 
 # --- Certificate (TLS_MODE names / domain) ------------------------------------
@@ -98,7 +115,8 @@ export HAMSTR_SCHEME="${HAMSTR_SCHEME:-https}"
 case "$HAMSTR_HOST" in "$ADMIN_HOST") log "HAMSTR_HOST must not be $ADMIN_HOST"; exit 1 ;; esac
 
 # --- celld node -------------------------------------------------------------
-CELLD_BUCKET=s3://celld S3_ENDPOINT=http://127.0.0.1:7070 AWS_REGION=us-east-1 \
+CELLD_BUCKET=s3://celld S3_ENDPOINT="http://127.0.0.1:$S3_PORT" AWS_REGION=us-east-1 \
+	CELLD_LISTEN="127.0.0.1:$CELLD_PORT" CELLD_INTERNAL_LISTEN="127.0.0.1:$CELLD_INTERNAL_PORT" \
 	AWS_ACCESS_KEY_ID=$S3_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$S3_SECRET_KEY \
 	AUTH_URL="${AUTH_URL:-$HAMSTR_SCHEME://$HAMSTR_HOST/auth}" \
 	SITE_MAX_INFLIGHT="${SITE_MAX_INFLIGHT:-128}" SITE_MAX_OBJECTS="${SITE_MAX_OBJECTS:-1000}" \
@@ -108,22 +126,24 @@ CELLD_BUCKET=s3://celld S3_ENDPOINT=http://127.0.0.1:7070 AWS_REGION=us-east-1 \
 	/app/entrypoint.sh &
 pid_celld=$!; pids+=("$pid_celld")
 
-until curl -fsS -o /dev/null http://127.0.0.1:8080/.well-known/celld/health 2>/dev/null; do
+until curl -fsS -o /dev/null "http://127.0.0.1:$CELLD_PORT/.well-known/celld/health" 2>/dev/null; do
 	kill -0 "$pid_celld" 2>/dev/null || { log "celld exited during start"; stop; exit 1; }
 	sleep 1
 done
 log "celld is up"
 
 # --- Hamstr, Caddy, renewals ------------------------------------------------------
-(cd /app && PORT=3000 HOST=127.0.0.1 HAMSTR_DATA=/data/hamstr \
-	CELLD_ADMIN_API=http://127.0.0.1:8080 \
+(cd /app && PORT=$HAMSTR_PORT HOST=127.0.0.1 HAMSTR_DATA=/data/hamstr \
+	CELLD_ADMIN_API="http://127.0.0.1:$CELLD_PORT" \
 	exec node hamstr/server.ts) &
 pid_hamstr=$!; pids+=("$pid_hamstr")
 
 # What the Caddyfiles read, also for cert-changed.sh's reload.
 printf 'export ADMIN_HOST=%q HAMSTR_HOST=%q HAMSTR_GRAIN_DOMAIN=%q TLS_HOSTNAME=%q\n' \
 	"$ADMIN_HOST" "$HAMSTR_HOST" "$HAMSTR_GRAIN_DOMAIN" "${TLS_HOSTNAME:-}" > /tmp/caddy.env
-if [ "$TLS_MODE" = off ]; then
+if [ "$HAMSTR_AUTH" = none ]; then
+	caddy run --config /app/caddy/home.caddy --adapter caddyfile &
+elif [ "$TLS_MODE" = off ]; then
 	caddy run --config /app/caddy/http.caddy --adapter caddyfile &
 else
 	caddy run --config /app/caddy/tls.caddy --adapter caddyfile &

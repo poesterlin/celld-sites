@@ -1,16 +1,16 @@
-# TLS_MODE=names or domain: HTTPS on :8443 with the wildcard certificate the
-# names agent keeps in /data/tls; :8000 redirects to it. The admin API is a
+# TLS_MODE=names or domain: HTTPS on HTTPS_PORT with the wildcard certificate
+# the names agent keeps in /data/tls; HTTP_PORT redirects to it. The admin API is a
 # socket in /tmp, only for `caddy reload` after a renewal (cert-changed.sh).
 {
 	admin unix//tmp/caddy-admin.sock
 	persist_config off
 	storage file_system /data/caddy
-	http_port 8000
-	https_port 8443
+	http_port {$HTTP_PORT}
+	https_port {$HTTPS_PORT}
 	auto_https disable_certs
 }
 
-http://127.0.0.1:8001 {
+http://127.0.0.1:{$HEALTH_PORT} {
 	bind 127.0.0.1
 	respond 200
 }

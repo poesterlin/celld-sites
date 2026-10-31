@@ -124,6 +124,12 @@ See `store/test/fixtures/pinboard` for a complete app that uses all of this.
 
 ## Running it
 
+For a single trusted network there is also **home mode** (`HAMSTR_AUTH=none`):
+no sign-in, every visitor is the owner, and each grain is served on a port of
+its own (`HAMSTR_GRAIN_PORTS`) instead of a hostname. The appliance and the
+Home Assistant add-on use it by default; see
+[appliance/README.md](../appliance/README.md#home-mode).
+
 Hamstr is a compose service behind the `hamstr` profile, LAN-only (it holds
 `ADMIN_TOKEN`). Setup:
 

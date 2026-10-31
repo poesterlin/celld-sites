@@ -11,6 +11,6 @@ respond @admin 404
 	host *.{$HAMSTR_GRAIN_DOMAIN}
 	header_regexp Host ^grain-
 }
-reverse_proxy @hamstr 127.0.0.1:3000
-reverse_proxy @grains 127.0.0.1:3000
-reverse_proxy 127.0.0.1:8080
+reverse_proxy @hamstr 127.0.0.1:{$HAMSTR_PORT}
+reverse_proxy @grains 127.0.0.1:{$HAMSTR_PORT}
+reverse_proxy 127.0.0.1:{$CELLD_PORT}

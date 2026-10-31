@@ -18,6 +18,7 @@ const { Browser, mockIdp } = await import(`${REPO}/hamstr/test/helpers.ts`);
 const { createStore } = await import(`${REPO}/store/server.ts`);
 
 const GW = "172.17.0.1", PORT = 18080, NAME = "appliance-test", VOL = "appliance-test-data";
+const HOME = "appliance-home", HOME_VOL = "appliance-home-data", HOME_PORT = 18000;
 const SHELL = "hamstr.test", host = (id) => `grain-${id}.grains.test`;
 const ORIGIN = { origin: `http://${SHELL}` };
 const FORM = { "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate" };
@@ -25,7 +26,7 @@ const dir = mkdtempSync(join(tmpdir(), "appliance-e2e-"));
 const sh = (cmd, args, input?) => execFileSync(cmd, args, { input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
 const forward = (from, to, bind = GW) => new Promise<any>((r) => { const s = createServer((c) => { const u = connect(to, "127.0.0.1"); c.pipe(u).pipe(c); c.on("error", () => u.destroy()); u.on("error", () => c.destroy()); }); s.listen(from, bind, () => r(s)); });
 const ms = (t) => `${Math.round(performance.now() - t)} ms`;
-const waitHealthy = async () => { const t = performance.now(); for (;;) { const s = sh("docker", ["inspect", "-f", "{{.State.Health.Status}}", NAME]).trim(); if (s === "healthy") return ms(t); if (performance.now() - t > 180000) throw new Error(`not healthy: ${s}\n${sh("docker", ["logs", "--tail", "40", NAME])}`); await new Promise((r) => setTimeout(r, 500)); } };
+const waitHealthy = async (name = NAME) => { const t = performance.now(); for (;;) { const s = sh("docker", ["inspect", "-f", "{{.State.Health.Status}}", name]).trim(); if (s === "healthy") return ms(t); if (performance.now() - t > 180000) throw new Error(`not healthy: ${s}\n${sh("docker", ["logs", "--tail", "40", name])}`); await new Promise((r) => setTimeout(r, 500)); } };
 
 const idp = await mockIdp();
 const idpFwd = await forward(18091, Number(new URL(idp.issuer).port));
@@ -47,8 +48,10 @@ try {
 	});
 	console.log("published pinboard to a local store");
 
-	sh("docker", ["rm", "-f", NAME]);
-	try { sh("docker", ["volume", "rm", VOL]); } catch {}
+	for (const [name, vol] of [[NAME, VOL], [HOME, HOME_VOL]]) {
+		try { sh("docker", ["rm", "-f", name]); } catch {}
+		try { sh("docker", ["volume", "rm", vol]); } catch {}
+	}
 	let t = performance.now();
 	sh("docker", ["run", "-d", "--name", NAME, "--init", "-p", `127.0.0.1:${PORT}:8000`, "-v", `${VOL}:/data`,
 		"-e", `HAMSTR_HOST=${SHELL}`, "-e", "HAMSTR_GRAIN_DOMAIN=grains.test", "-e", "HAMSTR_SCHEME=http",
@@ -92,7 +95,7 @@ try {
 	const anon = new Browser(PORT);
 	assert.equal((await anon.request("GET", "/__admin/overview", { host: "admin.internal" })).status, 404);
 	assert.equal((await anon.request("GET", "/", { host: host(board.id) })).status, 401);
-	const direct = sh("docker", ["exec", NAME, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-H", `Host: ${host(board.id)}`, "http://127.0.0.1:8080/"]);
+	const direct = sh("docker", ["exec", NAME, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-H", `Host: ${host(board.id)}`, "http://127.0.0.1:47180/"]);
 	assert.equal(direct, "404", "celld answers a grain only with the proxy token");
 	const eve = await signIn({ sub: "u-eve", email: "eve@example.com", name: "Eve" });
 	assert.notEqual((await eve.request("GET", "/", { host: host(board.id) })).status, 200);
@@ -129,9 +132,32 @@ try {
 	while (sh("docker", ["inspect", "-f", "{{.RestartCount}}", NAME]).trim() === "0") { assert.ok(performance.now() - t < 90000, "container did not restart"); await new Promise((r) => setTimeout(r, 200)); }
 	console.log(`killed Hamstr: container went down and Docker restarted it after ${ms(t)}; healthy again ${await waitHealthy()} later`);
 	assert.match((await ada.request("GET", "/", { host: host(board.id) })).text, /Buy oat milk/);
+
+	// Home mode: no sign-in, a port per grain, nothing else configured.
+	t = performance.now();
+	sh("docker", ["run", "-d", "--name", HOME, "--init", "-p", `127.0.0.1:${HOME_PORT}:8000`, "-p", "127.0.0.1:20000-20002:20000-20002", "-v", `${HOME_VOL}:/data`,
+		"-e", "HAMSTR_AUTH=none", "-e", "HAMSTR_GRAIN_PORTS=20000-20002", "-e", `HAMSTR_STORE=http://${GW}:18092`, IMAGE]);
+	console.log(`home mode: healthy in ${await waitHealthy(HOME)}`);
+	const visitor = new Browser(HOME_PORT);
+	const shellHost = `127.0.0.1:${HOME_PORT}`;
+	const homeApi = (method, path, json?) => visitor.request(method, path, { host: shellHost, headers: { origin: `http://${shellHost}`, "sec-fetch-site": "same-origin" }, ...(json !== undefined && { json }) });
+	assert.equal((await visitor.request("GET", "/", { host: shellHost })).status, 200, "the shell opens without signing in");
+	assert.equal((await homeApi("POST", "/api/apps", { slug: "pinboard" })).status, 200);
+	const homeBoard = (await homeApi("POST", "/api/grains", { slug: "pinboard", title: "Kitchen" })).json.grain;
+	const url = (await homeApi("POST", `/api/grains/${homeBoard.id}/open`, { path: "/" })).json.url;
+	assert.equal(url, "http://127.0.0.1:20000/");
+	const grain = new Browser(20000);
+	const grainHeaders = { ...FORM, origin: "http://127.0.0.1:20000" };
+	assert.equal((await grain.request("POST", "/pin", { host: "127.0.0.1:20000", headers: grainHeaders, body: "text=From+home+mode&color=sun" })).status, 303);
+	const homeWho = (await grain.request("GET", "/whoami", { host: "127.0.0.1:20000" })).json;
+	assert.deepEqual([homeWho.name, homeWho.role], ["Owner", "owner"]);
+	sh("docker", ["restart", "-t", "60", HOME]);
+	await waitHealthy(HOME);
+	assert.match((await new Browser(20000).request("GET", "/", { host: "127.0.0.1:20000" })).text, /From home mode/, "the grain's port and data survive a restart");
+	console.log(`home mode: shell without sign-in, pinboard installed, grain on port 20000 as the owner, data kept across a restart (${ms(t)})`);
 	console.log("appliance e2e OK");
 } finally {
-	if (!process.env.KEEP) try { sh("docker", ["rm", "-f", NAME]); sh("docker", ["volume", "rm", VOL]); } catch {}
+	if (!process.env.KEEP) for (const [name, vol] of [[NAME, VOL], [HOME, HOME_VOL]]) try { sh("docker", ["rm", "-f", name]); sh("docker", ["volume", "rm", vol]); } catch {}
 	idpFwd.close(); idpLocal.close(); storeFwd.close();
 	await store.close(); await idp.close();
 	rmSync(dir, { recursive: true, force: true });

@@ -16,7 +16,8 @@ export const GET = guard(async (event) => {
 	const location = c.issueTicket(grain, {
 		userId: event.locals.user.id,
 		parent: event.locals.session.hash,
-		path: event.url.searchParams.get("path") ?? "/"
+		path: event.url.searchParams.get("path") ?? "/",
+		host: event.request.headers.get("host")
 	});
 	return new Response(null, { status: 303, headers: { location, "cache-control": "no-store" } });
 });

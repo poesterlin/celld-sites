@@ -143,6 +143,16 @@ export function createCore(config: Config, deps: Deps = {}) {
 		return userById(userId)!;
 	}
 
+	/** Home mode (no sign-in): the person every request is. The earliest active
+	 *  owner, or a new one on a fresh install. */
+	function homeOwner(): Row {
+		const existing = one("SELECT * FROM users WHERE role = 'owner' AND status = 'active' ORDER BY created_at LIMIT 1");
+		if (existing) return existing;
+		const u = createUser({ name: "Owner" }, "owner", "active");
+		audit(null, "person.home-owner", u.id);
+		return u;
+	}
+
 	/** Changes that could lock everyone out are refused here. */
 	function guardLastOwner(userId: string, after: { role?: string; status?: string }) {
 		const u = userById(userId)!;
@@ -733,6 +743,7 @@ export function createCore(config: Config, deps: Deps = {}) {
 		passkeyRegisterOptions, passkeyRegister, passkeyLoginOptions, passkeyLogin, removePasskey, unlinkIdentity,
 		activity,
 		userById,
+		homeOwner,
 	};
 }
 

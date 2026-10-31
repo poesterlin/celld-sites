@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const options = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const map = {
+	auth: "HAMSTR_AUTH",
 	tls_mode: "TLS_MODE",
 	domain: "DOMAIN",
 	dns_provider: "DNS_PROVIDER",

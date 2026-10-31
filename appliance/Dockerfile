@@ -52,24 +52,21 @@ COPY --from=hamstr /src/hamstr/server.ts /src/hamstr/package.json /app/hamstr/
 COPY names/agent/agent.ts names/agent/package.json /app/names/
 COPY router /app/router
 COPY --chmod=755 node/entrypoint.sh node/push.sh node/admin.sh /app/
-COPY --chmod=755 appliance/run.sh appliance/start.sh appliance/with-env appliance/cert-changed.sh /app/
-COPY appliance/ha-options.mjs /app/
+COPY --chmod=755 appliance/run.sh appliance/start.sh appliance/with-env appliance/cert-changed.sh appliance/health.sh /app/
+COPY appliance/ha-options.mjs appliance/ports.env /app/
 COPY appliance/caddy /app/caddy
 ENV CELLD_ESBUILD=/usr/local/bin/esbuild \
     CELLD_WATCH=/data/celld \
     HOME=/tmp \
-    NODE_ENV=production \
-    CELLD_LISTEN=127.0.0.1:8080
+    NODE_ENV=production
 # Starts as root only to take over a root-owned /data (Home Assistant), then
 # runs everything as celld (run.sh). `--user 10001` skips that step.
 VOLUME /data
-# 8000 HTTP (redirects to HTTPS when TLS_MODE is set), 8443 HTTPS.
+# 8000 HTTP (redirects to HTTPS when TLS_MODE is set), 8443 HTTPS; in home
+# mode also a port per grain (HAMSTR_GRAIN_PORTS, default 20000-20999).
 EXPOSE 8000 8443
-# A loopback listener of Caddy's, so the check works in every TLS mode.
-HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 \
-  CMD curl -fsS -o /dev/null http://127.0.0.1:8080/.well-known/celld/health \
-   && curl -fsS -o /dev/null http://127.0.0.1:3000/api/health \
-   && curl -fsS -o /dev/null http://127.0.0.1:8001/
+# Includes a loopback listener of Caddy's, so the check works in every mode.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 CMD ["/app/health.sh"]
 # celld drains for about 15 s on stop: give `docker stop` 60 s (-t 60).
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/app/run.sh"]

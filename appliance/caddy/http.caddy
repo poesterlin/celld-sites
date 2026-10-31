@@ -1,4 +1,4 @@
-# TLS_MODE=off: plain HTTP on :8000, for a proxy in front that terminates TLS.
+# TLS_MODE=off: plain HTTP on HTTP_PORT, for a proxy in front that terminates TLS.
 {
 	admin off
 	auto_https off
@@ -6,11 +6,11 @@
 	storage file_system /data/caddy
 }
 
-http://127.0.0.1:8001 {
+http://127.0.0.1:{$HEALTH_PORT} {
 	bind 127.0.0.1
 	respond 200
 }
 
-http://:8000 {
+http://:{$HTTP_PORT} {
 	import /app/caddy/routes.caddy
 }

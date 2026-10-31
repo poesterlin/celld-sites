@@ -8,6 +8,8 @@
 // One process answers two kinds of hostname:
 //   HAMSTR_HOST            the shell: UI, JSON API, sign-in
 //   grain-<id>.<domain>    a grain: /.hamstr/enter, then everything is proxied
+// In home mode (HAMSTR_AUTH=none) the shell answers on any hostname, and each
+// grain has a port of its own instead (HAMSTR_GRAIN_PORTS) on every interface.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
@@ -39,7 +41,7 @@ function handler() {
 const HEALTH = '{"ok":true}';
 
 /** Answer one grain-host request with the proxy, bridging Node's streams. */
-async function serveGrain(core, grainId, req, res) {
+async function serveGrain(core, grainId, req, res, browserHost = "") {
 	const hasBody = req.method !== "GET" && req.method !== "HEAD";
 	const url = new URL(`${core.config.scheme}://${req.headers.host}${req.url ?? "/"}`);
 	const request = new Request(url, {
@@ -48,7 +50,7 @@ async function serveGrain(core, grainId, req, res) {
 		body: hasBody ? (Readable.toWeb(req) as any) : undefined,
 		duplex: "half"
 	} as any);
-	const response = await grainRequest({ request, url, locals: { core } }, grainId);
+	const response = await grainRequest({ request, url, locals: { core, browserHost } }, grainId);
 	const headers = {};
 	for (const [key, value] of response.headers) if (key !== "set-cookie") headers[key] = value;
 	const cookies = response.headers.getSetCookie();
@@ -61,9 +63,47 @@ async function serveGrain(core, grainId, req, res) {
 	}
 }
 
-export function createHamstr(options = {}) {
+/** A failed grain request: 502 if nothing was sent yet, else drop the connection. */
+const grainFailed = (res) => (err) => {
+	console.error("hamstr: grain request failed", err);
+	if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end("bad gateway\n");
+	else res.destroy();
+};
+
+/** Home mode: one listener per grain port. The port alone names the grain; the
+ *  browser's Host is kept for the grain's origin and the shell link. */
+function grainServers(core, listenHost) {
+	const servers = new Map();
+	function open(id, port) {
+		if (servers.has(id)) return;
+		const server = createServer((req, res) => {
+			const started = Date.now();
+			const browserHost = String(req.headers.host ?? "").toLowerCase();
+			req.headers.host = core.grainHost(id);
+			res.on("finish", () => {
+				if (core.config.logging) console.log(`${req.method} :${port}${(req.url ?? "/").split("?")[0]} ${res.statusCode} ${Date.now() - started}ms`);
+			});
+			runWithCore(core, () => serveGrain(core, id, req, res, browserHost)).catch(grainFailed(res));
+		});
+		server.headersTimeout = 15_000;
+		server.on("error", (err) => console.error(`hamstr: grain ${id} cannot listen on port ${port}: ${err.message}`));
+		server.listen(port, listenHost);
+		servers.set(id, server);
+	}
+	function close(id) {
+		const server = servers.get(id);
+		if (!server) return;
+		servers.delete(id);
+		server.closeAllConnections?.();
+		server.close();
+	}
+	return { open, close, closeAll: () => [...servers.keys()].forEach(close) };
+}
+
+export function createHamstr(options: any = {}) {
 	let core;
 	let server;
+	let grains;
 
 	// The core is built by the SvelteKit build's own module instance, after the
 	// handler has loaded, so routes and their errors share one set of classes.
@@ -116,11 +156,7 @@ export function createHamstr(options = {}) {
 				// (vite dev skips that check, so hooks handles grains there.)
 				const grain = core.grainPattern.exec(host);
 				if (grain) {
-					runWithCore(core, () => serveGrain(core, grain[1], req, res)).catch((err) => {
-						console.error("hamstr: grain request failed", err);
-						if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end("bad gateway\n");
-						else res.destroy();
-					});
+					runWithCore(core, () => serveGrain(core, grain[1], req, res)).catch(grainFailed(res));
 					return;
 				}
 
@@ -147,9 +183,16 @@ export function createHamstr(options = {}) {
 					resolvePromise();
 				});
 			});
+			if (core.home) {
+				grains = grainServers(core, options.grainListenHost ?? process.env.HAMSTR_GRAIN_LISTEN ?? "0.0.0.0");
+				core.portHooks.open = grains.open;
+				core.portHooks.close = grains.close;
+				for (const { id, port } of core.grainPorts()) grains.open(id, port);
+			}
 			return server.address() as AddressInfo;
 		},
 		async close() {
+			grains?.closeAll();
 			server?.closeAllConnections?.();
 			if (server) await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
 			await ready.catch(() => {});
@@ -163,7 +206,8 @@ if (isMain) {
 	const app = createHamstr();
 	const address = await app.listen();
 	const where = typeof address === "object" && address ? `${address.address}:${address.port}` : String(address);
-	console.log(`hamstr: http://${where} (shell ${app.config.shellHost}, grains ${app.config.grainPrefix}*.${app.config.grainDomain})`);
+	const grains = app.core.home ? `home mode: no sign-in, grains on ports ${app.config.grainPorts}` : `shell ${app.config.shellHost}, grains ${app.config.grainPrefix}*.${app.config.grainDomain}`;
+	console.log(`hamstr: http://${where} (${grains})`);
 	const stop = async (signal) => {
 		console.log(`hamstr: ${signal}, shutting down`);
 		await app.close();
