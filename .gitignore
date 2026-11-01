@@ -23,3 +23,5 @@ backups/
 # Store example apps live outside this repo
 /store/examples/
 secrets/
+# The operator's Impressum and Datenschutzerklärung (served by the store; see STORE_LEGAL_DIR).
+/legal/

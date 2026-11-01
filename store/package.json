@@ -8,9 +8,11 @@
 	},
 	"scripts": {
 		"start": "node server.ts",
-		"test": "node --test --test-concurrency=1 test/manifest.test.ts test/bundle.test.ts test/api.test.ts test/demo.test.ts"
+		"test": "node --test --test-concurrency=1 test/manifest.test.ts test/bundle.test.ts test/api.test.ts test/demo.test.ts test/moderation.test.ts"
 	},
 	"dependencies": {
+		"@electric-sql/pglite": "^0.5.14",
+		"pg": "^8.23.1",
 		"tar-stream": "^3.2.2"
 	},
 	"bin": {

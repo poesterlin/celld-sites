@@ -86,6 +86,16 @@ export function validateVersion(value) {
 	return value;
 }
 
+/** An app's address in a store: <publisher>/<app>, e.g. oesterlin/wichteln.
+ *  The publisher part is the account that publishes it. */
+export function validateAppRef(value) {
+	const [publisher, slug, ...rest] = String(value ?? "").split("/");
+	if (rest.length || !publisher || !slug || !PUBLISHER.test(publisher) || !SLUG.test(slug)) {
+		throw new ManifestError(`apps are named <publisher>/<app>, e.g. oesterlin/wichteln (got ${JSON.stringify(String(value ?? ""))})`);
+	}
+	return `${publisher}/${slug}`;
+}
+
 /** A hostname an app may fetch. The store rejects names a public app must never
  *  need (IP literals, single labels, internal suffixes, numeric TLDs); the
  *  installer shows the list and refuses to grant it without consent. */

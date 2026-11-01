@@ -184,7 +184,13 @@ services:
       CELLD_LTX_RETENTION_SECS: 1800
     volumes:
       - demo-state:/var/lib/celld
-    mem_limit: 2g
+    # Measured 2026-11-01: idle ~120 MiB, plus ~17 MiB per running and used demo
+    # (Excalidraw, the largest example, a little more). 6 GB holds the default
+    # 100 slots with room; celld sheds at 80%, and the store hides "Try it"
+    # while the node reports memory pressure. The CPU cap keeps a demo rush from
+    # starving the rest of the machine.
+    mem_limit: ${DEMO_MEM_LIMIT:-6g}
+    cpus: ${DEMO_CPUS:-4}
     stop_grace_period: 30s
     security_opt:
       - no-new-privileges:true
@@ -254,13 +260,51 @@ services:
       - 'traefik.http.routers.celld-sites-dashboard.rule=Host(`${DASHBOARD_HOST:?Set DASHBOARD_HOST in .env}`)'
       - 'traefik.http.services.celld-sites-dashboard.loadbalancer.server.port=3000'
 
+  # Postgres for the Hamstr Store and its moderation site: both read and write
+  # the same tables (see store/db.ts). Only on the project network; nothing
+  # outside the stack reaches it. Part of the store profile.
+  store-db:
+    profiles: ["store"]
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: store
+      POSTGRES_USER: store
+      POSTGRES_PASSWORD: ${STORE_DB_PASSWORD:?Set STORE_DB_PASSWORD in .env (openssl rand -hex 24)}
+    volumes:
+      - store-pg:/var/lib/postgresql/data
+    # The image's postgres user; it owns the data directory, so no capability
+    # is needed to start.
+    user: "70:70"
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:size=1m,uid=70,gid=70
+      - /tmp:size=64m
+    shm_size: 128m
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "store", "-d", "store"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    logging: *logging
+    networks:
+      - default
+
   # Hamstr Store: the hosted app catalog (see store/README.md). It is not part
   # of a personal Hamstr: personal nodes point HAMSTR_STORE at a store instead.
-  # It runs here because this host also operates the store, so it and its demo
-  # node are off unless COMPOSE_PROFILES includes "store". It holds metadata
-  # and packed bundles, never builds or runs app code, and has no access to the
-  # bucket or the celld admin API. LAN-only by default; making it public is a
-  # Cloudflare tunnel entry plus STORE_REQUIRE_REVIEW=1.
+  # It runs here because this host also operates the store, so it, its database,
+  # its moderation site and its demo node are off unless COMPOSE_PROFILES
+  # includes "store". It holds metadata and packed bundles, never builds or runs
+  # app code, and has no access to the bucket or the celld admin API. It has no
+  # admin endpoints: moderation is the separate site below. LAN-only by
+  # default; making it public is a Cloudflare tunnel entry plus
+  # STORE_REQUIRE_REVIEW=1 (see store/README.md, "Going public").
   store:
     profiles: ["store"]
     build:
@@ -269,13 +313,26 @@ services:
     image: celld-sites-store
     restart: unless-stopped
     init: true
+    depends_on:
+      store-db:
+        condition: service_healthy
+        restart: true
     environment:
       PORT: 3000
       STORE_DATA_DIR: /data
-      # Enables review, takedown and report handling. Empty disables /admin.
-      STORE_ADMIN_TOKEN: ${STORE_ADMIN_TOKEN:-}
-      # 1: new releases stay out of the catalog until an admin approves them.
+      DATABASE_URL: postgres://store:${STORE_DB_PASSWORD}@store-db:5432/store
+      # 1: new releases stay out of the catalog until a moderator approves them.
       STORE_REQUIRE_REVIEW: ${STORE_REQUIRE_REVIEW:-0}
+      # The visitor's address for rate limits. Traefik sets X-Real-Ip itself (from
+      # Cf-Connecting-Ip for tunnel traffic); behind its two hops the last
+      # X-Forwarded-For entry is Traefik, which would put everyone in one bucket.
+      STORE_CLIENT_IP_HEADER: ${STORE_CLIENT_IP_HEADER:-x-real-ip}
+      # Footer links to the operator's legal notice and privacy policy.
+      STORE_IMPRINT_URL: ${STORE_IMPRINT_URL:-}
+      STORE_PRIVACY_URL: ${STORE_PRIVACY_URL:-}
+      # Or the pages themselves: impressum.html and datenschutz.html in ./legal
+      # (gitignored), served at /impressum and /datenschutz.
+      STORE_LEGAL_DIR: /legal
       # Interactive demos run on celld-demo, with a separate admin token.
       STORE_DEMO_API: http://demo-admin.internal:8080
       STORE_DEMO_HOST: demo-admin.internal
@@ -283,10 +340,11 @@ services:
       STORE_DEMO_DOMAIN: ${STORE_DEMO_DOMAIN:-example.com}
       STORE_DEMO_SCHEME: https
       STORE_DEMO_TTL_SECS: ${STORE_DEMO_TTL_SECS:-900}
-      STORE_DEMO_MAX: ${STORE_DEMO_MAX:-8}
-      STORE_DEMO_PER_HOUR: ${STORE_DEMO_PER_HOUR:-6}
+      STORE_DEMO_MAX: ${STORE_DEMO_MAX:-100}
+      STORE_DEMO_PER_HOUR: ${STORE_DEMO_PER_HOUR:-10}
     volumes:
       - store-data:/data
+      - ${STORE_LEGAL_HOST_DIR:-./legal}:/legal:ro
     read_only: true
     tmpfs:
       - /tmp:size=32m
@@ -312,6 +370,74 @@ services:
       - 'traefik.http.routers.store.rule=Host(`${STORE_HOST:-store.example.com}`)'
       - 'traefik.http.routers.store.priority=20'
       - 'traefik.http.services.store.loadbalancer.server.port=3000'
+
+  # Store moderation (store/moderation/): the review queue, automatic checks
+  # and the levers (approve, reject, take down, suspend, pause sign-ups). Same
+  # image as the store, same database, the store's bundles read-only. It holds
+  # the keys to the catalog: LAN-only, never add it to the Cloudflare tunnel.
+  moderation:
+    profiles: ["store"]
+    build:
+      context: .
+      dockerfile: store/Dockerfile
+    image: celld-sites-store
+    command: ["node", "store/moderation/server.ts"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      store-db:
+        condition: service_healthy
+        restart: true
+    environment:
+      PORT: 3000
+      STORE_DATA_DIR: /data
+      DATABASE_URL: postgres://store:${STORE_DB_PASSWORD}@store-db:5432/store
+      MODERATION_PASSWORD: ${MODERATION_PASSWORD:?Set MODERATION_PASSWORD in .env (openssl rand -base64 18)}
+      STORE_PUBLIC_URL: https://${STORE_HOST:-store.example.com}
+      STORE_CLIENT_IP_HEADER: ${STORE_CLIENT_IP_HEADER:-x-real-ip}
+      # "A release is waiting for review" (an ntfy topic URL; empty = none).
+      MODERATION_NTFY_URL: ${MODERATION_NTFY_URL:-}
+      # Policy (see store/README.md, "Moderation"). Defaults: review from 0.4,
+      # block automatically from 0.9, a person approves everything except
+      # low-risk releases of publishers marked trusted.
+      MODERATION_REVIEW_AT: ${MODERATION_REVIEW_AT:-}
+      MODERATION_BLOCK_AT: ${MODERATION_BLOCK_AT:-}
+      MODERATION_AUTO_BLOCK: ${MODERATION_AUTO_BLOCK:-}
+      MODERATION_AUTO_APPROVE: ${MODERATION_AUTO_APPROVE:-}
+      MODERATION_AUTO_APPROVE_TRUSTED: ${MODERATION_AUTO_APPROVE_TRUSTED:-}
+      # Optional classifier (TypeSafe Jev). Unset = rules only. It sends listing
+      # text, page text and the start of the server code to that endpoint.
+      JEV_URL: ${JEV_URL:-}
+      JEV_API_KEY: ${JEV_API_KEY:-}
+      JEV_MODEL: ${JEV_MODEL:-}
+    volumes:
+      - store-data:/data:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    # Bundles are read whole (up to 80 MiB unpacked), a few kept for the file pages.
+    mem_limit: 768m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+    networks:
+      - default
+      - traefik_web
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=traefik_web'
+      - 'traefik.http.routers.moderation.rule=Host(`${MODERATION_HOST:-moderation.example.com}`)'
+      - 'traefik.http.routers.moderation.priority=20'
+      - 'traefik.http.services.moderation.loadbalancer.server.port=3000'
 
   # Hamstr: the personal app shell (grains) and the sign-in for this node:
   # people, groups and which celld sites they may open. It holds ADMIN_TOKEN,
@@ -434,6 +560,7 @@ volumes:
   # is only a label: renaming it would mean copying the data.
   store-data:
     name: celld-sites_cubby-data
+  store-pg:
   demo-state:
   hamstr-data:
   tsidp-data:

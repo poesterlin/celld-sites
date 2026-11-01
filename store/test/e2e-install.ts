@@ -16,7 +16,7 @@ import { createStore } from "../server.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "store-e2e-"));
 const config = join(dir, "config.json");
-const store = createStore({ dataDir: join(dir, "data"), rateLimit: false, logging: false, adminToken: "e2e-admin" });
+const store = createStore({ dataDir: join(dir, "data"), rateLimit: false, logging: false });
 const node = new Node(Number(process.env.TEST_INSTALL_PORT ?? 8780));
 try {
 	const address = await store.listen(0, "127.0.0.1");
@@ -24,7 +24,7 @@ try {
 	const reg = await fetch(`${base}/api/v1/publishers`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ name: "e2e", password: "correct horse battery" }),
+		body: JSON.stringify({ name: "e2e", password: "correct horse battery", acceptPolicy: true }),
 	});
 	const registered = await reg.text();
 	assert.equal(reg.status, 201, registered);
@@ -55,7 +55,7 @@ try {
 	console.log(await run(["publish", join(import.meta.dirname, "fixtures", "secret-santa")], { HAMSTR_STORE: base }));
 	await node.start();
 	console.log(
-		await run(["install", "secret-santa", "--host", "demo.test", "--yes", "--watch", "0"], {
+		await run(["install", "e2e/secret-santa", "--host", "demo.test", "--yes", "--watch", "0"], {
 			CELLD_ADMIN_API: `http://127.0.0.1:${node.port}`,
 			ADMIN_TOKEN: node.adminToken,
 			ADMIN_HOST: "admin.internal",
@@ -77,7 +77,7 @@ try {
 	const stranger = join(dir, "other", "config.json");
 	mkdirSync(dirname(stranger), { recursive: true });
 	await assert.rejects(
-		run(["install", "secret-santa", "--host", "demo.test", "--yes", "--watch", "0"], {
+		run(["install", "e2e/secret-santa", "--host", "demo.test", "--yes", "--watch", "0"], {
 			HAMSTR_CLI_CONFIG: stranger,
 			CELLD_ADMIN_API: `http://127.0.0.1:${node.port}`,
 			ADMIN_TOKEN: node.adminToken,

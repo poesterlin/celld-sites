@@ -101,11 +101,11 @@
 		<p class="dim"><span class="spinner"></span> Loading apps…</p>
 	{:else}
 		<div class="cards" aria-busy={loading}>
-			{#each result.apps as app (app.slug)}
-				<AppCard {app} href="/apps/{app.slug}" meta="by {app.publisher} · v{app.version}">
+			{#each result.apps as app (app.id)}
+				<AppCard {app} href="/apps/{app.id}" meta="by {app.publisher} · v{app.version}">
 					{#snippet actions()}
 						{#if app.category}<span class="chip">{labelOf.get(app.category) ?? app.category}</span>{/if}
-						<a class="button ghost small push" href="/apps/{app.slug}">Details</a>
+						<a class="button ghost small push" href="/apps/{app.id}">Details</a>
 					{/snippet}
 				</AppCard>
 			{:else}

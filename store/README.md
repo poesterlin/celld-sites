@@ -35,9 +35,12 @@ turning every utility into a SaaS account.
 3. Install an applet into a local celld node with one command, from a public
    store, without building it locally.
 4. Update an installed applet without losing its Durable Object data.
-5. Withdraw a release (publisher) and remove one (operator); report abuse.
-6. Optionally review releases before they appear in the catalog.
-7. Keep the app's code and data inspectable: a bundle is a tar.gz of the same
+5. Withdraw a release (publisher) and remove one (moderator); report abuse.
+6. Review releases before they appear in the catalog, with automatic checks
+   that hold or block the obvious abuse (see §5, "Moderation").
+7. Accounts only for publishing: browsing, trying and getting apps never
+   need one.
+8. Keep the app's code and data inspectable: a bundle is a tar.gz of the same
    files `tools/pack.ts` already produces; data is the node's own SQLite.
 
 **Non-functional**
@@ -49,8 +52,10 @@ turning every utility into a SaaS account.
   in the celld sandbox.
 - **Permissions are explicit.** Egress is the only capability an app can
   request; the installer shows it and will not grant it without consent.
-- **Cheap to self-host.** One container, one SQLite file, one blob directory.
-  No object store, no queue, no external auth provider.
+- **Cheap to self-host.** One container, one database, one blob directory.
+  Without `DATABASE_URL` the store embeds Postgres (PGlite) in its data
+  directory; with it, it uses a Postgres server it shares with the moderation
+  site. No object store, no queue, no external auth provider.
 - **Boring failure modes.** Store down: installed apps keep running; publishing
   and new installs fail. Node down: the store is unaffected.
 
@@ -99,15 +104,15 @@ data is yours" property.
  publisher                    Hamstr Store (hosted)                       user's Hamstr / celld node
  ─────────                    ─────────────────────                       ──────────────────────────
  hamstr publish ./app
-   pack.ts + tar.gz  ──────▶  POST /apps/:slug/releases (manifest)
+   pack.ts + tar.gz  ──────▶  POST /apps/:pub/:app/releases (manifest)
                               PUT  /releases/:id/bundle (tar.gz)
                                 validate tar: paths, types, sizes,
                                 blob hashes, code.json, limits
                                 store blobs/<sha256>.tgz
-                                SQLite: publishers, apps, releases
+                                Postgres: publishers, apps, releases
    ◀────────────────────────  catalog JSON / download URL
                                                                     Get in Hamstr, or
-                                                                    hamstr install app --host h
+                                                                    hamstr install pub/app --host h
                                                                       GET metadata + bundle
                                                                       verify sha256 + bundle
                                                                       show egress, consent
@@ -123,7 +128,10 @@ data is yours" property.
 
 | Piece | Where | Job |
 | --- | --- | --- |
-| `server.ts` | store container | HTTP API, serves the web UI, SQLite, blob files |
+| `server.ts` | store container | HTTP API, serves the web UI, blob files |
+| `db.ts` | store, moderation | Postgres (a server, or embedded PGlite), the numbered migrations, the one-time import of an old SQLite `store.db` |
+| `releases.ts` | store, moderation | the state changes both make: publish, reject, suspend, settings, the audit log |
+| `moderation/` | moderation container | the LAN-only moderation site and the check worker (§5) |
 | `web/` | store container | the web UI: a SvelteKit single-page app built on `packages/ui` (the same components as Hamstr's own store pages) |
 | `../packages/app-format/manifest.ts` | store, CLI, Hamstr | `hamstr.json` schema and egress host rules |
 | `../packages/app-format/bundle.ts` | store, CLI, Hamstr | tar.gz validation: safe paths, regular files only, size caps, blob hash equality, `code.json` cross-check |
@@ -168,9 +176,16 @@ other's names or rounds.
   production site data, and the store never holds the production admin token.
 - Demos are **no egress**: an app that declares network hosts shows "install to
   try it" instead. This keeps the demo node from becoming an open proxy.
-- Sessions are capped (`STORE_DEMO_MAX`, default 8 concurrent), rate-limited per
-  IP (`STORE_DEMO_PER_HOUR`, default 6), and expire after `STORE_DEMO_TTL_SECS`
+- Sessions are capped (`STORE_DEMO_MAX`, default 100 concurrent), rate-limited per
+  IP (`STORE_DEMO_PER_HOUR`, default 10), and expire after `STORE_DEMO_TTL_SECS`
   (default 900). A cleanup loop deletes the site and runs the demo node's prune.
+- Under load **Try it** disappears instead of failing: while every slot is
+  taken, while the demo node reports memory pressure or is draining (read at
+  most every 10 s from its admin state), and for two minutes after the node
+  failed to start a demo. A page that still shows the button and gets a 503
+  hides it and says demos are busy.
+- The demo node gets 6 GB and 4 CPUs (`DEMO_MEM_LIMIT`, `DEMO_CPUS`). Measured:
+  ~120 MiB idle plus ~17 MiB per running, used demo.
 - The iframe is sandboxed (`allow-scripts allow-forms allow-same-origin
   allow-popups`, no top navigation). The store's CSP only allows frames from the
   configured demo domain.
@@ -178,37 +193,68 @@ other's names or rounds.
   demos need wildcard DNS and a wildcard tunnel/cert for `demo-*.<domain>`;
   the app itself (the iframe) must be reachable by the visitor.
 
-API: `POST /api/v1/apps/:slug/demo` → `{id, url, expiresAt}`,
+API: `POST /api/v1/apps/:publisher/:app/demo` → `{id, url, expiresAt}`,
 `GET /api/v1/demos/:id`, `DELETE /api/v1/demos/:id`. The app detail includes
 `demo.available` and a reason when it is not.
 
 ### Data model
 
+Postgres; the schema is `MIGRATIONS` in `db.ts`.
+
 ```
-publishers(id, name UNIQUE, password_hash, created_at)
-tokens(id, publisher_id, hash, created_at, last_used_at)
+publishers(id, name UNIQUE, password_hash, created_at, policy_accepted_at,
+           trusted, suspended_at, suspended_reason)
+tokens(id, publisher_id, hash, kind cli|session, created_at, last_used_at, expires_at)
 apps(id, slug UNIQUE, publisher_id, name, summary, description,
-     homepage, source, license, icon, category, tags, created_at, updated_at)
+     homepage, source, license, icon, category, tags jsonb, created_at, updated_at)
 app_tags(tag, app_id, PRIMARY KEY(tag, app_id))   -- index behind ?tag=
-releases(id, app_id, version, manifest, status,
+releases(id, app_id, version, manifest jsonb, status,
          bundle_sha, bundle_size, source_sha, source_size,
          created_at, published_at, downloads,
+         reviewed_at, reviewed_by, review_note,
          UNIQUE(app_id, version))
-reports(id, release_id, reason, created_at, resolved)
-events(id, at, actor, action, target, note)
+reports(id, release_id, reason, created_at, resolved, resolved_at, resolved_by)
+events(id, at, actor, action, target, note)            -- the audit log
+moderation_checks(release_id PK, status, verdict allow|review|block, risk,
+                  findings jsonb, classifier jsonb, action, error, ...)
+settings(key PK, value jsonb, updated_at, updated_by)  -- registration, publishing
 ```
 
 `status` is `uploading → pending → published`, then `yanked` (withdrawn: hidden,
-downloads answer 410) or `removed` (deleted by its publisher or taken down by
-an operator: files deleted, downloads answer 404). A removed release keeps its
+downloads answer 410), `removed` (deleted by its publisher: files deleted,
+downloads answer 404) or `rejected` (a moderator or the checks said no; the
+publisher sees `review_note`, the bundle stays 30 days so the decision can be
+reversed, then the store deletes it). A removed or rejected release keeps its
 row and hashes, so its version is never free again.
+
+An app's listing (name, summary, icon, tags, …) changes only when one of its
+releases is published. A release waiting for review never changes what the
+catalog shows.
 A release row exists before its bundle does; the upload is the second step, so
 a bad manifest fails before a large body is sent and abandoned uploads are
 cleaned up after 24 hours.
 
-Apps are globally unique slugs (`secret-santa`), owned by one publisher. The
-prototype chooses global names for short install commands; a real launch should
-decide between global squatting and `publisher/app` names.
+### Names
+
+Every app is `<publisher>/<app>` (`oesterlin/wichteln`): the publisher part
+is the account that publishes it, the app part is the manifest's `slug`. A
+manifest never names its namespace, so it cannot claim someone else's. Two
+publishers can both have a `notes`; nobody can claim a bare `notes` for
+everyone, which is where npm's squatting and typosquatting live.
+
+That makes publisher names the thing impersonators go after, so registration
+refuses reserved names (`hamstr`, `admin`, `official`, `support`, big brands,
+also with suffixes like `-official` or `-app`) and names that read the same as
+an existing one once dashes and look-alike characters are folded (`0esterlin`,
+`oester1in`, `oesterlin-app`). Names one letter from another publisher's, or
+containing a brand, are allowed but every release of theirs goes to a person
+(see §5). Publisher names cannot be changed: they are part of every app's
+address.
+
+Apps from before namespaces still answer at their old bare address
+(`/api/v1/apps/wichteln`, `/apps/wichteln`) by redirect; a new app never gets
+one. Hamstr records the full name of every installed app and refuses an
+"update" that would swap in another publisher's app of the same name.
 
 ### Bundle format
 
@@ -231,11 +277,12 @@ second copy of the metadata inside the archive.
 1. `hamstr publish ./app` reads `hamstr.json`, runs the site build (unless
    `--no-build`), runs `tools/pack.ts`, creates a deterministic tar.gz and
    validates it with the same library the store uses.
-2. `POST /api/v1/apps/:slug/releases` sends the manifest. The store validates
+2. `POST /api/v1/apps/:publisher/:app/releases` sends the manifest. The store validates
    it, checks ownership and quotas, and returns an upload URL.
 3. `PUT .../bundle` streams the tar.gz (Content-Length required, bounded),
    hashes it, validates the archive, stores it by hash, and marks the release
-   `published` (or `pending` in review mode).
+   `published` (or `pending` in review mode). The moderation site checks it
+   either way (§5).
 4. A version can never be reused with different content: publishing an
    existing version fails, and deleting a release or an app only marks its
    releases `removed` (files deleted, version kept). A deleted app's name stays
@@ -265,42 +312,47 @@ same data model as a normal celld deploy.
 
 ## 3. API
 
-Public reads, token-authenticated writes. Tokens are `cub_<id>_<secret>` (the
-prefix is from the store's old name and kept so existing tokens stay valid);
-only the SHA-256 of the secret is stored, and publishers are looked up by token
-id.
+Public reads, authenticated writes. Accounts exist only for publishing. The
+CLI sends a token (`Authorization: Bearer cub_<id>_<secret>`; the prefix is
+from the store's old name and kept so existing tokens stay valid); the web UI
+signs in with a session cookie (`store_session`, HttpOnly, SameSite=Strict,
+`Path=/api`, 30 days). Only the SHA-256 of either secret is stored. A session
+never works as a Bearer token and a token never works as a cookie; a
+cookie-signed request that changes anything must also carry the store's own
+`Origin`. A suspended publisher's tokens and sessions are deleted, and signing
+in answers 403 with the reason.
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | GET | `/api/health` | – | liveness and counts |
 | GET | `/api/v1/apps?q=&category=&tag=&limit=&offset=` | – | catalog search (`q` also matches tags) |
 | GET | `/api/v1/categories` | – | the fixed categories with listed-app counts |
-| GET | `/api/v1/apps/:slug` | – | app + published releases (owner token also sees pending) |
-| GET | `/api/v1/apps/:slug/releases/:version/download` | – | bundle, `X-Bundle-Sha256` |
-| GET | `/api/v1/apps/:slug/releases/:version/source` | – | optional source archive |
-| POST | `/api/v1/publishers` | – | create publisher, returns token once |
-| POST | `/api/v1/tokens` | – | password login, new token |
-| DELETE | `/api/v1/tokens` | token | revoke all tokens |
-| GET | `/api/v1/me` | token | own apps incl. pending releases |
-| POST | `/api/v1/apps/:slug/releases` | token | create release metadata |
+| GET | `/api/v1/apps/:publisher/:app` | – | app + published releases (owner token also sees pending) |
+| GET | `/api/v1/apps/:publisher/:app/releases/:version/download` | – | bundle, `X-Bundle-Sha256` |
+| GET | `/api/v1/apps/:publisher/:app/releases/:version/source` | – | optional source archive |
+| POST | `/api/v1/publishers` | – | create a publisher (`acceptPolicy: true` required); returns a token once, or with `session: true` signs the web in |
+| POST | `/api/v1/tokens` | – / session | password login, new CLI token; a web session gets one without the password |
+| DELETE | `/api/v1/tokens` | token / session | revoke every CLI token |
+| POST | `/api/v1/session` | – | web sign-in (sets the session cookie) |
+| DELETE | `/api/v1/session` | session | sign out |
+| GET | `/api/v1/me` | token / session | own apps, every release with its status and review note |
+| POST | `/api/v1/me/password` | token / session | change the password; ends every other sign-in |
+| POST | `/api/v1/apps/:publisher/:app/releases` | token | create release metadata (only under your own name) |
 | PUT | `/api/v1/releases/:id/bundle` | token | upload tar.gz |
 | PUT | `/api/v1/releases/:id/source` | token | optional source tar.gz |
 | POST | `/api/v1/releases/:id/yank` | token | withdraw a release |
 | DELETE | `/api/v1/releases/:id` | token | remove a release (files deleted, version stays taken) |
-| DELETE | `/api/v1/apps/:slug` | token | remove an app from the catalog: every release removed, name kept for its publisher |
-| POST | `/api/v1/apps/:slug/releases/:version/report` | – | abuse report (rate-limited) |
-| POST | `/api/v1/apps/:slug/demo` | – | start a throwaway demo session |
+| DELETE | `/api/v1/apps/:publisher/:app` | token | remove an app from the catalog: every release removed, name kept for its publisher |
+| POST | `/api/v1/apps/:publisher/:app/releases/:version/report` | – | abuse report (rate-limited), read on the moderation site |
+| POST | `/api/v1/apps/:publisher/:app/demo` | – | start a throwaway demo session |
 | GET | `/api/v1/demos/:id` | – | demo status, URL and expiry |
 | DELETE | `/api/v1/demos/:id` | – | end a demo early |
-| GET | `/api/v1/admin/pending` | admin | review queue |
-| GET | `/api/v1/admin/reports` | admin | open reports |
-| POST | `/api/v1/admin/releases/:id/approve` | admin | publish a pending release |
-| DELETE | `/api/v1/admin/releases/:id` | admin | takedown (as a removal: the version stays taken) |
-| POST | `/api/v1/admin/reports/:id/resolve` | admin | close a report |
+The store has no admin endpoints: review, takedowns, suspensions and the
+switches live on the moderation site (§5), which writes the same database.
+Registration and publishing answer 503 while a moderator has paused them.
 
-`STORE_ADMIN_TOKEN` enables the admin routes; without it they answer 503.
 Publishing is rate-limited per publisher; registration, login, reports and
-downloads per IP. Limits are in-memory for the prototype and reset on restart.
+downloads per IP. Limits are in-memory and reset on restart.
 
 ### Manifest (`hamstr.json`)
 
@@ -339,6 +391,12 @@ opened straight from the Hamstr home screen, like Pinboard). `export` is a
 path in the app (`"/export"`) that answers with one grain's data as a file;
 Hamstr offers it to owners as *Download data*.
 
+`devices` (`["microphone"]`) is for grains that need browser hardware. Hamstr
+lists it in the install dialog like network hosts, asks the admin to allow it,
+and only then lets the app's frame use it (`allow="microphone"`); the browser
+still asks the person. Browsers only provide the microphone on https (or
+localhost), so Hamstr warns, in plain words, when it is opened over http.
+
 Strict by design: unknown fields are rejected so a typo cannot silently drop a
 permission. `egress` and `devices` are the only permissions; Durable Objects and storage are
 implicitly scoped to the app's site id. Egress entries must be public,
@@ -352,14 +410,18 @@ labels, internal suffixes or numeric TLDs.
 | Asset | Who can reach it |
 | --- | --- |
 | Publisher password | only as a scrypt hash in the store DB |
-| Publisher token | shown once; only its SHA-256 is stored |
+| Publisher token, web session | shown once / HttpOnly cookie; only the SHA-256 is stored |
+| Moderation | a separate LAN-only site; the public store has no admin surface |
 | Bundles | public by design; deleted on takedown/yank when unreferenced |
 | App code execution | only on a user's celld node, after install |
 | App data | only the user's node; the store never sees it |
 | Node admin token | never leaves the node; the store has no access |
 
 - **Store compromise** exposes metadata and bundles (public anyway), not app
-  data, not the node. It cannot deploy, and it holds no admin token.
+  data, not the node. It cannot deploy, and it holds no admin token. It shares
+  the database with the moderation site, so it could also write moderation
+  decisions: the database protects the catalog's integrity only as well as the
+  store process does.
 - **Demo compromise** is the demo node only: separate bucket, state and admin
   token, no production credentials. The demo node still executes untrusted app
   code in the celld sandbox, so keep it resource-capped and ephemeral; a demo
@@ -376,26 +438,35 @@ labels, internal suffixes or numeric TLDs.
   the celld container.
 - **Supply chain**: SHA-256 protects transport and storage integrity, not
   authorship. Signing (minisign/Sigstore) is the next step; do not describe the
-  hash as a signature.
-- **Abuse**: reports, takedown, review mode, quotas, rate limits. A public
-  store needs a policy and a human on the other end; the code only provides the
-  levers.
+  hash as a signature. Meanwhile the two paths most npm incidents took are
+  narrowed: a trusted maintainer's account turning malicious (an update that
+  asks for new network access, or one published right after a password change
+  or with a token younger than three days, always goes to a person; §5), and a
+  payload fetched after review (Hamstr holds a grain's browser code to the
+  app's declared hosts, below).
+- **Browser code**: Hamstr adds its own Content-Security-Policy to every grain
+  response, next to any the app sends: scripts and fonts only from the grain
+  itself, and connections, images, media and form posts only to the grain and
+  the hosts the manifest declares (and their subdomains). Code loaded from a
+  CDN after review does not run, and page code cannot send what people type to
+  a host the install dialog never showed. Inline and eval'd scripts stay
+  allowed: they can only come from the reviewed bundle. Navigation (links,
+  `window.open`) cannot be restricted this way. Apps installed with the CLI
+  straight into celld (not through Hamstr) do not get this policy yet.
+- **Abuse**: automatic checks, review mode, reports, takedowns, suspensions,
+  a registration/publishing switch, quotas, rate limits, a content policy every
+  publisher accepts (`/policy`). A public store still needs a human on the
+  other end; the code provides the levers (§5).
 - **Privacy**: no email, no tracking pixels, no third-party scripts. Download
   counts are aggregate. Object names inside apps are not sent to the store.
 
-Accepted for the prototype: the single admin token is root; in-memory rate
-limits; no password reset; no email verification; no signing; no per-publisher
-storage billing. See §8.
+Accepted for the prototype: one shared moderator password (names are typed at
+sign-in and logged, not verified); in-memory rate limits; no password reset;
+no email verification; no signing; no per-publisher storage billing. See §8.
 
 ---
 
 ## 5. Hosting the store and going public
-
-`devices` (`["microphone"]`) is for grains that need browser hardware. Hamstr
-lists it in the install dialog like network hosts, asks the admin to allow it,
-and only then lets the app's frame use it (`allow="microphone"`); the browser
-still asks the person. Browsers only provide the microphone on https (or
-localhost), so Hamstr warns, in plain words, when it is opened over http.
 
 A personal Hamstr does not run a store; it points `HAMSTR_STORE` at one. The
 root `compose.yaml` includes the store (and its demo node) for the host that
@@ -405,32 +476,103 @@ operates it, behind the `store` compose profile:
 # .env
 COMPOSE_PROFILES=hamstr,store
 STORE_HOST=store.example.com
-STORE_ADMIN_TOKEN=<openssl rand -base64 24>
+STORE_DB_PASSWORD=<openssl rand -hex 24>
 STORE_REQUIRE_REVIEW=0   # 1 for a public store
+MODERATION_HOST=moderation.example.com   # LAN-only, never in the tunnel
+MODERATION_PASSWORD=<openssl rand -base64 18>
 DEMO_ADMIN_TOKEN=<openssl rand -hex 24>   # hex: the celld entrypoint allows [A-Za-z0-9_-]
 DEMO_READ_TOKEN=<openssl rand -hex 24>
 STORE_DEMO_DOMAIN=example.com
 
-docker compose up -d --build store celld-demo
+docker compose up -d --build store-db store moderation celld-demo
 open https://store.example.com
 ```
 
 The image is `store/Dockerfile` (build context: the repo root); it builds the
-web UI and ships it with the server. Data lives in the store's volume (the Docker volume is
-still named `celld-sites_cubby-data`, from an old name: `store.db` + `blobs/`); back
-it up like any other service. The container is read-only except that volume,
-runs as the `node` user, drops all capabilities and joins only `traefik_web`.
+web UI and ships it with the server and the moderation site. Data lives in two
+volumes: `store-pg` (Postgres: catalog, accounts, decisions, the log) and the
+store's own (still named `celld-sites_cubby-data` from an old name: `blobs/`);
+back up both. On its first start with an empty database the store imports an
+old SQLite `store.db` from its data directory and renames it
+`store.db.imported`. The containers are read-only except their volumes, run
+unprivileged and drop all capabilities; Postgres is only on the project
+network.
+
+### Moderation
+
+`store/moderation/` is a separate site on the same database: one more
+container from the same image (`node store/moderation/server.ts`), with the
+store's volume mounted read-only for the bundles. It is LAN-only and must stay
+that way: it holds the keys to the catalog. Sign in with your name (logged with
+every decision) and `MODERATION_PASSWORD`.
+
+| Page | What |
+| --- | --- |
+| Queue | releases waiting for review, riskiest first |
+| Flagged | published releases the checks flagged, or someone reported since |
+| Reports | open reports; dismiss, or open the release |
+| Blocked | rejected releases, by a moderator or the checks; reversible for 30 days |
+| Publishers | accounts: suspend (signs them out, hides every app), lift, trust |
+| Log | every action by publishers, the checks and moderators |
+| Settings | pause new accounts or publishing; the check policy in effect |
+
+A release page shows the listing, the findings with their evidence, the
+classifier's answers, what changed since the previous version, and every file
+of the bundle as escaped text (never run). Decisions: approve, reject or take
+down with a reason the publisher sees on their account page, keep a flagged
+release, run the checks again.
+
+**Automatic checks.** Every release with a bundle gets one check when it
+arrives, before or after publication:
+
+1. Rules (`moderation/scan.ts`) read the listing, the pages and the code:
+   a password field posting to another server, brand names next to a login,
+   recovery-phrase and card-number fields, miners, obfuscation, decoded `eval`, trackers,
+   remote scripts, redirects, risky egress hosts (paste sites, tunnels,
+   webhooks). Each finding has a risk from 0 to 1 and names its file. Rules
+   that need the database add: an update that asks for network access the
+   previous version did not have, a release after a password change or with
+   a fresh token (older accounts only), and a publisher name one letter from
+   another's or carrying a brand. Each of these sends the release to a person
+   even when its publisher is trusted.
+2. An optional classifier (`moderation/jev.ts`): TypeSafe's Jev scores the
+   release's state (listing, page text, form fields, hosts, the start of the
+   server code) for harm and answers whether it impersonates a brand or asks
+   for other services' secrets. Set `JEV_API_KEY` (and `JEV_URL`, `JEV_MODEL`
+   for another endpoint) to turn it on. It is advisory and sends publisher
+   content to that endpoint: do not point it at a free endpoint without data
+   terms (such as OpenCode's) for real submissions.
+3. The higher of the two risks decides: `block` from `MODERATION_BLOCK_AT`
+   (0.9), `review` from `MODERATION_REVIEW_AT` (0.4), `allow` below.
+
+Policy: `block` rejects the release at once (`MODERATION_AUTO_BLOCK=1`, the
+default); the publisher reads only that the checks blocked it, moderators see
+why. `allow` still waits for a person, except for publishers a moderator
+marked trusted (`MODERATION_AUTO_APPROVE_TRUSTED=1`, the default) or everyone
+with `MODERATION_AUTO_APPROVE=1`. With `STORE_REQUIRE_REVIEW=0` releases go
+out at once and the checks run afterwards: `block` takes them down, `review`
+lists them under Flagged. `MODERATION_NTFY_URL` notifies when a release waits
+for someone.
+
+The rules were tested on a handful of synthetic apps (`test/moderation.test.ts`).
+They catch the crude cases and miss a careful attacker; the classifier has not
+been measured on real submissions. Treat both as triage for a human, not as
+the review.
 
 **Before making it public:**
 
-1. Set a strong `STORE_ADMIN_TOKEN` and `STORE_REQUIRE_REVIEW=1`.
-2. Add the hostname to the Cloudflare tunnel (the only step that makes it
-   public; local DNS resolves it either way). Keep the node itself LAN/tailnet.
-3. Put rate limits and a body-size limit at the edge as well as in the app.
-4. Decide the moderation policy: what may be published, how fast reports are
-   handled, how takedowns are recorded. Use the admin endpoints.
-5. Back up the store volume and test a restore.
-6. Consider a separate VM/container for the store; it should never hold the
+1. Set `STORE_REQUIRE_REVIEW=1` and a strong `MODERATION_PASSWORD`; check that
+   the moderation hostname resolves only on the LAN.
+2. Read the content policy (`store/web/src/routes/policy`) and adjust it:
+   every publisher accepts it when they register.
+3. Add the store's hostname, and only that one, to the Cloudflare tunnel (the
+   only step that makes it public; local DNS resolves it either way). Keep
+   the node and the moderation site LAN/tailnet.
+4. Put rate limits and a body-size limit at the edge as well as in the app.
+5. Decide who answers reports and how fast; the moderation site has the
+   levers, not the people.
+6. Back up both store volumes and test a restore.
+7. Consider a separate VM/container for the store; it should never hold the
    celld admin token or the bucket credentials. (It does not in this compose.)
 
 The public store and the nodes are deliberately decoupled: one popular store can
@@ -452,7 +594,7 @@ apps.
 | publisher storage | 300 MiB |
 | upload/registration rate | 120 uploads/h, 30 releases/h, 5 accounts/h/IP |
 | store memory | 512 MiB container, 256 pids |
-| demo sessions | 8 concurrent, 6/hour/IP, 15 min TTL, 100 objects/site, 20 s site timeout |
+| demo sessions | 100 concurrent, 10/hour/IP, 15 min TTL, 100 objects/site, 20 s site timeout, node 6 GB / 4 CPUs |
 
 These are constants in `server.ts`/`../packages/app-format/bundle.ts`; promote them to env vars
 before running a public instance with different needs.
@@ -479,6 +621,9 @@ a flag on this one.
 1. **Signing** — publisher keys, detached signatures over the bundle hash;
    show "signed by" and refuse unsigned updates (opt-in policy).
 2. **Per-publisher scoped tokens** and password reset; email optional.
+   Moderator accounts instead of one shared password, an appeal path for
+   rejected releases, and separate database roles so the public store cannot
+   write moderation decisions.
 3. **Source-first installs** — install from source with a sandboxed build, for
    users who want to read/modify before running.
 4. **Screenshots and a richer manifest**, served from the bundle with a strict
@@ -504,7 +649,21 @@ npm test --prefix store          # manifest, bundle, API and web-serving suites 
 
 `store/test/api.test.ts` starts the real server on an ephemeral port with a
 temporary data directory and exercises register → publish → catalog → download
-→ yank → report → review/approve. No Docker or celld node is required.
+→ yank → report → review/approve, web sessions and suspensions.
+`store/test/moderation.test.ts` runs the store and the moderation site on one
+database: the rules, the classifier client against a stand-in, and the whole
+loop through the moderation site's forms. No Docker or celld node is required:
+without a URL they use embedded Postgres. To run them against a Postgres
+server (CI does), point `STORE_TEST_DATABASE_URL` at an empty database.
+
+To run the moderation site next to a local store, use a Postgres server: an
+embedded database belongs to one process.
+
+```sh
+DATABASE_URL=postgres://... STORE_DATA_DIR=/tmp/store node store/server.ts
+DATABASE_URL=postgres://... STORE_DATA_DIR=/tmp/store PORT=3001 \
+  MODERATION_PASSWORD=a-long-password node store/moderation/server.ts
+```
 
 The web UI:
 

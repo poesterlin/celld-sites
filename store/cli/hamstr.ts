@@ -22,7 +22,7 @@ import { once } from "node:events";
 import { pack as tarPack } from "tar-stream";
 import { readBundle } from "../../packages/app-format/bundle.ts";
 import { adminClient, deploy } from "./deploy.ts";
-import { parseManifest, validatePublisherName, validateSlug, validateVersion } from "../../packages/app-format/manifest.ts";
+import { parseManifest, validateAppRef, validatePublisherName, validateVersion } from "../../packages/app-format/manifest.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Inside a checkout of celld-sites, the CLI can also deploy through the local
@@ -339,7 +339,8 @@ async function register(name: string, opts: any): Promise<void> {
 		if (again !== password) die("passwords do not match");
 	}
 	if (password.length < 10) die("password must be at least 10 characters");
-	const body = await call(`${store}/api/v1/publishers`, { method: "POST", json: { name, password } });
+	console.log(`By registering you accept the store's content policy: ${store}/policy`);
+	const body = await call(`${store}/api/v1/publishers`, { method: "POST", json: { name, password, acceptPolicy: true } });
 	password = "";
 	saveConfig({ store, token: body.token, publisher: name });
 	console.log(`registered ${name} at ${store}`);
@@ -354,16 +355,22 @@ async function login(name: string, opts: any): Promise<void> {
 	console.log(`signed in as ${name} at ${store}`);
 }
 
+const releaseLabel = (r) => `${r.version} (${r.status === "pending" ? "waiting for review" : r.status})`;
+
+const rejection = (r) => (r.status === "rejected" && r.reviewNote ? `    ${r.version} was rejected: ${r.reviewNote}` : null);
+
+function printApp(app): void {
+	const versions = app.releases.map(releaseLabel).join(", ");
+	console.log([`  ${app.slug}: ${versions || "no releases"}`, ...app.releases.map(rejection).filter(Boolean)].join("\n"));
+}
+
 async function whoami(opts: any): Promise<void> {
 	const store = requireStore(opts);
 	const token = requireToken(opts);
 	const body = await call(`${store}/api/v1/me`, { token });
 	const used = (body.storageUsed / 1024 / 1024).toFixed(1);
 	console.log(`${body.publisher.name} at ${store} — ${body.apps.length} app(s), ${used} MiB stored`);
-	for (const app of body.apps) {
-		const versions = app.releases.map((r) => `${r.version} (${r.status})`).join(", ");
-		console.log(`  ${app.slug}: ${versions || "no releases"}`);
-	}
+	for (const app of body.apps) printApp(app);
 }
 
 async function publishRelease(dir, opts) {
@@ -395,7 +402,10 @@ async function publishRelease(dir, opts) {
 	}
 	const digest = createHash("sha256").update(bundle).digest("hex");
 
-	const created = await call(`${store}/api/v1/apps/${slug}/releases`, { method: "POST", token, json: { manifest } });
+	// Apps live under the publisher's name: <publisher>/<app>.
+	const publisher = (await call(`${store}/api/v1/me`, { token })).publisher.name;
+	const ref = `${publisher}/${slug}`;
+	const created = await call(`${store}/api/v1/apps/${ref}/releases`, { method: "POST", token, json: { manifest } });
 	const uploaded = await call(`${store}${created.upload.url}`, {
 		method: "PUT",
 		token,
@@ -413,8 +423,8 @@ async function publishRelease(dir, opts) {
 		});
 	}
 	const status = uploaded.release.status;
-	console.log(`published ${slug}@${manifest.version}${status === "pending" ? " (waiting for operator review)" : ""}`);
-	console.log(`  ${store}/apps/${slug}`);
+	console.log(`published ${ref}@${manifest.version}${status === "pending" ? " (waiting for review; follow it at " + store + "/account)" : ""}`);
+	console.log(`  ${store}/apps/${ref}`);
 	console.log(`  sha256 ${digest}`);
 }
 
@@ -428,36 +438,38 @@ async function search(query, opts) {
 		return;
 	}
 	for (const app of body.apps) {
-		console.log(`${app.slug.padEnd(24)} ${app.version.padEnd(10)} ${app.name} — ${app.summary}`);
+		console.log(`${app.id.padEnd(32)} ${app.version.padEnd(10)} ${app.name} — ${app.summary}`);
 	}
 }
 
-async function info(slug, opts) {
+async function info(ref, opts) {
 	const store = requireStore(opts);
-	const body = await call(`${store}/api/v1/apps/${validateSlug(slug)}`);
+	const body = await call(`${store}/api/v1/apps/${validateAppRef(ref)}`);
 	const { app, releases } = body;
-	console.log(`${app.icon || "▫"}  ${app.name} (${app.slug})`);
+	console.log(`${app.icon || "▫"}  ${app.name} (${app.id})`);
 	console.log(app.summary);
 	console.log(`publisher ${app.publisher} · version ${app.version} · license ${app.license}`);
 	if (app.category) console.log(`category: ${app.category}`);
 	if (app.tags.length) console.log(`tags: ${app.tags.join(", ")}`);
 	const latest = releases.find((r) => r.status === "published");
 	console.log(`network: ${latest?.manifest?.egress?.length ? latest.manifest.egress.join(", ") : "none"}`);
-	console.log(`install: hamstr install ${app.slug} --store ${store} --host <your-host>`);
+	console.log(`install: hamstr install ${app.id} --store ${store} --host <your-host>`);
 }
 
 async function install(slugArg, opts, { previousEgress = [], quiet = false } = {}) {
 	const node = nodeTarget(opts);
-	const [slug, wanted] = slugArg.includes("@") ? slugArg.split("@") : [slugArg, undefined];
-	validateSlug(slug);
+	const [refArg, wanted] = slugArg.includes("@") ? slugArg.split("@") : [slugArg, undefined];
+	const slug = validateAppRef(refArg);
+	// The same app under the name it had before namespaces is not another app.
+	const sameApp = (recorded) => recorded === slug || recorded === slug.split("/")[1];
 	const host = opts.host;
 	if (!host || !HOSTNAME.test(host) || host === "admin.internal") die("--host must be the site id (a hostname), not an alias");
 	if (wanted) validateVersion(wanted);
 	const prior = installed()[host];
-	if (prior && prior.slug !== slug && !opts.replace) {
+	if (prior && !sameApp(prior.slug) && !opts.replace) {
 		die(`${host} already runs ${prior.slug}; use another --host, or --replace (the new app would be able to read its data)`);
 	}
-	if (prior && prior.slug !== slug && opts.replace) {
+	if (prior && !sameApp(prior.slug) && opts.replace) {
 		console.log(`warning: replacing ${prior.slug} on ${host}; ${slug} will run against the same Durable Objects and data`);
 	}
 	if (!prior && !opts.replace && (await siteExists(opts, host))) {
@@ -537,13 +549,20 @@ async function install(slugArg, opts, { previousEgress = [], quiet = false } = {
 	}
 }
 
+/** Two app names for the same app: equal, or one is bare (from before
+ *  namespaces, or typed short) and matches the other's app part. */
+const sameName = (a: string, b: string) => a === b || (!a.includes("/") || !b.includes("/") ? a.split("/").pop() === b.split("/").pop() : false);
+
 async function update(target, opts) {
 	const all = installed();
-	const entries = (Object.entries(all ?? {}) as [string, any][]).filter(([, value]) => opts.all || value.slug === target);
+	const entries = (Object.entries(all ?? {}) as [string, any][]).filter(([, value]) => opts.all || sameName(value.slug, String(target)));
 	if (!entries.length) die(opts.all ? "nothing installed" : `no installed app called ${target}`);
 	for (const [host, value] of entries) {
 		const store = requireStore(opts);
+		// Records from before namespaces hold a bare name; the store redirects
+		// those to <publisher>/<app>, which is what the update records.
 		const detail = await call(`${store}/api/v1/apps/${value.slug}`);
+		const ref = detail.app.id ?? value.slug;
 		const latest = detail.releases.find((r) => r.status === "published");
 		if (!latest) {
 			console.log(`${value.slug}: no published release, skipping`);
@@ -554,14 +573,14 @@ async function update(target, opts) {
 			continue;
 		}
 		console.log(`${value.slug}: ${value.version} -> ${latest.version} at ${host}`);
-		await install(`${value.slug}@${latest.version}`, { ...opts, host, yes: opts.yes }, { previousEgress: value.egress ?? [] });
+		await install(`${ref}@${latest.version}`, { ...opts, host, yes: opts.yes }, { previousEgress: value.egress ?? [] });
 	}
 }
 
 async function report(slugArg, reason, opts) {
 	if (!slugArg?.includes("@")) die("usage: hamstr report <app>@<version> <reason>");
-	const [slug, version] = slugArg.split("@");
-	validateSlug(slug);
+	const [refArg, version] = slugArg.split("@");
+	const slug = validateAppRef(refArg);
 	validateVersion(version);
 	if (!reason || reason.trim().length < 5) die("give a reason of at least 5 characters");
 	const store = requireStore(opts);
@@ -595,13 +614,13 @@ Publishing
 
 The store
   search [query] / info <app>
-  report <app>@<version> <reason>
+  report <publisher>/<app>@<version> <reason>
 
 Installing into a celld node (people with Hamstr just press Get instead)
   node <admin-url> --admin-token-file <file> [--admin-host <host>]
                                       remember the node (checks the token first)
   node / node --forget                show / forget it
-  install <app>[@version] --host <hostname> [--allow-egress] [--yes] [--replace] [--watch <s>]
+  install <publisher>/<app>[@version] --host <hostname> [--allow-egress] [--yes] [--replace] [--watch <s>]
   update <app> | --all                install the latest published release
   list                                apps this CLI installed
 
@@ -634,11 +653,11 @@ async function main() {
 		case "search":
 			return search(rest.join(" "), opts);
 		case "info": {
-			if (!rest[0]) die("usage: hamstr info <app>");
+			if (!rest[0]) die("usage: hamstr info <publisher>/<app>");
 			return info(rest[0], opts);
 		}
 		case "install": {
-			if (!rest[0]) die("usage: hamstr install <app>[@version] --host <host>");
+			if (!rest[0]) die("usage: hamstr install <publisher>/<app>[@version] --host <host>");
 			return install(rest[0], opts);
 		}
 		case "node":

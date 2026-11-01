@@ -1,6 +1,7 @@
-# Hamstr Store: the catalog API (Node + SQLite + a directory of bundles) and
-# its web UI, a SvelteKit single-page app on the shared design system. Build
-# context is the repo root: the store uses packages/app-format and packages/ui.
+# Hamstr Store: the catalog API (Node + Postgres + a directory of bundles), its
+# web UI (a SvelteKit single-page app on the shared design system) and the
+# moderation site (`node store/moderation/server.ts`, same image). Build context
+# is the repo root: the store uses packages/app-format and packages/ui.
 FROM node:24-bookworm-slim AS web
 WORKDIR /src
 COPY packages/ui ./packages/ui
@@ -22,7 +23,8 @@ COPY store/package.json store/package-lock.json ./store/
 RUN cd store && npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 COPY packages/app-format ./packages/app-format
-COPY store/server.ts ./store/
+COPY store/*.ts ./store/
+COPY store/moderation ./store/moderation
 COPY --from=web /src/store/web/build ./store/web/build
 
 # The named volume is initialised from /data, so the unprivileged user can write.

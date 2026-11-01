@@ -64,16 +64,16 @@ try {
 	// 3. Publish.
 	await run(["register", "outsider", "--store", storeUrl]);
 	const published = await run(["publish", app]);
-	assert.match(published, /published secret-santa@/);
-	const version = /published secret-santa@(\S+)/.exec(published)[1];
+	assert.match(published, /published outsider\/secret-santa@/);
+	const version = /published outsider\/secret-santa@(\S+)/.exec(published)[1];
 	console.log(`published secret-santa@${version} with the packaged CLI`);
 
 	// 4. Remember the node, install, and use the app.
 	await assert.rejects(run(["node", `http://127.0.0.1:${node.port}`, "--admin-token-file", join(work, "missing")]), /cannot read the admin token file/);
 	const saved = await run(["node", `http://127.0.0.1:${node.port}`, "--admin-token-file", tokenFile]);
 	assert.match(saved, /saved: installs go to/);
-	const installed = await run(["install", "secret-santa", "--host", "santa.test", "--yes", "--watch", "2"]);
-	assert.match(installed, /installed secret-santa@/);
+	const installed = await run(["install", "outsider/secret-santa", "--host", "santa.test", "--yes", "--watch", "2"]);
+	assert.match(installed, /installed outsider\/secret-santa@/);
 	assert.match(installed, /check passed/);
 	const home = await node.request("GET", "/", { host: "santa.test" });
 	assert.equal(home.status, 200);
@@ -97,7 +97,7 @@ try {
 
 	// 6. Refusals: an existing site it did not install, a version that exists.
 	await assert.rejects(
-		run(["install", "secret-santa", "--host", "santa.test", "--yes"], { XDG_CONFIG_HOME: join(work, "other-config"), CELLD_ADMIN_API: `http://127.0.0.1:${node.port}`, ADMIN_TOKEN: node.adminToken }),
+		run(["install", "outsider/secret-santa", "--host", "santa.test", "--yes"], { XDG_CONFIG_HOME: join(work, "other-config"), CELLD_ADMIN_API: `http://127.0.0.1:${node.port}`, ADMIN_TOKEN: node.adminToken }),
 		/already a site on this node that this CLI did not install/,
 	);
 	await assert.rejects(run(["publish", app]), /already exists/);

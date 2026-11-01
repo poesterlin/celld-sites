@@ -91,9 +91,13 @@ function readEntry(stream: any, max: number, totalLeft: number): Promise<Buffer>
  * @param {object} [options]
  * @param {string} [options.extractTo] directory to also unpack the verified files into
  * @param {object} [options.limits] overrides for tests
- * @returns {Promise<{version: string, files: number, bytes: number, code: object}>}
+ * @param {boolean} [options.keepBlobs] also return every blob's bytes, by hash (the moderation site reads them)
+ * @returns {Promise<{version: string, files: number, bytes: number, code: object, blobs?: Map<string, Buffer>}>}
  */
-export async function readBundle(file: string, { extractTo, limits: over }: { extractTo?: string; limits?: Partial<Limits> } = {}) {
+export async function readBundle(
+	file: string,
+	{ extractTo, limits: over, keepBlobs = false }: { extractTo?: string; limits?: Partial<Limits>; keepBlobs?: boolean } = {},
+): Promise<{ version: string; files: number; bytes: number; code: any; blobs?: Map<string, Buffer> }> {
 	const limits = limitsFor(over);
 	const stat = statSync(file);
 	if (!stat.isFile()) fail("bundle is not a file");
@@ -231,5 +235,5 @@ export async function readBundle(file: string, { extractTo, limits: over }: { ex
 	for (const hash of referenced) if (!blobs.has(hash)) fail(`code.json references a missing blob: ${hash.slice(0, 12)}…`);
 	for (const hash of blobs.keys()) if (!referenced.has(hash)) fail(`bundle contains an unreferenced blob: ${hash.slice(0, 12)}…`);
 
-	return { version, files: codeFiles.length, bytes, code };
+	return { version, files: codeFiles.length, bytes, code, ...(keepBlobs && { blobs: new Map([...blobs].map(([hash, f]) => [hash, f.buffer])) }) };
 }

@@ -6,6 +6,7 @@
 	import Modal from "@hamstr/ui/components/Modal.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
 	import Releases from "@hamstr/ui/components/Releases.svelte";
+	import { activeTab, internetChip } from "@hamstr/ui/detail.ts";
 	import { ICON, sized } from "@hamstr/ui/icons.ts";
 	import { shortDate, size } from "@hamstr/ui/format.ts";
 	import { toast } from "@hamstr/ui/state.svelte.ts";
@@ -13,7 +14,8 @@
 	import { CATEGORIES } from "../../../../../../packages/app-format/manifest.ts";
 	import { appInHome, home, parseHome, setHome } from "#lib/hamstr.svelte.ts";
 
-	const slug = $derived(page.params.slug);
+	// <publisher>/<app>; a bare name is an old link the API redirects.
+	const slug = $derived(page.params.ref);
 	const categoryLabel = (id) => CATEGORIES[id] ?? id;
 
 	let detail = $state(null);
@@ -22,8 +24,12 @@
 		const want = slug;
 		detail = null;
 		error = "";
-		api(`/api/v1/apps/${encodeURIComponent(want)}`)
-			.then((body) => want === slug && (detail = body))
+		api(`/api/v1/apps/${want.split("/").map(encodeURIComponent).join("/")}`)
+			.then((body) => {
+				if (want !== slug) return;
+				detail = body;
+				if (body.app.id !== want) goto(`/apps/${body.app.id}${page.url.search}`, { replaceState: true, noScroll: true });
+			})
 			.catch((err) => want === slug && (error = err.status === 404 ? "not-found" : err.message));
 	});
 
@@ -32,17 +38,14 @@
 	const latest = $derived(latestRelease(detail));
 	const manifest = $derived(latest?.manifest ?? {});
 
-	const TABS = ["overview", "permissions", "versions"];
-	const tab = $derived(TABS.includes(page.url.searchParams.get("tab")) ? page.url.searchParams.get("tab") : "overview");
+	const tab = $derived(activeTab(page.url.searchParams));
 
 	const chips = $derived(
 		app
 			? [
 					{ label: `by ${app.publisher}` },
 					{ label: `v${app.version}` },
-					manifest.egress?.length
-						? { label: "Uses the internet", tone: "warn", title: `Can connect to: ${manifest.egress.join(", ")}` }
-						: { label: "Doesn't use the internet", title: "Can't connect to anything outside your Hamstr; its data never leaves it" },
+					internetChip(manifest, "your Hamstr"),
 					manifest.export && { label: "Exports data" },
 				].filter(Boolean)
 			: [],
@@ -54,7 +57,7 @@
 	let homeError = $state("");
 
 	function get() {
-		if (home.url) return void window.open(appInHome(app.slug), "_blank", "noopener");
+		if (home.url) return void window.open(appInHome(app.id), "_blank", "noopener");
 		homeInput = "";
 		homeError = "";
 		asking = true;
@@ -65,7 +68,7 @@
 		if (!origin) return void (homeError = "That doesn't look like a web address. It looks like k3x9.hamstr.app.");
 		setHome(origin);
 		asking = false;
-		window.open(appInHome(app.slug), "_blank", "noopener");
+		window.open(appInHome(app.id), "_blank", "noopener");
 	}
 
 	// --- demo -------------------------------------------------------------------------
@@ -73,11 +76,13 @@
 	async function tryIt() {
 		starting = true;
 		try {
-			const session = await api(`/api/v1/apps/${app.slug}/demo`, { method: "POST", body: {} });
+			const session = await api(`/api/v1/apps/${app.id}/demo`, { method: "POST", body: {} });
 			if (session.endToken) sessionStorage.setItem(`store-demo-${session.id}`, session.endToken);
 			await goto(`/demo/${session.id}`);
 		} catch (err) {
-			toast(err.message, true);
+			// Busy since the page loaded: say so and put the button away.
+			if (err.status === 503) detail.demo = { ...detail.demo, available: false, busy: true };
+			toast(err.status === 503 ? "Demos are busy right now. Try again in a few minutes." : err.message, true);
 		} finally {
 			starting = false;
 		}
@@ -91,7 +96,7 @@
 		event.preventDefault();
 		sending = true;
 		try {
-			await api(`/api/v1/apps/${app.slug}/releases/${encodeURIComponent(reporting.version)}/report`, { method: "POST", body: { reason } });
+			await api(`/api/v1/apps/${app.id}/releases/${encodeURIComponent(reporting.version)}/report`, { method: "POST", body: { reason } });
 			toast("Report sent to the store team");
 			reporting = null;
 		} catch (err) {
@@ -109,7 +114,7 @@
 			toast(text);
 		}
 	}
-	const download = (release, kind = "download") => `/api/v1/apps/${app.slug}/releases/${encodeURIComponent(release.version)}/${kind}`;
+	const download = (release, kind = "download") => `/api/v1/apps/${app.id}/releases/${encodeURIComponent(release.version)}/${kind}`;
 </script>
 
 <svelte:head><title>{app ? `${app.name} · Hamstr Store` : "Hamstr Store"}</title></svelte:head>
@@ -202,7 +207,7 @@
 			<div class="callout gap-top">
 				<strong>For developers</strong>
 				<p class="dim small flush">Install a version into a celld node without Hamstr, using the hamstr command-line tool:</p>
-				<pre class="code"><code>hamstr install {app.slug} --store {page.url.origin} --host &lt;your-app-host&gt;</code></pre>
+				<pre class="code"><code>hamstr install {app.id} --store {page.url.origin} --host &lt;your-app-host&gt;</code></pre>
 			</div>
 		{:else}
 			<div class="empty"><h2>No versions listed</h2><p>There is no published release of {app.name} right now.</p></div>

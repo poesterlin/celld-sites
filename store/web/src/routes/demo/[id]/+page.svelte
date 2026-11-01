@@ -25,7 +25,7 @@
 	});
 
 	const app = $derived(demo?.app);
-	const back = $derived(app?.slug ? `/apps/${app.slug}` : "/");
+	const back = $derived(app?.id ? `/apps/${app.id}` : "/");
 	const left = $derived(demo ? new Date(demo.expiresAt).getTime() - now : 0);
 	const ended = $derived(demo && (demo.status === "expired" || left <= 0));
 	const clock = $derived(`${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")} left`);

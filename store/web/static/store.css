@@ -12,7 +12,6 @@
 }
 .link-button { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .demo-title { font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.grain-bar .tile-icon { width: 28px; height: 28px; font-size: 0.95rem; border-radius: 8px; flex: none; box-shadow: none; }
 .foot { width: min(var(--page), calc(100% - 24px)); margin: 0 auto; padding: 24px 14px 40px; border-top: 1px solid var(--line); }
 .foot p { margin: 4px 0; }
 
@@ -55,3 +54,20 @@ body::before {
 .segmented.categories > * { white-space: nowrap; }
 .chip.removable { border: 0; cursor: pointer; font: inherit; font-size: 0.8rem; padding: 4px 10px; }
 .chip.removable:hover { filter: brightness(0.95); }
+
+/* --- publisher account --- */
+.account-form { max-width: 460px; }
+.policy-check { font-weight: 500; }
+.policy-check input { accent-color: var(--accent); }
+.app-line { display: flex; align-items: center; gap: 12px; }
+.app-line .grow { display: grid; }
+.small-icon { width: 36px; height: 36px; font-size: 1.1rem; border-radius: var(--radius-sm); flex: none; }
+.release-row { flex-wrap: wrap; }
+.release-row .grow { flex: 1; }
+.review-note { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.review-note p { margin: 0; }
+.chip.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.chip.bad { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.policy-list li { margin-bottom: 10px; }
+/* .panel .button is full width in the shared styles; these sit in a row. */
+.release-row .button { display: inline-flex; width: auto; }

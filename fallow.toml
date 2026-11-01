@@ -19,6 +19,7 @@ entry = [
 	"sites/**/server/objects.ts",
 	"sites/**/server/utils/objects.ts",
 	"hamstr/static/shell.css",      # served by adapter-node, linked from app.html
+	"store/moderation/server.ts",   # the moderation container runs it (compose.yaml)
 ]
 
 # Deployed static files and generated output, not source.

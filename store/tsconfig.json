@@ -25,6 +25,9 @@
 	},
 	"include": [
 		"server.ts",
+		"db.ts",
+		"releases.ts",
+		"moderation/**/*.ts",
 		"test/**/*.ts",
 		"../types/celld.d.ts"
 	]

@@ -25,4 +25,4 @@ export function setHome(origin) {
 }
 
 /** The app's page in the visitor's Hamstr, where an admin can get it. */
-export const appInHome = (slug) => `${home.url}/store/${encodeURIComponent(slug)}`;
+export const appInHome = (id) => `${home.url}/store/${String(id).split("/").map(encodeURIComponent).join("/")}`;

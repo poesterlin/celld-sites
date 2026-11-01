@@ -34,12 +34,13 @@ the path.
 
 ```sh
 hamstr node http://127.0.0.1:8080 --admin-token-file ~/.config/celld/admin-token
-hamstr install secret-santa --host santa.example.com
+hamstr install oesterlin/secret-santa --host santa.example.com
 hamstr update --all
 hamstr list
 ```
 
-The install downloads the release, checks its SHA-256 and every file in it, asks
+Apps are named `<publisher>/<app>`; `hamstr search` shows the full names and
+`hamstr publish` puts yours under your publisher name. The install downloads the release, checks its SHA-256 and every file in it, asks
 before granting the internet access the app declares, uploads it, runs the
 deploy check, activates it and watches the live site for a few seconds (rolling
 back on a 5xx). It refuses to install over a site it did not create unless you

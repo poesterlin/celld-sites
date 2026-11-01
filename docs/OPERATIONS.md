@@ -48,7 +48,7 @@ docker compose up -d --build
 Optional parts are compose profiles. Turn them on with `COMPOSE_PROFILES`:
 
 - `hamstr`: Hamstr
-- `store`: the Hamstr Store and its demo node
+- `store`: the Hamstr Store, its Postgres, its moderation site and its demo node
 - `tsidp`: sign in with Tailscale
 
 ## Development and hosting
@@ -134,7 +134,7 @@ printf '["api.example.com"]\n' | tools/admin.sh PUT '/egress?host=blog.example.c
 ## Hamstr and the store
 
 - [hamstr/README.md](../hamstr/README.md): grains, accounts and sign-in.
-- [store/README.md](../store/README.md): the store, publishing and the CLI.
+- [store/README.md](../store/README.md): the store, publishing, the CLI and moderation.
 
 ## EmDash sites
 
