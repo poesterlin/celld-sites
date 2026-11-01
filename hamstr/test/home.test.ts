@@ -99,7 +99,7 @@ describe("home mode", () => {
 		assert.equal(h["x-hamstr-role"], "owner");
 		assert.equal(decodeURIComponent(h["x-hamstr-username"]), "Owner");
 		assert.match(h["x-hamstr-session-id"], /^[a-f0-9]{16}$/);
-		assert.equal(r.headers["content-security-policy"], "frame-ancestors http://homeassistant.local:8000");
+		assert.match(r.headers["content-security-policy"], /connect-src 'self'; .*frame-ancestors http:\/\/homeassistant\.local:8000$/);
 		assert.equal((await onGrain(FIRST_PORT + 1, "GET", "/")).json.host, `grain-${notes.id}.grains.internal`);
 	});
 
