@@ -88,6 +88,8 @@ CI publishes these images on every push to `main` and on every `v*` tag:
 
 - `ghcr.io/poesterlin/celld-sites-node`
 - `ghcr.io/poesterlin/celld-sites-dashboard`
+- `ghcr.io/poesterlin/celld-sites-store`
+- `ghcr.io/poesterlin/celld-sites-hamstr`
 - `ghcr.io/poesterlin/celld-sites-appliance` (amd64 and arm64)
 
 ## Build a site

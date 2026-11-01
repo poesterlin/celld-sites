@@ -1,8 +1,10 @@
 name: images
 
-# Builds the two images the production stack pulls, and the appliance:
+# Builds the images the production stack pulls, and the appliance:
 #   ghcr.io/<owner>/celld-sites-node         (node/Dockerfile, target "hosting")
 #   ghcr.io/<owner>/celld-sites-dashboard    (dashboard/Dockerfile)
+#   ghcr.io/<owner>/celld-sites-store        (store/Dockerfile; store and moderation)
+#   ghcr.io/<owner>/celld-sites-hamstr       (hamstr/Dockerfile)
 #   ghcr.io/<owner>/celld-sites-appliance    (appliance/Dockerfile; amd64 + arm64)
 # The node image bundles no sites; sites are deployed at runtime.
 #
@@ -42,6 +44,20 @@ jobs:
             dockerfile: dashboard/Dockerfile
             target: ""
             image: celld-sites-dashboard
+            platforms: linux/amd64
+          # Store and moderation share one image (moderation overrides the
+          # command); Hamstr is the shell and grain proxy.
+          - name: store
+            context: .
+            dockerfile: store/Dockerfile
+            target: ""
+            image: celld-sites-store
+            platforms: linux/amd64
+          - name: hamstr
+            context: .
+            dockerfile: hamstr/Dockerfile
+            target: ""
+            image: celld-sites-hamstr
             platforms: linux/amd64
           # One container for Home Assistant, NAS app stores and Pis (aarch64).
           - name: appliance
