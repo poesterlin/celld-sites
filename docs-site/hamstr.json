@@ -1,0 +1,15 @@
+{
+	"schema": 1,
+	"slug": "manual",
+	"name": "Hamstr Manual",
+	"summary": "Install and use Hamstr: the manual, with a live compose.yaml generator.",
+	"description": "The manual for Hamstr, the personal app platform: install it on a box or in Home Assistant, give it a domain and HTTPS, set up sign-in, and use apps and grains.\n\nIt includes a live compose.yaml generator that builds a file for your own setup (home network, own domain, behind a proxy, or a names service) in the browser, plus references for every setting, ports, data and backups, and security.\n\nEverything is static: it runs from the app's own bundle and works offline.",
+	"version": "0.2.0",
+	"license": "MIT",
+	"icon": "📖",
+	"category": "learning",
+	"tags": ["docs", "manual", "self-hosting", "homelab"],
+	"homepage": "https://github.com/poesterlin/celld-sites/tree/main/docs-site",
+	"source": "https://github.com/poesterlin/celld-sites",
+	"instances": "single"
+}

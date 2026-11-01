@@ -11,6 +11,10 @@
     "typescript": "^6.0.3"
   },
   "scripts": {
-    "typecheck": "tsc -p packages/app-format && tsc -p packages/ui && tsc -p store && tsc -p store/cli && tsc -p store/web && tsc -p hamstr && tsc -p names/server && tsc -p names/agent && tsc -p tools && tsc -p router && tsc -p adapters/emdash && tsc -p dashboard"
+    "typecheck": "tsc -p packages/app-format && tsc -p packages/ui && tsc -p store && tsc -p store/cli && tsc -p store/web && tsc -p hamstr && tsc -p names/server && tsc -p names/agent && tsc -p tools && tsc -p router && tsc -p adapters/emdash && tsc -p dashboard",
+    "docs:dev": "npm --prefix docs-site run dev",
+    "docs:build": "npm --prefix docs-site run build",
+    "docs:preview": "npm --prefix docs-site run preview",
+    "docs:test": "npm --prefix docs-site test"
   }
 }

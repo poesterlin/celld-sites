@@ -1,0 +1,19 @@
+{
+	"name": "hamstr-docs",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"description": "The Hamstr manual: a VitePress site with a live compose.yaml generator",
+	"scripts": {
+		"dev": "vitepress dev",
+		"build": "vitepress build",
+		"preview": "vitepress preview",
+		"test": "node --test .vitepress/theme/lib/compose.test.ts"
+	},
+	"devDependencies": {
+		"vitepress": "^1.6.4"
+	},
+	"dependencies": {
+		"@fontsource/atkinson-hyperlegible": "^5.3.0"
+	}
+}

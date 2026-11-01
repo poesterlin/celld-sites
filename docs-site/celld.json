@@ -1,0 +1,4 @@
+{
+	"assets": ".vitepress/dist",
+	"notFound": "none"
+}

@@ -26,6 +26,10 @@ entry = [
 ignorePatterns = [
 	"sites/*/public/**",
 	"tests/fixtures/**/public/**",
+	# The manual: a VitePress site with its own package, tsconfig-less scripts
+	# and a Vue component. It imports the generator library directly, which
+	# fallow cannot follow from the .vue file.
+	"docs-site/**",
 ]
 
 # Specifiers resolved where the code is deployed, not by Node here: the EmDash

@@ -57,6 +57,7 @@ Then install **Hamstr**. Setup steps are in [ha-addon/DOCS.md](ha-addon/DOCS.md)
 
 ## Learn more
 
+- [Manual](docs-site/README.md): install, configure and use Hamstr, with a live compose generator
 - [Operations](docs/OPERATIONS.md): run and develop the platform
 - [Hamstr](hamstr/README.md): grains, accounts and sign-in
 - [Store](store/README.md): publish and install apps

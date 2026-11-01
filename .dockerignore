@@ -10,6 +10,7 @@ data
 tests
 dashboard
 docs
+docs-site
 sites/*
 !sites/example/
 **/build

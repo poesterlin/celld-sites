@@ -58,7 +58,7 @@ Release: tag `vX.Y.Z`, then set `version` in `ha-addon/config.yaml` to it.
 | `HTTP_PORT`, `HTTPS_PORT` | `8000`, `8443` | The ports for browsers. Everything else is on loopback, ports 47101-47181, except the panel below |
 | `CELLD_LOG` | `warn` | celld's log level (`RUST_LOG`); `info` adds its routine lines, several a second |
 | `TLS_MODE` | `off` | `off`: HTTP on :8000, for a proxy in front that terminates TLS. `names`: a name from a Hamstr names service (`NAME_SERVICE_URL`). `domain`: your own domain at a DNS provider |
-| `NAME_SERVICE_URL` | — | `names` mode: the names service ([names/README.md](../names/README.md); not deployed publicly yet, so this is your own for now) |
+| `NAME_SERVICE_URL` | — | `names` mode: the names service ([names/README.md](../names/README.md)); a public one you trust, or one you host yourself |
 | `DOMAIN`, `DNS_PROVIDER` + the provider's variables | — | `domain` mode: lego's DNS-01 provider (`lego dnshelp`), and a `*.DOMAIN` record pointing at this host |
 | `ADDRESS_IPV4`, `ADDRESS_IPV6` | the host's Tailscale address | `names` mode: what the name points at. Found automatically when the container shares the host network and the host runs Tailscale |
 | `ACME_SERVER`, `ACME_EMAIL` | Let's Encrypt | Certificate authority |
