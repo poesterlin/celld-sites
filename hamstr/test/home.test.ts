@@ -37,9 +37,9 @@ before(async () => {
 	celld = await mockCelld();
 	store = createStore({ dataDir: join(dir, "store"), rateLimit: false, logging: false });
 	const storeBase = `http://127.0.0.1:${(await store.listen(0, "127.0.0.1")).port}`;
-	const token = (await call(storeBase, "/api/v1/publishers", { method: "POST", json: { name: "pub", password: "correct horse battery" } })).body.token;
+	const token = (await call(storeBase, "/api/v1/publishers", { method: "POST", json: { name: "pub", password: "correct horse battery", acceptPolicy: true } })).body.token;
 	const m = manifest({ slug: "board", name: "Board", icon: "📌" });
-	const created = await call(storeBase, "/api/v1/apps/board/releases", { method: "POST", token, json: { manifest: m } });
+	const created = await call(storeBase, "/api/v1/apps/pub/board/releases", { method: "POST", token, json: { manifest: m } });
 	await call(storeBase, created.body.upload.url, { method: "PUT", token, body: await bundle({ version: "aaaaaaaaaaaa", files: { "index.html": "<h1>board</h1>" } }), headers: { "content-type": "application/gzip" } });
 	hamstr = createHamstr({
 		dataDir: join(dir, "hamstr"),
@@ -79,7 +79,7 @@ describe("home mode", () => {
 	});
 
 	it("installs an app and opens each grain on a port of its own", async () => {
-		assert.equal((await api("POST", "/api/apps", { slug: "board" })).status, 200);
+		assert.equal((await api("POST", "/api/apps", { id: "pub/board" })).status, 200);
 		board = (await api("POST", "/api/grains", { slug: "board", title: "Kitchen" })).json.grain;
 		notes = (await api("POST", "/api/grains", { slug: "board", title: "Notes" })).json.grain;
 		const opened = await api("POST", `/api/grains/${board.id}/open`, { path: "/list?x=1" });

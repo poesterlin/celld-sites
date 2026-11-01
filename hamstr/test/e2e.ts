@@ -31,7 +31,7 @@ try {
 	const reg = await fetch(`${storeBase}/api/v1/publishers`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ name: "e2e", password: "correct horse battery" }),
+		body: JSON.stringify({ name: "e2e", password: "correct horse battery", acceptPolicy: true }),
 	});
 	const { token } = await reg.json();
 	const config = join(dir, "cli-config.json");
@@ -85,7 +85,7 @@ try {
 	const ada = await signIn({ sub: "u-ada", email: "ada@example.com", name: "Ada Lovelace" });
 	hamstr.core.accounts.setProvider("e2e", hamstr.core.seededProvider, { autoApprove: true });
 	let t = performance.now();
-	const installed = await api(ada, "POST", "/api/apps", { slug: "pinboard" });
+	const installed = await api(ada, "POST", "/api/apps", { id: "e2e/pinboard" });
 	assert.equal(installed.status, 200, installed.text);
 	console.log(`installed pinboard (download, verify, upload, boot check): ${ms(t)}`);
 

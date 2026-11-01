@@ -5,6 +5,7 @@
 	import { askUninstall, oops, toast } from "#lib/client/ui.svelte.ts";
 	import { appMenu, openApp } from "#lib/client/actions.ts";
 	import { ICON, sized } from "@hamstr/ui/icons.ts";
+	import { activeTab, internetChip } from "@hamstr/ui/detail.ts";
 	import { plural, shortDate, size } from "@hamstr/ui/format.ts";
 	import ConsentModal from "#lib/components/ConsentModal.svelte";
 	import MoreMenu from "@hamstr/ui/components/MoreMenu.svelte";
@@ -25,15 +26,12 @@
 	const manifest = $derived(latest?.manifest ?? (installed && { ...installed, export: installed.canExport ? "yes" : undefined }));
 	const updatable = $derived(installed && latest && latest.version !== installed.version);
 
-	const TABS = ["overview", "permissions", "versions"];
-	const tab = $derived(TABS.includes(page.url.searchParams.get("tab")) ? page.url.searchParams.get("tab") : "overview");
+	const tab = $derived(activeTab(page.url.searchParams));
 
 	const heroChips = $derived([
 		listing?.publisher && { label: `by ${listing.publisher}` },
 		{ label: `v${latest?.version ?? app.version}` },
-		manifest?.egress?.length
-			? { label: "Uses the internet", tone: "warn", title: `Can connect to: ${manifest.egress.join(", ")}` }
-			: { label: "Doesn't use the internet", title: "Can't connect to anything outside this Hamstr; its data never leaves it" },
+		internetChip(manifest, "this Hamstr"),
 		manifest?.export && { label: "Exports data" },
 		installed && { label: `Installed${installed.version !== latest?.version ? ` · v${installed.version}` : ""}`, tone: "accent" },
 	].filter(Boolean));

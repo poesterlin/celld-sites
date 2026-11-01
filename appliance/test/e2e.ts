@@ -37,7 +37,7 @@ const store = createStore({ dataDir: join(dir, "store"), rateLimit: false, loggi
 const storePort = (await store.listen(0, "127.0.0.1")).port;
 const storeFwd = await forward(18092, storePort);
 const storeBase = `http://127.0.0.1:${storePort}`;
-const { token } = await (await fetch(`${storeBase}/api/v1/publishers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "e2e", password: "correct horse battery" }) })).json();
+const { token } = await (await fetch(`${storeBase}/api/v1/publishers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "e2e", password: "correct horse battery", acceptPolicy: true }) })).json();
 writeFileSync(join(dir, "cli.json"), JSON.stringify({ store: storeBase, token, publisher: "e2e" }), { mode: 0o600 });
 try {
 	const config = join(dir, "cli.json");
@@ -80,7 +80,7 @@ try {
 
 	const ada = await signIn({ sub: "u-ada", email: "ada@example.com", name: "Ada Lovelace" });
 	t = performance.now();
-	const installed = await api(ada, "POST", "/api/apps", { slug: "pinboard" });
+	const installed = await api(ada, "POST", "/api/apps", { id: "e2e/pinboard" });
 	assert.equal(installed.status, 200, installed.text);
 	console.log(`installed pinboard from the store: ${ms(t)}`);
 	const board = (await api(ada, "POST", "/api/grains", { slug: "pinboard", title: "Kitchen" })).json.grain;
@@ -142,7 +142,7 @@ try {
 	const shellHost = `127.0.0.1:${HOME_PORT}`;
 	const homeApi = (method, path, json?) => visitor.request(method, path, { host: shellHost, headers: { origin: `http://${shellHost}`, "sec-fetch-site": "same-origin" }, ...(json !== undefined && { json }) });
 	assert.equal((await visitor.request("GET", "/", { host: shellHost })).status, 200, "the shell opens without signing in");
-	assert.equal((await homeApi("POST", "/api/apps", { slug: "pinboard" })).status, 200);
+	assert.equal((await homeApi("POST", "/api/apps", { id: "e2e/pinboard" })).status, 200);
 	const homeBoard = (await homeApi("POST", "/api/grains", { slug: "pinboard", title: "Kitchen" })).json.grain;
 	const url = (await homeApi("POST", `/api/grains/${homeBoard.id}/open`, { path: "/" })).json.url;
 	assert.equal(url, "http://127.0.0.1:20000/");

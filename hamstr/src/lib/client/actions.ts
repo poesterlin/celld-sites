@@ -61,7 +61,7 @@ export function appMenu(app, { admin = false, here = "" } = {}) {
 		{ label: `New ${app.name}`, icon: "plus", hidden: !many, onclick: () => newItem(app) },
 		{ label: "All items", icon: "grid", hidden: !many || here === "app", separator: true, onclick: () => goto(`/a/${app.slug}`) },
 		{ label: "Import a backup…", icon: "upload", hidden: !many, separator: here === "app", onclick: () => askImport(app) },
-		{ label: "View in Store", icon: "info", hidden: here === "store", separator: !many || here === "app", onclick: () => goto(`/store/${app.slug}`) },
+		{ label: "View in Store", icon: "info", hidden: here === "store", separator: !many || here === "app", onclick: () => goto(`/store/${app.storeId ?? app.slug}`) },
 		{ label: "Uninstall…", icon: "trash", danger: true, separator: true, hidden: !admin, onclick: () => askUninstall(app) },
 	];
 }

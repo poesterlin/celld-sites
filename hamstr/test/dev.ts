@@ -21,7 +21,7 @@ idp.nextUser = { sub: "u-ada", email: "ada@example.com", name: "Ada Lovelace", u
 
 const storeBase = `http://127.0.0.1:${(await store.listen(0, "127.0.0.1")).port}`;
 const { token } = await (
-	await fetch(`${storeBase}/api/v1/publishers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "examples", password: "correct horse battery" }) })
+	await fetch(`${storeBase}/api/v1/publishers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "examples", password: "correct horse battery", acceptPolicy: true }) })
 ).json();
 const config = join(dir, "cli-config.json");
 writeFileSync(config, JSON.stringify({ store: storeBase, token, publisher: "examples" }), { mode: 0o600 });
@@ -67,7 +67,7 @@ await hamstr.listen(PORT, "127.0.0.1");
 	const back = new URL((await fetch(start.headers.location, { redirect: "manual" })).headers.get("location"));
 	await b.request("GET", back.pathname + back.search, { host: shell });
 	const api = (method, path, json) => b.request(method, path, { host: shell, headers: { origin: `http://${shell}:${PORT}` }, json });
-	await api("POST", "/api/apps", { slug: "pinboard" });
+	await api("POST", "/api/apps", { id: "examples/pinboard" });
 	// Pinboard is single-instance: Home opens (and on first use, makes) Ada's one board.
 	const board = (await api("POST", "/api/apps/pinboard/open", {})).json.grain;
 	const enter = new URL((await api("POST", `/api/grains/${board.id}/open`, { path: "/" })).json.url);

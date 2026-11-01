@@ -14,8 +14,9 @@ export const POST = guard(async (event) => {
 	requireSameOrigin(event);
 	if (!c.isAdmin(me)) return json(c, 403, { error: "only an admin can install apps" });
 	const body = await readJson(event.request);
-	const slug = String(body.slug ?? "");
-	if (!/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])$/.test(slug)) return json(c, 400, { error: "bad app id" });
+	// The store's <publisher>/<app>; a bare name only reaches apps from before namespaces.
+	const id = String(body.id ?? body.slug ?? "");
+	if (!/^(?:[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])\/)?[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])$/.test(id)) return json(c, 400, { error: "bad app id" });
 	const version = body.version === undefined ? undefined : String(body.version);
-	return json(c, 200, await c.install(slug, { version, allowEgress: body.allowEgress === true, user: me }));
+	return json(c, 200, await c.install(id, { version, allowEgress: body.allowEgress === true, user: me }));
 });
