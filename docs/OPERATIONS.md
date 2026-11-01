@@ -71,15 +71,17 @@ Optional parts are compose profiles. Turn them on with `COMPOSE_PROFILES`:
 ## Development and hosting
 
 - **Development** is this checkout. It builds the images locally.
-- **Hosting** is a pull-only copy of `compose.yaml`: replace each `build:` with
-  the published `image:` and pin a tag. Keep it in its own checkout or repo.
+- **Hosting** is the pull-only stack in a sibling checkout, `../celld-sites-deploy`
+  (its own repo): `image:` instead of `build:`, a pinned `IMAGE_TAG`, and the
+  same project name so the volumes carry over. If yours lives elsewhere, point
+  `CELLD_COMPOSE_DIR` at it.
 - Both use the project name `celld-sites`, so they share the same data.
 - Never run both at the same time.
 
-To point the tools at the hosting stack, set `CELLD_COMPOSE_DIR`:
+To point the tools at the hosting stack:
 
 ```sh
-CELLD_COMPOSE_DIR=/path/to/hosting-checkout tools/deploy.sh sites/blog blog.example.com
+CELLD_COMPOSE_DIR=../celld-sites-deploy tools/deploy.sh sites/blog blog.example.com
 ```
 
 CI publishes these images on every push to `main` and on every `v*` tag:

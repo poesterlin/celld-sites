@@ -22,7 +22,8 @@
 set -eu
 project="${CELLD_COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 # The image the live stack runs; override when drilling the pull-only
-# production stack (e.g. CELLD_NODE_IMAGE=ghcr.io/poesterlin/celld-sites-node:latest).
+# production stack in ../celld-sites-deploy (e.g.
+# CELLD_NODE_IMAGE=ghcr.io/poesterlin/celld-sites-node:latest).
 image="${CELLD_NODE_IMAGE:-celld-sites-node}"
 pause= calls=
 source=celld-sites_s3-data

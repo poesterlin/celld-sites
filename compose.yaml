@@ -4,9 +4,10 @@
 # Site code, assets and Durable Object data live in the S3 bucket below.
 #
 # This is the development stack: it builds the images locally and uses the
-# default `celld-sites-node` image tag. Production runs a pull-only copy of this
-# file (`image:` instead of `build:`, pinned tag) with the same project name so
-# volumes carry over; see docs/OPERATIONS.md, "Development and hosting".
+# default `celld-sites-node` image tag. Production runs the pull-only compose
+# file in `../celld-sites-deploy` (`image:` instead of `build:`, pinned tag)
+# with the same project name so volumes carry over; see docs/OPERATIONS.md,
+# "Development and hosting".
 # Both must not run at the same time. Without Traefik, add
 # compose.standalone.yaml; see "Start the stack".
 

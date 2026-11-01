@@ -9,9 +9,9 @@
 # before and watched after activation (see node/push.sh); the options are passed
 # on to it.
 #
-# CELLD_COMPOSE_DIR points the deploy at another compose project (e.g. the
-# pull-only production checkout) instead of
-# this checkout. The project name, and therefore the volumes, stay the same.
+# CELLD_COMPOSE_DIR points the deploy at another compose project (e.g.
+# ../celld-sites-deploy) instead of this checkout. The project name, and
+# therefore the volumes, stay the same.
 set -eu
 site="${1:?usage: tools/deploy.sh <site-dir> <hostname>}"
 host="${2:?usage: tools/deploy.sh <site-dir> <hostname>}"
