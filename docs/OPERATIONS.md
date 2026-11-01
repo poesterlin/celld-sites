@@ -45,23 +45,36 @@ docker compose up -d --build
 - No site is included.
 - Deploy the example with `tools/deploy.sh sites/example <hostname> --build`.
 
+The compose file expects an external `traefik_web` network, because that is how
+the reference deployment puts services on Traefik. Without a reverse proxy,
+publish them on localhost instead:
+
+```sh
+docker compose -f compose.yaml -f compose.standalone.yaml up -d --build
+```
+
+Then reach a site by Host header (`curl -H 'Host: blog.example.com'
+http://127.0.0.1:8080/`) or add the name to `/etc/hosts`. The standalone
+overlay works with the profiles below.
+
 Optional parts are compose profiles. Turn them on with `COMPOSE_PROFILES`:
 
 - `hamstr`: Hamstr
 - `store`: the Hamstr Store, its Postgres, its moderation site and its demo node
-- `tsidp`: sign in with Tailscale
+- `tsidp`: sign in with Tailscale (one OIDC provider; any OIDC IdP works)
 
 ## Development and hosting
 
 - **Development** is this checkout. It builds the images locally.
-- **Hosting** is a small compose file that pulls the images from GHCR.
+- **Hosting** is a pull-only copy of `compose.yaml`: replace each `build:` with
+  the published `image:` and pin a tag. Keep it in its own checkout or repo.
 - Both use the project name `celld-sites`, so they share the same data.
 - Never run both at the same time.
 
 To point the tools at the hosting stack, set `CELLD_COMPOSE_DIR`:
 
 ```sh
-CELLD_COMPOSE_DIR=/path/to/celld-sites-deploy tools/deploy.sh sites/blog blog.example.com
+CELLD_COMPOSE_DIR=/path/to/hosting-checkout tools/deploy.sh sites/blog blog.example.com
 ```
 
 CI publishes these images on every push to `main` and on every `v*` tag:

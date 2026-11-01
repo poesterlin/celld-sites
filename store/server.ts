@@ -183,8 +183,9 @@ export function createStore(options: StoreOptions = {}) {
 		databaseUrl: options.databaseUrl ?? process.env.DATABASE_URL ?? "",
 		requireReview: options.requireReview ?? process.env.STORE_REQUIRE_REVIEW === "1",
 		clientIpHeader: String(options.clientIpHeader ?? process.env.STORE_CLIENT_IP_HEADER ?? "").toLowerCase(),
-		// The operator's legal notice and privacy policy (in Germany a public
-		// site needs both): either links elsewhere (http(s) URLs), or HTML pages
+		// The operator's legal notice and privacy policy (a public site may
+		// need both, depending on jurisdiction): either links elsewhere (http(s)
+		// URLs), or HTML pages
 		// in STORE_LEGAL_DIR (impressum.html, datenschutz.html) the store serves
 		// at /impressum and /datenschutz. They are the operator's, not part of
 		// this repository.

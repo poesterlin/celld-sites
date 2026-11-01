@@ -1,0 +1,40 @@
+# Run the stack without Traefik.
+#
+#   docker compose -f compose.yaml -f compose.standalone.yaml up -d --build
+#
+# Each service is published on localhost and Compose creates its own network
+# instead of joining the external traefik_web one. Sites are still chosen by
+# the Host header, so a browser needs the hostname: add it to /etc/hosts
+# (127.0.0.1 blog.example.com) or send it explicitly:
+#
+#   curl -H 'Host: blog.example.com' http://127.0.0.1:8080/
+#
+# Add profiles with COMPOSE_PROFILES (hamstr, store, tsidp) as usual. Ports:
+# celld 8080, dashboard 8081, hamstr 8082, store 8083, moderation 8084,
+# demo 8085.
+services:
+  celld:
+    ports:
+      - "127.0.0.1:8080:8080"
+  dashboard:
+    ports:
+      - "127.0.0.1:8081:3000"
+  hamstr:
+    ports:
+      - "127.0.0.1:8082:3000"
+  store:
+    ports:
+      - "127.0.0.1:8083:3000"
+  moderation:
+    ports:
+      - "127.0.0.1:8084:3000"
+  celld-demo:
+    ports:
+      - "127.0.0.1:8085:8080"
+
+networks:
+  # The base file expects the proxy's network. Without one, create a local
+  # network of our own under a different name.
+  traefik_web:
+    external: false
+    name: celld-sites-local

@@ -26,7 +26,7 @@
 	{/if}
 	<div class="field"><label for="pn">Name</label><input id="pn" class="input" bind:value={draft.name} placeholder="Shown on the sign-in page" /></div>
 	{#if draft.kind === "oidc"}
-		<div class="field"><label for="pi">Issuer URL</label><input id="pi" class="input" bind:value={draft.issuer} placeholder={draft.hint ?? "https://idp.example.ts.net"} /></div>
+		<div class="field"><label for="pi">Issuer URL</label><input id="pi" class="input" bind:value={draft.issuer} placeholder={draft.hint ?? "https://idp.example.com"} /></div>
 	{/if}
 	<div class="field"><label for="pc">Client ID</label><input id="pc" class="input" bind:value={draft.clientId} autocomplete="off" /></div>
 	<div class="field"><label for="ps">Client secret</label><input id="ps" class="input" type="password" bind:value={draft.clientSecret} autocomplete="off" placeholder={draft.hasSecret ? "Unchanged" : ""} /></div>

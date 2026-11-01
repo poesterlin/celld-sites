@@ -4,10 +4,11 @@
 # Site code, assets and Durable Object data live in the S3 bucket below.
 #
 # This is the development stack: it builds the images locally and uses the
-# default `celld-sites-node` image tag. Production
-# runs the pull-only compose file in the celld-sites-deploy repo, which uses the
-# same project name so volumes carry over; see docs/OPERATIONS.md, "Development and hosting".
-# Both must not run at the same time.
+# default `celld-sites-node` image tag. Production runs a pull-only copy of this
+# file (`image:` instead of `build:`, pinned tag) with the same project name so
+# volumes carry over; see docs/OPERATIONS.md, "Development and hosting".
+# Both must not run at the same time. Without Traefik, add
+# compose.standalone.yaml; see "Start the stack".
 
 name: celld-sites
 
@@ -556,8 +557,9 @@ services:
 volumes:
   s3-data:
   celld-state:
-  # The store's catalog and bundles. The volume keeps its original name, which
-  # is only a label: renaming it would mean copying the data.
+  # The store's catalog and bundles. The volume keeps its original name (the
+  # project's old name, `cubby`), which is only a label: renaming it would mean
+  # copying the data.
   store-data:
     name: celld-sites_cubby-data
   store-pg:

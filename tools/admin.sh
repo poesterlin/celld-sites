@@ -10,7 +10,7 @@
 #   tools/admin.sh POST '/restore?host=a.example.com&confirm=a.example.com' - < a.backup  put them back
 #
 # CELLD_COMPOSE_DIR selects another compose project (e.g. the pull-only
-# production stack in /path/to/celld-sites-deploy).
+# production checkout).
 set -eu
 project="${CELLD_COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 docker compose --project-directory "$project" exec -T celld /app/admin.sh "$@"
