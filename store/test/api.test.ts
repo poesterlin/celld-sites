@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -434,6 +434,45 @@ describe("store API", () => {
 		} finally {
 			await reviewed.close();
 			rmSync(dir2, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses files past the publisher's limits and keeps no temp file", async () => {
+		const dir3 = mkdtempSync(join(tmpdir(), "store-api-quota-"));
+		const small = createStore({ dataDir: dir3, rateLimit: false, logging: false, limits: { publisherBytes: 1, source: 512 * 1024 } });
+		const address3 = await small.listen(0, "127.0.0.1");
+		const base3 = `http://127.0.0.1:${address3.port}`;
+		const tmp3 = join(dir3, "tmp");
+		try {
+			const reg = await call(base3, "/api/v1/publishers", { method: "POST", json: { name: "quota", password: "correct horse battery", acceptPolicy: true } });
+			const tok = reg.body.token;
+			const created = await call(base3, `/api/v1/apps/quota/big/releases`, {
+				method: "POST",
+				token: tok,
+				json: { manifest: manifest({ slug: "big", name: "Big", version: "1.0.0" }) },
+			});
+			// A bundle the node accepts, refused only by the storage quota.
+			const bytes = await bundle();
+			const over = await call(base3, created.body.upload.url, { method: "PUT", token: tok, body: bytes, headers: { "content-type": "application/gzip" } });
+			assert.equal(over.status, 413, over.text);
+			assert.match(over.body.error, /storage limit/);
+			assert.deepEqual(readdirSync(tmp3), [], "the refused bundle left a temp file");
+			assert.equal((await call(base3, "/api/v1/apps/quota/big/releases/1.0.0/download")).status, 404);
+
+			// A source archive larger than the limit never reaches the quota check.
+			const big = Buffer.alloc(1024 * 1024, 1);
+			const tooBig = await call(base3, `/api/v1/releases/${created.body.release.id}/source`, {
+				method: "PUT",
+				token: tok,
+				body: big,
+				headers: { "content-type": "application/gzip" },
+			});
+			assert.equal(tooBig.status, 413, tooBig.text);
+			assert.match(tooBig.body.error, /larger than/);
+			assert.deepEqual(readdirSync(tmp3), [], "the refused source left a temp file");
+		} finally {
+			await small.close();
+			rmSync(dir3, { recursive: true, force: true });
 		}
 	});
 });

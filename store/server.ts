@@ -168,6 +168,8 @@ export interface StoreOptions {
 	demoPerHour?: number | string;
 	/** How long the demo node's load is trusted before it is read again. */
 	demoStateMs?: number;
+	/** Upper bounds, in bytes or counts; tests set them small. */
+	limits?: { source?: number; apps?: number; releases?: number; publisherBytes?: number };
 	/** A directory with the operator's impressum.html and datenschutz.html. */
 	legalDir?: string;
 	webDir?: string;
@@ -194,10 +196,7 @@ export function createStore(options: StoreOptions = {}) {
 		rateLimit: options.rateLimit !== false,
 		logging: options.logging !== false,
 		maxBundle: BUNDLE_LIMITS.compressed,
-		maxSource: 16 * 1024 * 1024,
-		maxApps: 20,
-		maxReleases: 50,
-		maxPublisherBytes: 300 * 1024 * 1024,
+		limits: { source: 16 * 1024 * 1024, apps: 20, releases: 50, publisherBytes: 300 * 1024 * 1024, ...options.limits },
 		name: options.name ?? "Hamstr Store",
 		demo: {
 			api: strip(options.demoApi ?? process.env.STORE_DEMO_API ?? ""),
@@ -533,6 +532,11 @@ export function createStore(options: StoreOptions = {}) {
 		return Number(row?.total ?? 0);
 	}
 
+	/** Refuse a file that would take the publisher past their total quota. */
+	async function checkQuota(publisherId: number, size: number): Promise<void> {
+		if ((await appStorage(publisherId)) + size > config.limits.publisherBytes) throw new HttpError(413, `publisher storage limit is ${bytes(config.limits.publisherBytes)}`);
+	}
+
 	async function deleteBlobIfUnused(sha, kind = "bundle") {
 		if (!sha) return;
 		const column = kind === "source" ? "source_sha" : "bundle_sha";
@@ -579,8 +583,8 @@ export function createStore(options: StoreOptions = {}) {
 					res.on("end", () => resolvePromise({ status: res.statusCode ?? 0, body: data }));
 				},
 			);
-			req.on("timeout", () => req.destroy(new Error("demo node timed out")));
-			req.on("error", rejectPromise);
+			req.on("timeout", () => req.destroy(Object.assign(new Error("no answer in time"), { code: "ETIMEDOUT" })));
+			req.on("error", (err: NodeJS.ErrnoException) => rejectPromise(new HttpError(502, `the demo node is unreachable (${err.code ?? err.message})`)));
 			if (body !== undefined) req.write(body);
 			req.end();
 		});
@@ -611,12 +615,12 @@ export function createStore(options: StoreOptions = {}) {
 			const code = readFileSync(join(tmp, "code.json"));
 			const hashes = [...new Set(Object.values(meta.code.files).map((value) => value[0]))];
 			const missing = await demoJson("POST", "/blobs/missing", hashes);
-			if (!Array.isArray(missing.missing)) throw new Error("demo node did not list missing blobs");
+			if (!Array.isArray(missing.missing)) throw new HttpError(502, "the demo node did not list missing blobs");
 			for (let i = 0; i < missing.missing.length; i += 6) {
 				await Promise.all(
 					missing.missing.slice(i, i + 6).map((hash) =>
 						demoRequest("PUT", `/blob?hash=${hash}`, readFileSync(join(tmp, "blobs", hash)), "application/octet-stream").then((r) => {
-							if (r.status >= 300) throw new Error(`uploading a demo blob failed (${r.status})`);
+							if (r.status >= 300) throw new HttpError(502, `uploading a demo blob failed (${r.status})`);
 						}),
 					),
 				);
@@ -866,7 +870,7 @@ export function createStore(options: StoreOptions = {}) {
 			return json(res, 200, {
 				publisher: { name: me.name, createdAt: publisher.created_at, trusted: publisher.trusted, policyAcceptedAt: publisher.policy_accepted_at },
 				storageUsed: await appStorage(me.id),
-				storageLimit: config.maxPublisherBytes,
+				storageLimit: config.limits.publisherBytes,
 				review: config.requireReview,
 				cliTokens: { count: tokens.n, lastUsedAt: tokens.last },
 				apps: apps.map((app) => ({
@@ -1035,7 +1039,9 @@ export function createStore(options: StoreOptions = {}) {
 				await db.run("DELETE FROM demos WHERE id = $1", [id]);
 				// The node failed (not the app's own deploy check): rest demos a while.
 				if (!(err instanceof HttpError) || err.status >= 500) demoFailedAt = Date.now();
-				return fail(res, err.status ?? 422, err.message);
+				// A node failure is a 502, never a 422 that blames the app.
+				const { status, message } = errorReply(err);
+				return fail(res, status, message);
 			}
 		}
 		const demoView = /^\/api\/v1\/demos\/([a-f0-9]{12})$/.exec(pathname);
@@ -1090,10 +1096,10 @@ export function createStore(options: StoreOptions = {}) {
 			}
 			if (!app) {
 				const count = Number((await db.one("SELECT COUNT(*)::int AS n FROM apps WHERE publisher_id = $1", [me.id]))?.n ?? 0);
-				if (count >= config.maxApps) return fail(res, 403, `a publisher may have at most ${config.maxApps} apps`);
+				if (count >= config.limits.apps) return fail(res, 403, `a publisher may have at most ${config.limits.apps} apps`);
 			}
 			const releases = app ? Number((await db.one("SELECT COUNT(*)::int AS n FROM releases WHERE app_id = $1 AND status != 'removed'", [app.id]))?.n ?? 0) : 0;
-			if (releases >= config.maxReleases) return fail(res, 403, `an app may have at most ${config.maxReleases} releases`);
+			if (releases >= config.limits.releases) return fail(res, 403, `an app may have at most ${config.limits.releases} releases`);
 			const release = await db.tx(async (sql) => {
 				let appId = app?.id;
 				if (!appId) {
@@ -1131,71 +1137,62 @@ export function createStore(options: StoreOptions = {}) {
 			if (row.status === "removed" || row.status === "rejected") return fail(res, 410, `this release was ${row.status}`);
 			const kind = uploadMatch[2];
 			if (kind === "source" && row.source_sha) return fail(res, 409, "this release already has a source archive");
-			const limit = kind === "bundle" ? config.maxBundle : config.maxSource;
+			const limit = kind === "bundle" ? config.maxBundle : config.limits.source;
+			// The upload is renamed into the blob directory or removed here: every
+			// refusal and every failure must leave nothing behind.
 			const tmp = join(tmpDir, `${row.id}-${randomBytes(8).toString("hex")}.tgz`);
-			const received = await receive(req, tmp, limit);
-			const expected = String(req.headers["x-content-sha256"] ?? "").toLowerCase();
-			if (expected && expected !== received.sha) {
-				rmSync(tmp, { force: true });
-				return fail(res, 422, "the upload does not match X-Content-Sha256");
-			}
+			try {
+				const received = await receive(req, tmp, limit);
+				const expected = String(req.headers["x-content-sha256"] ?? "").toLowerCase();
+				if (expected && expected !== received.sha) return fail(res, 422, "the upload does not match X-Content-Sha256");
 
-			if (kind === "bundle") {
-				if (row.bundle_sha) {
-					rmSync(tmp, { force: true });
-					return fail(res, 409, "this release already has a bundle");
+				if (kind === "bundle") {
+					if (row.bundle_sha) return fail(res, 409, "this release already has a bundle");
+					try {
+						await readBundle(tmp);
+					} catch (err) {
+						if (err instanceof BundleError) return fail(res, 422, `invalid bundle: ${err.message}`);
+						throw err;
+					}
+					await checkQuota(me.id, received.size);
+					const blob = join(blobsDir, `${received.sha}.tgz`);
+					renameSync(tmp, blob); // same filesystem: atomic
+					const status = config.requireReview ? "pending" : "published";
+					const won = await db.tx(async (sql) => {
+						// Compare-and-set: two uploads can both pass the read above, but
+						// only one may become the bundle of this release. The loser's
+						// blob is removed instead of leaking outside the quota.
+						const changed = await sql.run("UPDATE releases SET bundle_sha = $1, bundle_size = $2, status = 'pending' WHERE id = $3 AND bundle_sha IS NULL", [
+							received.sha,
+							received.size,
+							row.id,
+						]);
+						if (!changed) return false;
+						// Without review a release goes straight out; the moderation
+						// site still checks it afterwards and can take it down.
+						if (status === "published") await publishRelease(sql, row.id);
+						await logEvent(sql, me.name, status === "published" ? "release.publish" : "release.submit", `${row.ref}@${row.version}`, `sha256:${received.sha}`);
+						return true;
+					});
+					if (!won) {
+						await deleteBlobIfUnused(received.sha);
+						return fail(res, 409, "another upload already completed this release");
+					}
+					return json(res, 201, { release: { id: row.id, version: row.version, status, bundleSha256: received.sha, bundleSize: received.size } });
 				}
-				try {
-					await readBundle(tmp);
-				} catch (err) {
-					rmSync(tmp, { force: true });
-					if (err instanceof BundleError) return fail(res, 422, `invalid bundle: ${err.message}`);
-					throw err;
-				}
-				const used = await appStorage(me.id);
-				if (used + received.size > config.maxPublisherBytes) {
-					rmSync(tmp, { force: true });
-					return fail(res, 413, `publisher storage limit is ${bytes(config.maxPublisherBytes)}`);
-				}
-				const blob = join(blobsDir, `${received.sha}.tgz`);
-				renameSync(tmp, blob); // same filesystem: atomic
-				const status = config.requireReview ? "pending" : "published";
-				const won = await db.tx(async (sql) => {
-					// Compare-and-set: two uploads can both pass the read above, but
-					// only one may become the bundle of this release. The loser's
-					// blob is removed instead of leaking outside the quota.
-					const changed = await sql.run("UPDATE releases SET bundle_sha = $1, bundle_size = $2, status = 'pending' WHERE id = $3 AND bundle_sha IS NULL", [
-						received.sha,
-						received.size,
-						row.id,
-					]);
-					if (!changed) return false;
-					// Without review a release goes straight out; the moderation
-					// site still checks it afterwards and can take it down.
-					if (status === "published") await publishRelease(sql, row.id);
-					await logEvent(sql, me.name, status === "published" ? "release.publish" : "release.submit", `${row.ref}@${row.version}`, `sha256:${received.sha}`);
-					return true;
-				});
-				if (!won) {
-					await deleteBlobIfUnused(received.sha);
-					return fail(res, 409, "another upload already completed this release");
-				}
-				return json(res, 201, { release: { id: row.id, version: row.version, status, bundleSha256: received.sha, bundleSize: received.size } });
-			}
 
-			if ((await appStorage(me.id)) + received.size > config.maxPublisherBytes) {
+				await checkQuota(me.id, received.size);
+				const blob = join(blobsDir, `source-${received.sha}.tgz`);
+				if (!existsSync(blob)) renameSync(tmp, blob);
+				const changed = await db.run("UPDATE releases SET source_sha = $1, source_size = $2 WHERE id = $3 AND source_sha IS NULL", [received.sha, received.size, row.id]);
+				if (!changed) {
+					await deleteBlobIfUnused(received.sha, "source");
+					return fail(res, 409, "another source archive already completed this release");
+				}
+				return json(res, 201, { release: { id: row.id, version: row.version, sourceSha256: received.sha, sourceSize: received.size } });
+			} finally {
 				rmSync(tmp, { force: true });
-				return fail(res, 413, `publisher storage limit is ${bytes(config.maxPublisherBytes)}`);
 			}
-			const blob = join(blobsDir, `source-${received.sha}.tgz`);
-			if (!existsSync(blob)) renameSync(tmp, blob);
-			else rmSync(tmp, { force: true });
-			const changed = await db.run("UPDATE releases SET source_sha = $1, source_size = $2 WHERE id = $3 AND source_sha IS NULL", [received.sha, received.size, row.id]);
-			if (!changed) {
-				await deleteBlobIfUnused(received.sha, "source");
-				return fail(res, 409, "another source archive already completed this release");
-			}
-			return json(res, 201, { release: { id: row.id, version: row.version, sourceSha256: received.sha, sourceSize: received.size } });
 		}
 
 		// Owner operations: yank, delete release, delete app.
