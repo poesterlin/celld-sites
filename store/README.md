@@ -237,6 +237,28 @@ A release row exists before its bundle does; the upload is the second step, so
 a bad manifest fails before a large body is sent and abandoned uploads are
 cleaned up after 24 hours.
 
+### Search
+
+`GET /api/v1/apps?q=` is a Postgres full-text search, not a substring match.
+Each app has a stored `search tsvector` built from its name and ref (weight A),
+summary and tags (B) and description (C), with a GIN index. The text search
+configuration `store_search` is English with the `unaccent` dictionary in front
+of the stemmer, so `cafe` and `Café` are the same word and `boards` finds
+`board`. Queries use `websearch_to_tsquery`, so `"quoted phrases"`, `OR` and
+`-excluded` words work.
+
+Because a tsquery needs whole words, one trigram index on
+`lower(name || ' ' || summary)` covers the rest: a substring of the title covers
+half-typed words (`pinb`), and `word_similarity` (`<%`, threshold 0.45) covers
+typos (`pinbord`). Results are ranked exact name first, then name prefix, then
+`ts_rank_cd` (name and ref before summary, description last), then trigram
+closeness, then downloads. LIKE wildcards in the query are escaped, so `%` and
+`_` are searched for, not interpreted.
+
+Both `pg_trgm` and `unaccent` are trusted extensions, so the database owner can
+create them; the migration does that itself. PGlite only exposes contrib
+modules passed to it at creation, which `openDb` does.
+
 ### Names
 
 Every app is `<publisher>/<app>` (`alice/my-app`): the publisher part
@@ -328,7 +350,7 @@ in answers 403 with the reason.
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | GET | `/api/health` | – | liveness and counts |
-| GET | `/api/v1/apps?q=&category=&tag=&limit=&offset=` | – | catalog search (`q` also matches tags) |
+| GET | `/api/v1/apps?q=&category=&tag=&limit=&offset=` | – | catalog search (`q` is full-text over name, summary, tags and description; see §Search) |
 | GET | `/api/v1/categories` | – | the fixed categories with listed-app counts |
 | GET | `/api/v1/apps/:publisher/:app` | – | app + published releases (owner token also sees pending) |
 | GET | `/api/v1/apps/:publisher/:app/releases/:version/download` | – | bundle, `X-Bundle-Sha256` |
