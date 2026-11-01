@@ -28,32 +28,25 @@ function fakeNode(declared: Record<string, string | null> = {}, status = 200) {
 		const res = await f(`http://node/__admin${path}`, { method, body });
 		return { status: res.status, json: await res.json().catch(() => null) };
 	};
-	return { f: f as typeof fetch, call, pushed };
+	return { call, pushed };
 }
 
 function make(declared = {}, extra: any = {}, status = 200) {
 	const node = fakeNode(declared, status);
-	const notes: string[] = [];
-	const core = createCore(
-		{ origin: ORIGIN, key: KEY, secret: KEY, dbPath: ":memory:", celld: { call: node.call }, ntfy: "http://ntfy/topic", ...extra },
-		{
-			fetch: ((url: any, init: any) => (String(url).startsWith("http://ntfy") ? (notes.push(init.body), Promise.resolve(new Response("ok"))) : node.f(url, init))) as typeof fetch,
-		},
-	);
+	const core = createCore({ origin: ORIGIN, key: KEY, secret: KEY, dbPath: ":memory:", celld: { call: node.call }, ...extra });
 	core.saveProvider("test", { kind: "oidc", name: "Tsidp", issuer: "http://idp.test", clientId: "c", clientSecret: "s" });
-	return { core, node, notes, pid: "tsidp" };
+	return { core, node, pid: "tsidp" };
 }
 const flow = { req: null, invite: null, link: null };
 
-test("the first person becomes the owner; later strangers wait in the queue and ntfy hears about it", () => {
-	const { core, pid, notes } = make();
+test("the first person becomes the owner; later strangers wait in the queue", () => {
+	const { core, pid } = make();
 	const first = core.resolveIdentity(pid, profile("a", "Ada"), flow);
 	assert.equal(first.kind, "signed-in");
 	assert.equal((first as any).user.role, "owner");
 	const stranger = core.resolveIdentity(pid, profile("b", "Bob", "bob@example.com"), flow);
 	assert.equal(stranger.kind, "pending");
 	assert.equal(core.pendingCount(), 1);
-	assert.match(notes[0], /Bob.*waiting/);
 	// Asking again does not create a second person.
 	assert.equal(core.resolveIdentity(pid, profile("b", "Bob"), flow).kind, "pending");
 	assert.equal(core.people().length, 2);
@@ -189,8 +182,7 @@ test("provider secrets are encrypted at rest and never listed", () => {
 test("a whole OIDC login: begin, the provider returns, a person is created; a replayed state fails", async () => {
 	const idp = await mockIssuer("c", "s");
 	try {
-		const node = fakeNode();
-		const core = createCore({ origin: ORIGIN, key: KEY, secret: KEY, dbPath: ":memory:" }, { fetch: node.f });
+		const core = createCore({ origin: ORIGIN, key: KEY, secret: KEY, dbPath: ":memory:" });
 		const pid = core.saveProvider("t", { kind: "oidc", name: "Mock", issuer: idp.issuer, clientId: "c", clientSecret: "s" });
 		const start = new URL(await core.begin(pid, { req: "R" }));
 		idp.nonce = start.searchParams.get("nonce");

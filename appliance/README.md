@@ -66,7 +66,7 @@ Release: tag `vX.Y.Z`, then set `version` in `ha-addon/config.yaml` to it.
 | `HAMSTR_SCHEME` | `https` | `http` only for tests |
 | `OIDC_NAME`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | — | The first sign-in provider (afterwards: Settings → Sign-in). The issuer must be HTTPS. Redirect URI: `https://<HAMSTR_HOST>/auth/callback/<name in lowercase>` |
 | `HAMSTR_STORE`, `HAMSTR_STORE_PUBLIC` | — | The Hamstr Store apps come from |
-| `HAMSTR_NTFY_URL`, `SITE_*`, `CELLD_V8_HEAP_LIMIT_MB`, `CELLD_LTX_RETENTION_SECS`, `S3_FSYNC` | as in the compose stack | See `.env.example` in the project root |
+| `SITE_*`, `CELLD_V8_HEAP_LIMIT_MB`, `CELLD_LTX_RETENTION_SECS`, `S3_FSYNC` | as in the compose stack | See `.env.example` in the project root |
 
 With TLS, the install's name is the shell (`https://k3x9.hamstr.app`), grains
 are `grain-<id>.k3x9.hamstr.app`, and any other name below it is a celld site.

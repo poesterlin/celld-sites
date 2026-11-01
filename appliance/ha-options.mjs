@@ -18,7 +18,6 @@ const map = {
 	oidc_client_id: "OIDC_CLIENT_ID",
 	oidc_client_secret: "OIDC_CLIENT_SECRET",
 	store: "HAMSTR_STORE",
-	ntfy_url: "NTFY_URL",
 };
 const quote = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
 const out = [];

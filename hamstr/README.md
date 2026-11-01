@@ -21,8 +21,8 @@ built on a celld-sites node. A hamster hoards *grains*; so does Hamstr.
   such as tsidp, GitHub, passkeys) and tells each app who is visiting and what
   they may do. Apps contain no login code.
 - **People are managed in Hamstr.** Whoever signs in first owns it. Others
-  come with an invite link or wait for an admin to let them in (with an ntfy
-  notice); a trusted provider can let its people straight in. *Settings* has
+  come with an invite link or wait for an admin to let them in; a trusted
+  provider can let its people straight in. *Settings* has
   People, Groups, Sites, Sign-in methods and Activity; *Your account* lists
   your sign-in methods, passkeys and sessions.
 - **It signs people in for celld sites too.** A site with `"auth": "required"`

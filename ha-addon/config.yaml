@@ -47,4 +47,3 @@ schema:
   oidc_client_id: str?
   oidc_client_secret: password?
   store: str?
-  ntfy_url: url?

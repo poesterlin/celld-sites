@@ -397,8 +397,6 @@ services:
       MODERATION_PASSWORD: ${MODERATION_PASSWORD:?Set MODERATION_PASSWORD in .env (openssl rand -base64 18)}
       STORE_PUBLIC_URL: https://${STORE_HOST:-store.example.com}
       STORE_CLIENT_IP_HEADER: ${STORE_CLIENT_IP_HEADER:-x-real-ip}
-      # "A release is waiting for review" (an ntfy topic URL; empty = none).
-      MODERATION_NTFY_URL: ${MODERATION_NTFY_URL:-}
       # Policy (see store/README.md, "Moderation"). Defaults: review from 0.4,
       # block automatically from 0.9, a person approves everything except
       # low-risk releases of publishers marked trusted.
@@ -478,8 +476,6 @@ services:
       HAMSTR_ADMINS: ${HAMSTR_ADMINS:-}
       # Shared with the router so celld sites can sign people in here.
       AUTH_KEY: ${AUTH_KEY:-}
-      # "Someone is waiting for approval" (an ntfy topic URL; empty = none).
-      NTFY_URL: ${HAMSTR_NTFY_URL:-}
     volumes:
       - hamstr-data:/data
     read_only: true

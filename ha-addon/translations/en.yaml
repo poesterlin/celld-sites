@@ -42,6 +42,3 @@ configuration:
     name: Client ID
   oidc_client_secret:
     name: Client secret
-  ntfy_url:
-    name: ntfy topic
-    description: Optional. Notified when someone waits for approval.

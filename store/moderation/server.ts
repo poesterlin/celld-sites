@@ -108,7 +108,6 @@ export interface ModerationOptions {
 	storeUrl?: string;
 	policy?: Partial<Policy>;
 	classifier?: ClassifierConfig | null;
-	ntfyUrl?: string;
 	/** Run the check worker (tests drive it by hand). */
 	worker?: boolean;
 	logging?: boolean;
@@ -150,7 +149,6 @@ export function createModeration(options: ModerationOptions = {}) {
 		storeUrl: String(options.storeUrl ?? process.env.STORE_PUBLIC_URL ?? "").replace(/\/+$/, ""),
 		policy: { ...policyFromEnv(), ...options.policy },
 		classifier: options.classifier === undefined ? classifierFromEnv() : options.classifier,
-		ntfyUrl: options.ntfyUrl ?? process.env.MODERATION_NTFY_URL ?? "",
 		worker: options.worker !== false,
 		logging: options.logging !== false,
 	};
@@ -739,11 +737,6 @@ export function createModeration(options: ModerationOptions = {}) {
 	server.requestTimeout = 60_000;
 	server.headersTimeout = 15_000;
 
-	async function notify(message: string) {
-		if (!config.ntfyUrl) return;
-		await fetch(config.ntfyUrl, { method: "POST", body: message, headers: { title: "Store release to review", tags: "mag" }, signal: AbortSignal.timeout(5000) });
-	}
-
 	return {
 		config,
 		server,
@@ -756,7 +749,7 @@ export function createModeration(options: ModerationOptions = {}) {
 		async listen(port = config.port, host = config.host): Promise<AddressInfo> {
 			if (!db) db = await openDb({ url: config.databaseUrl });
 			await migrate(db);
-			checker = createChecker({ db, blobsDir, policy: config.policy, classifier: config.classifier, notify, log: config.logging ? console.log : () => {} });
+			checker = createChecker({ db, blobsDir, policy: config.policy, classifier: config.classifier, log: config.logging ? console.log : () => {} });
 			if (config.worker) checker.start();
 			return new Promise((resolvePromise, reject) => {
 				server.once("error", reject);

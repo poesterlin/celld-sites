@@ -35,8 +35,6 @@ export interface CheckerOptions {
 	blobsDir: string;
 	policy?: Partial<Policy>;
 	classifier?: ClassifierConfig | null;
-	/** Called when a release starts waiting for a person (ntfy, tests). */
-	notify?: (message: string) => void | Promise<void>;
 	log?: (message: string) => void;
 }
 
@@ -56,7 +54,7 @@ export async function bundleFiles(file: string): Promise<{ source: string; files
 	return { source: meta.code.source, files, code: meta.code, blobs: meta.blobs };
 }
 
-export function createChecker({ db, blobsDir, policy: over = {}, classifier = null, notify, log = console.log }: CheckerOptions) {
+export function createChecker({ db, blobsDir, policy: over = {}, classifier = null, log = console.log }: CheckerOptions) {
 	const policy: Policy = { ...DEFAULT_POLICY, ...over };
 
 	/** New network access compared with the last published release. */
@@ -179,9 +177,6 @@ export function createChecker({ db, blobsDir, policy: over = {}, classifier = nu
 			return done;
 		});
 		log(`moderation: ${target} → ${verdict} (risk ${risk.toFixed(2)})${action ? `, ${action}` : ""}`);
-		if (notify && !action && (row.status === "pending" || verdict !== "allow")) {
-			await Promise.resolve(notify(`${target} by ${row.publisher}: ${verdict}, risk ${risk.toFixed(2)}${findings[0] && findings[0].risk > 0 ? ` (${findings[0].title})` : ""}`)).catch(() => {});
-		}
 	}
 
 	/** One pass: requeue stuck checks, then check what is new. Returns how many

@@ -103,8 +103,6 @@ export interface CoreOptions {
 	oidc?: { issuer: string; clientId: string; clientSecret: string; name?: string };
 	/** HMAC key shared with the celld router, so celld sites can sign people in here. */
 	authKey?: string;
-	/** ntfy topic URL for "someone is waiting for approval". */
-	ntfy?: string;
 	/** Before accounts: who was an admin (HAMSTR_ADMINS). Only read to import existing people. */
 	admins?: string[];
 	grainCookieMode?: string;
@@ -142,7 +140,6 @@ export function createCore(options: CoreOptions = {}) {
 			name: env.OIDC_NAME ?? "",
 		},
 		authKey: options.authKey ?? env.AUTH_KEY ?? "",
-		ntfy: options.ntfy ?? env.NTFY_URL ?? "",
 		admins: options.admins ?? list(env.HAMSTR_ADMINS),
 		auth: String(options.auth ?? env.HAMSTR_AUTH ?? "required"),
 		grainPorts: String(options.grainPorts ?? env.HAMSTR_GRAIN_PORTS ?? "20000-20999"),
@@ -248,12 +245,10 @@ export function createCore(options: CoreOptions = {}) {
 	const accounts = createAccounts({
 		origin: shellOrigin,
 		base: "/auth",
-		peopleUrl: `${shellOrigin}/settings/people`,
 		secret: config.secret,
 		key: config.authKey || undefined,
 		dbPath: join(config.dataDir, "auth.db"),
 		celld: { call: (method, path, body) => celld.call(method, path, body) },
-		ntfy: config.ntfy || undefined,
 		hideSite: (site) => site.startsWith(config.grainPrefix),
 	});
 	const seeded = seedAccounts();

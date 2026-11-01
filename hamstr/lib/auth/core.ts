@@ -22,8 +22,6 @@ export interface Config {
 	origin: string;
 	/** Path the sign-in routes live under, e.g. "/auth" (callbacks, invites). */
 	base?: string;
-	/** Where admins review people, for the "someone is waiting" notice. */
-	peopleUrl?: string;
 	/** Encrypts provider secrets at rest. */
 	secret: string;
 	/** HMAC key shared with the celld router (AUTH_KEY). Without it, celld sites
@@ -35,12 +33,9 @@ export interface Config {
 	/** The celld admin API (Hamstr's client), to list sites and push mode overrides.
 	 *  `path` is below /__admin; `body` is JSON text. */
 	celld?: { call(method: string, path: string, body?: string): Promise<{ status: number; json: any }> };
-	/** ntfy topic URL for "someone is waiting" notifications. */
-	ntfy?: string;
 }
 
 export interface Deps {
-	fetch?: typeof fetch;
 	now?: () => number;
 }
 
@@ -60,7 +55,6 @@ export interface Rule {
 
 export function createCore(config: Config, deps: Deps = {}) {
 	const db: DatabaseSync = openDb(config.dbPath);
-	const doFetch = deps.fetch ?? fetch;
 	const now = deps.now ?? (() => Date.now());
 	const secs = () => Math.floor(now() / 1000);
 	const origin = config.origin.replace(/\/$/, "");
@@ -89,12 +83,6 @@ export function createCore(config: Config, deps: Deps = {}) {
 
 	// The passkey "provider" always exists; it has no config.
 	run("INSERT OR IGNORE INTO providers (id, kind, name, enabled, created_at) VALUES ('passkey', 'passkey', 'Passkey', 1, ?)", now());
-
-	// ---------------------------------------------------------------- notify
-	function notify(title: string, message: string) {
-		if (!config.ntfy) return;
-		doFetch(config.ntfy, { method: "POST", headers: { Title: title, Tags: "key" }, body: message }).catch(() => {});
-	}
 
 	// ----------------------------------------------------------------- users
 	const groupsOf = (userId: string): string[] =>
@@ -480,7 +468,6 @@ export function createCore(config: Config, deps: Deps = {}) {
 		const via = first ? "first" : auto ? "auto-approve" : "request";
 		audit(user.id, status === "active" ? "person.join" : "person.request", pid, { via, name: profile.name });
 		if (status === "active") return { kind: "signed-in", user, req, created: true };
-		notify("Access request", `${user.name}${profile.email ? ` (${profile.email})` : ""} is waiting for approval at ${config.peopleUrl ?? `${origin}/people`}`);
 		return { kind: "pending", user };
 	}
 
