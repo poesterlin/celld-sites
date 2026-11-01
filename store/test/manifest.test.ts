@@ -98,6 +98,13 @@ describe("manifest validation", () => {
 			assert.throws(() => validateEgressHost(bad), ManifestError, bad);
 		}
 	});
+	it("accepts known devices and rejects others", () => {
+		assert.deepEqual(validateManifest({ ...manifest(), devices: ["Microphone", "microphone"] }).devices, ["microphone"]);
+		assert.equal("devices" in validateManifest(manifest()), false);
+		assert.throws(() => validateManifest({ ...manifest(), devices: ["camera"] }), /unknown device/);
+		assert.throws(() => validateManifest({ ...manifest(), devices: "microphone" }), /array/);
+	});
+
 	it("limits tags and egress lists", () => {
 		assert.throws(() => validateManifest({ ...manifest(), tags: Array.from({ length: 9 }, (_, i) => `t${i}`) }), /at most 8/);
 		assert.throws(() => validateManifest({ ...manifest(), egress: Array.from({ length: 11 }, (_, i) => `h${i}.example.com`) }), /at most 10/);

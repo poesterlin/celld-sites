@@ -15,7 +15,7 @@ const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TLD = /^(?:[a-z][a-z0-9-]*|xn--[a-z0-9-]+)$/;
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const INTERNAL = [".internal", ".local", ".localhost", ".home.arpa", ".test", ".invalid", ".example", ".onion"];
-const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "category", "tags", "egress", "permissions", "roles", "instances", "export"]);
+const FIELDS = new Set(["schema", "slug", "name", "summary", "description", "version", "license", "homepage", "source", "icon", "category", "tags", "egress", "devices", "permissions", "roles", "instances", "export"]);
 // The store's browse sections. Fixed and short on purpose: a publisher picks
 // one, and free-form `tags` stay keywords for search, so the filter row never
 // grows with the catalog. Adding one is a store change, not a publisher's.
@@ -30,6 +30,12 @@ export const CATEGORIES = {
 	learning: "Learning",
 	tools: "Tools",
 	developer: "Developer",
+} as const;
+
+/** Browser hardware an app may ask for. Hamstr shows each one at install and
+ *  only then lets the app's frame use it (the browser still asks the person). */
+export const DEVICES = {
+	microphone: "Microphone",
 } as const;
 
 const PERMISSION_ID = /^[a-z][a-z0-9-]{0,30}$/;
@@ -147,6 +153,13 @@ export function validateManifest(input) {
 	if (input.instances !== undefined && input.instances !== "single" && input.instances !== "many") fail('instances must be "single" or "many"');
 	const instances = input.instances === "single" ? { instances: "single" } : {};
 
+	let devices = [];
+	if (input.devices !== undefined) {
+		if (!Array.isArray(input.devices)) fail(`devices must be an array of: ${Object.keys(DEVICES).join(", ")}`);
+		devices = [...new Set(input.devices.map((d) => String(d).trim().toLowerCase()))];
+		for (const d of devices) if (!Object.hasOwn(DEVICES, d)) fail(`unknown device: ${d} (use ${Object.keys(DEVICES).join(", ")})`);
+	}
+
 	// Hamstr: a GET path in the app that answers with one grain's data as a file
 	// (JSON, CSV, a zip, ...). Hamstr calls it as the owner for "Download data".
 	if (input.export !== undefined) {
@@ -157,7 +170,7 @@ export function validateManifest(input) {
 	}
 	const exportPath = input.export === undefined ? {} : { export: input.export };
 
-	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, ...(category && { category }), tags, egress, permissions, ...instances, ...exportPath };
+	return { schema: 1, slug, name, summary, description, version, license, homepage, source, icon, ...(category && { category }), tags, egress, ...(devices.length && { devices }), permissions, ...instances, ...exportPath };
 }
 
 /** Optional permissions, read by Hamstr: what the app checks (sent in

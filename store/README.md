@@ -340,7 +340,7 @@ path in the app (`"/export"`) that answers with one grain's data as a file;
 Hamstr offers it to owners as *Download data*.
 
 Strict by design: unknown fields are rejected so a typo cannot silently drop a
-permission. `egress` is the only permission; Durable Objects and storage are
+permission. `egress` and `devices` are the only permissions; Durable Objects and storage are
 implicitly scoped to the app's site id. Egress entries must be public,
 fully-qualified hostnames — no IPs, wildcards, ports, credentials, single
 labels, internal suffixes or numeric TLDs.
@@ -390,6 +390,12 @@ storage billing. See §8.
 ---
 
 ## 5. Hosting the store and going public
+
+`devices` (`["microphone"]`) is for grains that need browser hardware. Hamstr
+lists it in the install dialog like network hosts, asks the admin to allow it,
+and only then lets the app's frame use it (`allow="microphone"`); the browser
+still asks the person. Browsers only provide the microphone on https (or
+localhost), so Hamstr warns, in plain words, when it is opened over http.
 
 A personal Hamstr does not run a store; it points `HAMSTR_STORE` at one. The
 root `compose.yaml` includes the store (and its demo node) for the host that
