@@ -203,15 +203,15 @@ What Hamstr adds on top of [docs/SECURITY.md](../docs/SECURITY.md):
 - **Sign-in** uses the authorization code flow with PKCE, `state` and `nonce`;
   the ID token's signature (JWKS), issuer, audience and expiry are checked.
 - **Cookie mode.** If the shell and the grains share a registrable domain
-  (`hamstr.oesterlin.dev`, `grain-*.oesterlin.dev`) the grain cookie is
+  (`hamstr.example.com`, `grain-*.example.com`) the grain cookie is
   `SameSite=Lax`. On different sites it is `SameSite=None; Partitioned` (CHIPS),
   which Chrome, Edge and Firefox support; Safari may not.
 
 Limits worth knowing:
 
-- **Same parent domain.** Grains at `grain-*.oesterlin.dev` share the parent
+- **Same parent domain.** Grains at `grain-*.example.com` share the parent
   domain with your other services. App JavaScript can still set
-  `document.cookie = "…; domain=oesterlin.dev"` (the proxy only filters
+  `document.cookie = "…; domain=example.com"` (the proxy only filters
   `Set-Cookie` headers). For apps you don't trust, use a separate grain domain.
 - The runtime boundary is celld's (isolates in one process), not a VM: see the
   hostile-tenant checklist in docs/SECURITY.md.

@@ -86,12 +86,12 @@ export function validateVersion(value) {
 	return value;
 }
 
-/** An app's address in a store: <publisher>/<app>, e.g. oesterlin/wichteln.
+/** An app's address in a store: <publisher>/<app>, e.g. alice/my-app.
  *  The publisher part is the account that publishes it. */
 export function validateAppRef(value) {
 	const [publisher, slug, ...rest] = String(value ?? "").split("/");
 	if (rest.length || !publisher || !slug || !PUBLISHER.test(publisher) || !SLUG.test(slug)) {
-		throw new ManifestError(`apps are named <publisher>/<app>, e.g. oesterlin/wichteln (got ${JSON.stringify(String(value ?? ""))})`);
+		throw new ManifestError(`apps are named <publisher>/<app>, e.g. alice/my-app (got ${JSON.stringify(String(value ?? ""))})`);
 	}
 	return `${publisher}/${slug}`;
 }

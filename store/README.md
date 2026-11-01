@@ -236,7 +236,7 @@ cleaned up after 24 hours.
 
 ### Names
 
-Every app is `<publisher>/<app>` (`oesterlin/wichteln`): the publisher part
+Every app is `<publisher>/<app>` (`alice/my-app`): the publisher part
 is the account that publishes it, the app part is the manifest's `slug`. A
 manifest never names its namespace, so it cannot claim someone else's. Two
 publishers can both have a `notes`; nobody can claim a bare `notes` for
@@ -245,14 +245,14 @@ everyone, which is where npm's squatting and typosquatting live.
 That makes publisher names the thing impersonators go after, so registration
 refuses reserved names (`hamstr`, `admin`, `official`, `support`, big brands,
 also with suffixes like `-official` or `-app`) and names that read the same as
-an existing one once dashes and look-alike characters are folded (`0esterlin`,
-`oester1in`, `oesterlin-app`). Names one letter from another publisher's, or
+an existing one once dashes and look-alike characters are folded (`4lice`,
+`alic3`, `alice-app`). Names one letter from another publisher's, or
 containing a brand, are allowed but every release of theirs goes to a person
 (see §5). Publisher names cannot be changed: they are part of every app's
 address.
 
 Apps from before namespaces still answer at their old bare address
-(`/api/v1/apps/wichteln`, `/apps/wichteln`) by redirect; a new app never gets
+(`/api/v1/apps/my-app`, `/apps/my-app`) by redirect; a new app never gets
 one. Hamstr records the full name of every installed app and refuses an
 "update" that would swap in another publisher's app of the same name.
 

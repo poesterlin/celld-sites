@@ -10,7 +10,7 @@
 # on to it.
 #
 # CELLD_COMPOSE_DIR points the deploy at another compose project (e.g. the
-# pull-only production one in ~/projects/services/celld-sites-deploy) instead of
+# pull-only production one in /path/to/celld-sites-deploy) instead of
 # this checkout. The project name, and therefore the volumes, stay the same.
 set -eu
 site="${1:?usage: tools/deploy.sh <site-dir> <hostname>}"

@@ -51,7 +51,7 @@ agent() {
 	docker run "$@" --rm --network "container:$RUN-server" \
 		-v "$WORK/data:/data" -v "$WORK/pebble-ca.pem:/pebble-ca.pem:ro" \
 		-e NAME_SERVICE_URL=http://127.0.0.1:8080 -e ALLOW_INSECURE_SERVICE=1 \
-		-e ADDRESS_IPV4=100.82.130.136 \
+		-e ADDRESS_IPV4=100.64.0.10 \
 		-e ACME_SERVER=https://127.0.0.1:14000/dir -e LEGO_CA_CERTIFICATES=/pebble-ca.pem \
 		-e DNS_RESOLVERS=127.0.0.1:53 \
 		`# lego looks up ns1.hamstr.test with the system resolver, which does not know` \

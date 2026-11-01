@@ -34,7 +34,7 @@ the path.
 
 ```sh
 hamstr node http://127.0.0.1:8080 --admin-token-file ~/.config/celld/admin-token
-hamstr install oesterlin/secret-santa --host santa.example.com
+hamstr install alice/secret-santa --host santa.example.com
 hamstr update --all
 hamstr list
 ```

@@ -115,12 +115,12 @@ describe("install lifecycle", () => {
 		assert.equal((await set({ ipv6: "2001:db8::1" })).status, 422);
 		assert.equal((await set({ ipv4: "nonsense" })).status, 400);
 		assert.equal((await set({})).status, 400);
-		const res = await set({ ipv4: "100.82.130.136", ipv6: "fd7a:115c:a1e0::1" });
+		const res = await set({ ipv4: "100.64.0.10", ipv6: "fd7a:115c:a1e0::1" });
 		assert.equal(res.status, 200);
-		assert.equal((await res.json()).ipv4, "100.82.130.136");
+		assert.equal((await res.json()).ipv4, "100.64.0.10");
 
 		for (const name of [install.hostname, `grain-abc.${install.hostname}`, `a.b.${install.hostname}`]) {
-			assert.deepEqual(await resolver.resolve4(name), ["100.82.130.136"], name);
+			assert.deepEqual(await resolver.resolve4(name), ["100.64.0.10"], name);
 			assert.deepEqual(await resolver.resolve6(name), ["fd7a:115c:a1e0::1"], name);
 		}
 		assert.equal(await dnsCode(resolver.resolveTxt(install.hostname)), "ENODATA");

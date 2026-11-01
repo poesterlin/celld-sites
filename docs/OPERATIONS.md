@@ -61,7 +61,7 @@ Optional parts are compose profiles. Turn them on with `COMPOSE_PROFILES`:
 To point the tools at the hosting stack, set `CELLD_COMPOSE_DIR`:
 
 ```sh
-CELLD_COMPOSE_DIR=~/projects/services/celld-sites-deploy tools/deploy.sh sites/blog blog.example.com
+CELLD_COMPOSE_DIR=/path/to/celld-sites-deploy tools/deploy.sh sites/blog blog.example.com
 ```
 
 CI publishes these images on every push to `main` and on every `v*` tag:

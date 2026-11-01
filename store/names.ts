@@ -1,5 +1,5 @@
 // Publisher names are namespaces (every app is <publisher>/<app>), so they are
-// what impersonation targets: "0esterlin", "hamstr-official", "paypal". The
+// what impersonation targets: "4lice", "hamstr-official", "paypal". The
 // store refuses names that are reserved or read the same as an existing one;
 // the moderation checks flag names that are merely close or carry a brand.
 

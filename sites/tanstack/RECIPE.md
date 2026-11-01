@@ -177,7 +177,6 @@ export const Route = createFileRoute("/api/notes")({
 ## 8. Testing
 
 ```sh
-cd /home/lab/projects/services/celld-sites
 node tools/pack.mjs sites/tanstack | wc -c     # must be < 10 MB
 tools/deploy.sh sites/tanstack tanstack.test
 docker exec celld-sites-celld-1 curl -s -H 'Host: tanstack.test' http://127.0.0.1:8080/

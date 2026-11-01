@@ -7,8 +7,8 @@ Plex's plex.direct.
 
 ```
 install k3x9 ──register / address / challenges──▶ names service ◀──DNS──── browsers, Let's Encrypt
-     │                                              k3x9.hamstr.app         A    100.82.130.136
-     └── lego ──── DNS-01 ─────▶ Let's Encrypt      *.k3x9.hamstr.app       A    100.82.130.136
+     │                                              k3x9.hamstr.app         A    100.64.0.10
+     └── lego ──── DNS-01 ─────▶ Let's Encrypt      *.k3x9.hamstr.app       A    100.64.0.10
          (key stays on the install)                 _acme-challenge.k3x9…   TXT  (during issuance)
 ```
 

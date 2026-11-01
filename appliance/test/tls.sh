@@ -45,7 +45,7 @@ done
 # owned by root, no environment variables.
 docker volume create "$RUN-data" >/dev/null
 docker run --rm -i -v "$RUN-data:/data" alpine:3 sh -c 'cat > /data/options.json && chown -R root:root /data && chmod 755 /data' <<JSON
-{"tls_mode": "names", "name_service_url": "http://127.0.0.1:9080", "address": "100.82.130.136", "oidc_name": "Tailscale",
+{"tls_mode": "names", "name_service_url": "http://127.0.0.1:9080", "address": "100.64.0.10", "oidc_name": "Tailscale",
  "env": ["ALLOW_INSECURE_SERVICE=1", "ACME_SERVER=https://127.0.0.1:14000/dir", "LEGO_CA_CERTIFICATES=/pebble-ca.pem",
          "DNS_RESOLVERS=127.0.0.1:53", "LEGO_DNS_PROPAGATION_DISABLE_ANS=true"]}
 JSON

@@ -73,7 +73,7 @@ sites/sveltekit/
    ```sh
    npm run build                                          # or let deploy.sh run it
    node tools/pack.mjs sites/sveltekit | wc -c            # must stay under 10 MB
-   cd /home/lab/projects/services/celld-sites && tools/deploy.sh sites/sveltekit sveltekit.test
+   tools/deploy.sh sites/sveltekit sveltekit.test
    docker exec celld-sites-celld-1 curl -s -H 'Host: sveltekit.test' http://127.0.0.1:8080/
    ```
 

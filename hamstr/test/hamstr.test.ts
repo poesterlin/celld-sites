@@ -111,7 +111,7 @@ after(async () => {
 
 describe("cookie mode", () => {
 	it("treats shell and grains on one registrable domain as same-site", () => {
-		assert.equal(siteOf("hamstr.oesterlin.dev"), siteOf("grain-abc.oesterlin.dev"));
+		assert.equal(siteOf("hamstr.example.com"), siteOf("grain-abc.example.com"));
 		assert.notEqual(siteOf("hamstr.localhost"), siteOf("grain-abc.localhost"));
 		assert.notEqual(siteOf("hamstr.test"), siteOf("grain-abc.grains.test"));
 		assert.equal(siteOf("localhost"), "localhost");
