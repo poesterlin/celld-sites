@@ -55,11 +55,12 @@ takes effect on the next request.
 Installing an app downloads the release from the store, verifies its SHA-256
 and contents (the shared bundle validator in `packages/app-format`), uploads the code to celld once, and
 boots it on a throwaway probe site (the deploy check) before anyone can use it.
-A new grain only stages and activates that version: **~65 ms** on this VM. An
+A new grain only stages and activates that version: **~65 ms** on the
+development VM (10 vCPU); measure on your node. An
 app update moves every grain to the new version; their data stays and the
 app's migrations run on first use.
 
-Measured locally against a real celld node (`npm run e2e`): install 230 ms,
+Measured on the development VM against a real celld node (`npm run e2e`): install 230 ms,
 new grain 65 ms, a proxied request ~1.5 ms more than going straight to celld.
 
 ## For app developers

@@ -104,7 +104,8 @@ before granting an app internet access. The hash comes
 from the same store as the bundle, so it detects corruption, not a malicious
 store. Real separation needs a second node (the `celld-demo` pattern). Router
 quotas cannot close items 1 and 2: Durable Object writes and isolate memory
-never pass through the router.
+never pass through the router. Numbers here were measured on the development
+VM (10 vCPU, 8 GB node limit); treat them as orders of magnitude.
 
 1. **One process, one heap, one disk.** Isolates are a capability boundary, not
    a fault boundary. A site can allocate up to the V8 heap limit (celld default
@@ -143,7 +144,7 @@ never pass through the router.
    call that is already executing keeps the old proxy until it returns (bounded
    by the object timeout, 24 s by default).
 6. **The bucket is the source of truth and is not encrypted by this platform.**
-   VersityGW stores objects as files in a Docker volume; VM backups cover them.
+   VersityGW stores objects as files in a Docker volume; host or volume backups cover them.
    Disk encryption and backup access are host-level concerns. Object names are
    site-chosen and stored in plaintext in the index; `/__admin/overview`
    returns them to `READ_TOKEN`, and the LAN dashboard (behind a password) shows

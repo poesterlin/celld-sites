@@ -20,7 +20,7 @@ x-logging: &logging
 services:
   # S3-compatible object store (VersityGW, posix backend) holding celld's state:
   # deployments, site code and assets, and all Durable Object data. Objects are
-  # plain files in the s3-data volume, so the VM backup covers them.
+  # plain files in the s3-data volume, so a host or volume backup covers them.
   s3:
     image: versity/versitygw:v1.10.0
     restart: unless-stopped
@@ -28,7 +28,7 @@ services:
       VGW_BACKEND: posix
       VGW_BACKEND_ARG: /data
       # Flush each object to disk before acknowledging it. celld confirms a write
-      # only once the bucket has it, so without this a VM crash could lose writes
+      # only once the bucket has it, so without this a host crash could lose writes
       # celld already confirmed.
       VGW_FSYNC: ${S3_FSYNC:-true}
       ROOT_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in .env}

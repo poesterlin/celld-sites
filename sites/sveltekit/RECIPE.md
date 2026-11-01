@@ -27,7 +27,7 @@ sites/sveltekit/
 
 ## Setup from scratch
 
-1. Scaffold (run inside `sites/`; `bunx sv create` fails on this machine):
+1. Scaffold (run inside `sites/`; if `bunx` fails to resolve the current directory, use `npx`):
    ```sh
    npx sv@latest create sveltekit --template minimal --types ts --no-add-ons --install npm
    cd sveltekit
@@ -74,7 +74,7 @@ sites/sveltekit/
    npm run build                                          # or let deploy.sh run it
    node tools/pack.mjs sites/sveltekit | wc -c            # must stay under 10 MB
    tools/deploy.sh sites/sveltekit sveltekit.test
-   docker exec celld-sites-celld-1 curl -s -H 'Host: sveltekit.test' http://127.0.0.1:8080/
+   docker compose exec celld curl -s -H 'Host: sveltekit.test' http://127.0.0.1:8080/
    ```
 
 ## Durable Objects
@@ -155,7 +155,7 @@ only navigations.
 - **No `svelte.config.js`.** Adapter and compiler options go in `vite.config.ts`.
 - **`$types` appear after `svelte-kit sync`.** `npm run build` and the
   `prepare` script run it; `svelte-check` fails until it has run once.
-- **Use `npx`, not `bunx`,** for `sv create` on this machine.
+- **Use `npx` for `sv create`** if `bunx` fails to resolve the current directory.
 - **Objects import with relative paths.** `src/objects.ts` imports
   `./lib/note.ts` (relative) rather than `#lib/...`. This is the form that is
   verified to bundle; I did not test the `#lib` alias inside the objects module.
@@ -166,13 +166,12 @@ only navigations.
 
 ## Verified
 
-Environment: node 25.9.0, npm 11.12.1, Svelte CLI 1.1.1, `@sveltejs/kit` 3.1.0,
-`svelte` 5.57.2, `vite` 8.3.5, `typescript` 6.0.3, `svelte-check` 4.7.7,
-`@sveltejs/adapter-cloudflare` 8.0.1, `esbuild` 0.28.2,
-`@sveltejs/vite-plugin-svelte` 7.3.1.
+One run on the development VM; your versions, sizes and timings will differ.
+Environment: Node 25 and npm 11; framework and adapter versions are pinned in
+`package.json` and `package-lock.json`.
 
 Checks run against the node after `tools/deploy.sh sites/sveltekit sveltekit.test`,
-final version `090ac047e5e9`:
+final version `<version>`:
 
 | Check | Result |
 | --- | --- |
@@ -189,7 +188,7 @@ final version `090ac047e5e9`:
 | `GET /api/notes` | HTTP 200, `{"notes":[…newest first…],"total":4}` |
 | Hashed asset `/_app/immutable/entry/start.BMFZUzSL.js` | HTTP 200, `cache-control: public, immutable, max-age=31536000`, `text/javascript` |
 | Counter | 16 → 18 across two page requests (the count goes up by one per `load`) |
-| Persistence across redeploy | before: 2 notes, counter 10; redeploy (version `090ac047e5e9`); after: 2 notes, counter 11 |
+| Persistence across redeploy | before: 2 notes, counter 10; redeploy (version `<version>`); after: 2 notes, counter 11 |
 | HTML escaping | a note with `<b>` renders as `&lt;b>` |
 
 Not verified:
@@ -197,6 +196,5 @@ Not verified:
 - In a real browser: `use:enhance` (pending state, error re-render, no-JS
   fallback). Only the server side of those flows was exercised with curl.
 - Dev mode (`npm run dev`) and the 1-second CPU limit under load.
-- The test host `sveltekit.test` now holds the test notes (ids 1 to 4) and a
-  counter of about 18. There is no delete route; the data lives in the node's
-  Durable Objects.
+- The test host `sveltekit.test` holds the notes and counter from the run.
+  There is no delete route; the data lives in the node's Durable Objects.

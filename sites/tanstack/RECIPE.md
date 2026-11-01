@@ -4,9 +4,9 @@ A React / TanStack Start app that runs as a Cloudflare Workers module on
 celld-sites: SSR per request, Durable Objects for state, a JSON API route and
 hashed static assets. The example is the "notes board" in this directory.
 
-Versions used: TanStack Start 1.169.4, TanStack Router 1.170.46, React 19.3.1,
-Vite 8.3.5, @cloudflare/vite-plugin 1.65.0, @vitejs/plugin-react 6.1.2,
-esbuild 0.28.2, TypeScript 6.0.3, Node 25.9.0, npm 11.12.1.
+Versions are pinned in this directory's `package.json` and `package-lock.json`:
+TanStack Start and Router 1.x, React 19, Vite 8, `@cloudflare/vite-plugin` 1.x,
+Node 25.
 
 ## 1. Scaffold
 
@@ -179,7 +179,7 @@ export const Route = createFileRoute("/api/notes")({
 ```sh
 node tools/pack.mjs sites/tanstack | wc -c     # must be < 10 MB
 tools/deploy.sh sites/tanstack tanstack.test
-docker exec celld-sites-celld-1 curl -s -H 'Host: tanstack.test' http://127.0.0.1:8080/
+docker compose exec celld curl -s -H 'Host: tanstack.test' http://127.0.0.1:8080/
 ```
 
 RPC from curl (generate the body with `node -e` using the site's `seroval`):
@@ -187,7 +187,7 @@ RPC from curl (generate the body with `node -e` using the site's `seroval`):
 ```sh
 ID=<id from dist/server/assets>
 BODY=$(node -e 'const {toJSON}=require("seroval");process.stdout.write(JSON.stringify(toJSON({data:{text:"hi"},context:{}})))')
-docker exec celld-sites-celld-1 curl -s -X POST -H 'Host: tanstack.test' \
+docker compose exec celld curl -s -X POST -H 'Host: tanstack.test' \
   -H 'Origin: http://tanstack.test' -H 'Content-Type: application/json' \
   -H 'Accept: application/json' -H 'x-tsr-serverFn: true' \
   --data-binary "$BODY" "http://127.0.0.1:8080/_serverFn/$ID"
@@ -195,8 +195,10 @@ docker exec celld-sites-celld-1 curl -s -X POST -H 'Host: tanstack.test' \
 
 ## Verified
 
+One run on the development VM; versions, sizes and timings will differ.
+
 Deployed with `tools/deploy.sh sites/tanstack tanstack.test`:
-`{"host":"tanstack.test","version":"06fe752f27a5","assets":3,"sourceBytes":985099}`.
+`{"host":"tanstack.test","version":"<version>","assets":3,"sourceBytes":<bytes>}`.
 
 - **Payload:** `node tools/pack.mjs sites/tanstack | wc -c` = **1,480,929 bytes**
   (about 1.4 MB, under the 10 MB limit). Server code 985,099 bytes; 3 static assets.

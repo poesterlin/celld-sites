@@ -184,12 +184,12 @@ other's names or rounds.
   most every 10 s from its admin state), and for two minutes after the node
   failed to start a demo. A page that still shows the button and gets a 503
   hides it and says demos are busy.
-- The demo node gets 6 GB and 4 CPUs (`DEMO_MEM_LIMIT`, `DEMO_CPUS`). Measured:
-  ~120 MiB idle plus ~17 MiB per running, used demo.
+- The demo node gets 6 GB and 4 CPUs by default (`DEMO_MEM_LIMIT`, `DEMO_CPUS`).
+  Measured on the development VM: ~120 MiB idle plus ~17 MiB per running, used demo.
 - The iframe is sandboxed (`allow-scripts allow-forms allow-same-origin
   allow-popups`, no top navigation). The store's CSP only allows frames from the
   configured demo domain.
-- Temporarily the demo hostnames are LAN-only, like everything else here. Public
+- By default the demo hostnames are LAN-only, as this stack ships them. Public
   demos need wildcard DNS and a wildcard tunnel/cert for `demo-*.<domain>`;
   the app itself (the iframe) must be reachable by the visitor.
 
