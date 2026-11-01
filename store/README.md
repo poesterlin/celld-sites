@@ -46,10 +46,10 @@ turning every utility into a SaaS account.
 **Non-functional**
 
 - **The store never executes publisher code.** No build step, no preview, no
-  sandbox on the store host. It stores bytes and metadata.
+  runtime on the store host. It stores bytes and metadata.
 - **Install is verifiable.** SHA-256 from the catalog, every blob checked
   against its name, paths restricted, then the local deploy check runs the app
-  in the celld sandbox.
+  in the celld isolate.
 - **Permissions are explicit.** Egress is the only capability an app can
   request; the installer shows it and will not grant it without consent.
 - **Cheap to self-host.** One container, one database, one blob directory.
@@ -75,9 +75,12 @@ turning every utility into a SaaS account.
   isolate. A just-used isolate stays resident (celld keeps a small pool); do not
   promise zero RAM for a warm app.
 - "Wakes in 4 ms" is a goal, not a measured promise; measure on the target node.
-- "Sandboxed" means the celld isolate and egress allowlist, not a VM boundary:
-  isolates share one process (see the root `docs/SECURITY.md`). For mutually
-  hostile publishers, run one node per trust tier.
+- "Isolated" means the celld isolate, per-site objects and the egress
+  allowlist, not a VM boundary and **not yet a claim that hostile apps are
+  safely contained**. Isolates share one process (see `docs/SECURITY.md`);
+  hostile-app sandboxing is a goal. The official store moderates releases, but
+  moderation is not a sandbox, and a self-hosted store may run without review.
+  For mutually hostile publishers, run one node per trust tier.
 - "Own the code" is true for the installed bundle; the optional source archive
   is what makes customization easy, and it is not required to run.
 - "Public store" is a catalog, not hosting: publishers pay nothing because the
@@ -120,7 +123,7 @@ data is yours" property.
                                                                       push bundle ─────────▶  celld
                                                                                               deploy check,
                                                                                               activate,
-                                                                                              sandboxed run
+                                                                                              isolated run
                                                                       record installed version
 ```
 
@@ -423,15 +426,17 @@ labels, internal suffixes or numeric TLDs.
   decisions: the database protects the catalog's integrity only as well as the
   store process does.
 - **Demo compromise** is the demo node only: separate bucket, state and admin
-  token, no production credentials. The demo node still executes untrusted app
-  code in the celld sandbox, so keep it resource-capped and ephemeral; a demo
-  session is not a place for real data.
+  token, no production credentials. The demo node still executes app code in the
+  celld isolate, so keep it resource-capped and ephemeral; a demo session is not
+  a place for real data, and the isolate is not a claimed hostile-app sandbox.
 - **Publisher compromise** can publish a new version under that publisher's
   apps and yank them; it cannot activate anything on users' nodes.
 - **Malicious bundle**: never executed by the store; the installer validates
-  structure and hashes, but the *code is untrusted*. The celld isolate, CPU
-  limit and egress allowlist are the real boundary. This is why install shows
-  requested hosts and why `STORE_REQUIRE_REVIEW=1` matters for a public store.
+  structure and hashes, but the *code is untrusted*. The isolate, CPU limit and
+  egress allowlist reduce what a bad app can do, but they are not yet a proven
+  containment boundary for deliberately hostile code. Install shows requested
+  hosts and `STORE_REQUIRE_REVIEW=1` matters for a public store, but neither is
+  a sandbox.
 - **Malicious archive**: regular files and directories only, no traversal,
   bounded compressed/uncompressed sizes and entry counts. The installer never
   extracts to disk — it pipes verified bytes to push.sh, which extracts inside
@@ -551,13 +556,14 @@ why. `allow` still waits for a person, except for publishers a moderator
 marked trusted (`MODERATION_AUTO_APPROVE_TRUSTED=1`, the default) or everyone
 with `MODERATION_AUTO_APPROVE=1`. With `STORE_REQUIRE_REVIEW=0` releases go
 out at once and the checks run afterwards: `block` takes them down, `review`
-lists them under Flagged. `MODERATION_NTFY_URL` notifies when a release waits
-for someone.
+lists them under Flagged.
 
 The rules were tested on a handful of synthetic apps (`test/moderation.test.ts`).
 They catch the crude cases and miss a careful attacker; the classifier has not
 been measured on real submissions. Treat both as triage for a human, not as
-the review.
+the review. None of this is containment: the store cannot make an app safe to
+run, and the runtime does not yet claim to sandbox hostile apps. On the official
+public store, review and takedowns are the main risk reduction.
 
 **Before making it public:**
 

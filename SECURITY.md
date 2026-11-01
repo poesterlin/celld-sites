@@ -1,6 +1,6 @@
 # Security policy
 
-## Read this first: what the sandbox is and is not
+## Read this first: what the isolation is and is not
 
 This project runs Workers-style sites on [celld](https://github.com/denoland/celld),
 which is **alpha** software. Sites run as Dynamic Worker isolates and can only
@@ -14,14 +14,20 @@ every site on a node shares one process, one heap and one disk.
   one node. Memory, background work and storage are not capped per site (see
   [`docs/SECURITY.md`](docs/SECURITY.md), "What is not isolated"). Use one node
   per trust tier if you need that.
-- **Out of the sandbox entirely:** the deploy path. `tools/deploy.sh` runs a
+- **Hostile-app sandboxing is a goal, not a current claim.** The isolation above
+  is real and is the foundation for it, but we do not yet say this runtime can
+  safely contain deliberately hostile code. The official public store moderates
+  what it lists (automated checks, review, takedowns and suspensions); that
+  lowers the risk of a bad app reaching you, but moderation is not a sandbox,
+  and a self-hosted store may run without review.
+- **Outside the isolation boundary:** the deploy path. `tools/deploy.sh` runs a
   site's `npm run build` on the host, so a hostile site is code execution for
   whoever deploys it. Build untrusted code in a throwaway container.
 - Isolation also depends on celld and the V8 engine under it. A celld or V8
   escape is an upstream issue (see below), but tell us too if this repo's
   configuration makes it reachable.
 
-The full threat model and a hostile-tenant checklist are in
+The full threat model and a checklist for code you did not write are in
 [`docs/SECURITY.md`](docs/SECURITY.md). Known limitations listed there are
 documented and accepted; they are not vulnerabilities to report, though ideas
 for closing them are welcome as ordinary issues.

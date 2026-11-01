@@ -39,7 +39,7 @@ hamstr login your-name --store {origin}</code></pre>
 		<h2>2. Describe the app</h2>
 		<p>Add <code>hamstr.json</code> next to the site's <code>celld.json</code>:</p>
 		<pre class="code"><code>{manifest}</code></pre>
-		<p class="dim small">egress is the only permission an app can ask for. Everything else is sandboxed. Apps for Hamstr can also declare permissions, a single instance per person and a data export.</p>
+		<p class="dim small">egress is the only permission an app can ask for. Everything else is isolated. Apps for Hamstr can also declare permissions, a single instance per person and a data export.</p>
 	</section>
 
 	<section class="panel gap-top">

@@ -16,8 +16,13 @@ code as authoritative when they disagree.
 The platform is built for **operator and site author being the same person**.
 Running a site you did not write (an app store, a third-party template, a
 customer's code) moves that site into a hostile-code threat model. The runtime
-boundary below is the part that has been hardened for that; the deploy path and
-the node's process are not (see "Hostile tenant checklist").
+boundary below is designed for that, but we do not yet claim it can safely
+contain deliberately hostile code: that is a goal, not a current guarantee. The
+deploy path and the node's process are not either (see "Checklist: running code
+you did not write").
+
+Moderation on the official public store lowers the chance that a bad app is
+distributed. It is not a sandbox, and it does not change this runtime boundary.
 
 ## What is isolated
 
@@ -95,6 +100,9 @@ cannot silently cross tenants:
 ## What is not isolated
 
 These are accepted for self-hosted, first-party sites. They matter for a store.
+
+Because of the items below, we do not yet describe this runtime as a sandbox for
+deliberately hostile apps. That is a goal, not a current claim.
 
 Apps installed from the Hamstr Store land on the same node as your own sites, so
 every item below applies to them too. Mitigations in place: the CLI refuses to
@@ -224,9 +232,10 @@ Design choices and limits:
   site cookies (people sign in to sites again); rotating `HAMSTR_SECRET` needs
   the provider secrets re-entered.
 
-## Hostile tenant checklist
+## Checklist: running code you did not write
 
-Before running untrusted apps on a shared node:
+Before running an app you did not write on a shared node. These measures reduce
+risk; they do not make the node a hostile-app sandbox:
 
 - Build in a throwaway container with no network, no host mounts except the
   output, and no docker socket. Do not `npm install` a hostile app on the host.

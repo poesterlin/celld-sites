@@ -28,7 +28,8 @@ Nobody wants a server running all year for a tool they use once.
 
 - **An app is a folder.** It has a manifest and a small server. You can read all of it.
 - **Idle apps cost nothing but disk.** Apps start when you open them and stop when memory is needed.
-- **Apps are sandboxed.** No files. No internet, unless you allow it.
+- **Apps are isolated.** No files. No internet, unless you allow it. Each app keeps its data in its own database. We do
+  not yet claim this is a hostile-app sandbox; that is a goal.
 - **Your data is yours.** Each app keeps its data in its own SQLite database, on your machine.
 - **Change anything.** Edit the code yourself, or ask your AI to.
 - **Share what you build.** Publish to the store. Others run it on their own Hamstr, so you never pay for hosting.

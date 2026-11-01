@@ -63,12 +63,12 @@
 		<p class="eyebrow dim">The Hamstr Store</p>
 		<h1>Little apps for your own Hamstr</h1>
 		<p class="dim lead">
-			Small, single-purpose apps. Get one and it runs on your Hamstr, in its own sandbox, with its data on your machine.
+			Small, single-purpose apps. Get one and it runs on your Hamstr, in its own space, with its data on your machine.
 			No accounts, no cloud.
 		</p>
 		<div class="chips">
 			<span class="chip accent">Runs at home</span>
-			<span class="chip">Its own sandbox</span>
+			<span class="chip">Its own space</span>
 			<span class="chip">No internet unless it asks</span>
 		</div>
 	</section>

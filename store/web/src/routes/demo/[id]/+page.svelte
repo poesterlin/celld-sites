@@ -57,14 +57,14 @@
 		</div>
 	</div>
 {:else if !demo}
-	<div class="welcome"><p class="dim"><span class="spinner"></span> Opening the sandbox…</p></div>
+	<div class="welcome"><p class="dim"><span class="spinner"></span> Opening the demo…</p></div>
 {:else}
 	<div class="grain-view">
 		<header class="grain-bar">
 			<a class="icon-button" href={back} aria-label="Back to the app">{@html ICON.back}</a>
 			{#if app}<AppIcon {app} />{/if}
 			<strong class="demo-title">Try {app?.name ?? "this app"}</strong>
-			<span class="chip warn hide-sm">Temporary sandbox</span>
+			<span class="chip warn hide-sm">Temporary demo</span>
 			<span class="spacer"></span>
 			<span class="dim small mono">{clock}</span>
 			<a class="button quiet small" href={demo.url} target="_blank" rel="noopener">{@html ICON.external}<span class="hide-sm">New tab</span></a>

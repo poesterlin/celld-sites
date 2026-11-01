@@ -198,6 +198,8 @@ Each part has its own tests. CI runs them all (`.github/workflows/test.yml`).
 - Sites cannot reach each other's data.
 - Sites have no internet unless you allow it.
 - Sites share one process. Only run code you trust.
+- Hostile-app sandboxing is a goal, not a claim yet. The official store
+  moderates its catalog, which lowers risk; moderation is not containment.
 
 The full threat model is in [SECURITY.md](SECURITY.md).
 

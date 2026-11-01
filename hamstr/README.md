@@ -213,9 +213,13 @@ Limits worth knowing:
 - **Same parent domain.** Grains at `grain-*.example.com` share the parent
   domain with your other services. App JavaScript can still set
   `document.cookie = "…; domain=example.com"` (the proxy only filters
-  `Set-Cookie` headers). For apps you don't trust, use a separate grain domain.
-- The runtime boundary is celld's (isolates in one process), not a VM: see the
-  hostile-tenant checklist in docs/SECURITY.md.
+  `Set-Cookie` headers). For apps you don't trust, use a separate grain domain —
+  that isolates cookies, not the runtime; a separate node is the real
+  separation.
+- The runtime boundary is celld's (isolates in one process), not a VM and not
+  yet a claimed hostile-app sandbox: see the checklist in docs/SECURITY.md. Run
+  apps you trust. Moderation on the official store lowers risk; it is not
+  containment.
 - No Powerbox yet (grains requesting access to each other), no WebSockets
   (celld has none).
 - A backup contains the item's data as stored, readable by anyone who has the

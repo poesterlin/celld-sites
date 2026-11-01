@@ -22,7 +22,7 @@
 		</div>
 		<div class="cap">
 			<span class="cap-icon">{@html ICON.people}</span>
-			<div><strong>Every app in its own sandbox</strong><p class="dim small">No files, no secrets, no internet unless it asks and an admin allows it. Each thing you make keeps its own data.</p></div>
+			<div><strong>Every app in its own space</strong><p class="dim small">No files, no secrets, no internet unless it asks and an admin allows it. Each thing you make keeps its own data.</p></div>
 		</div>
 	</div>
 
@@ -43,7 +43,7 @@
 			<li>Your Hamstr downloads the release and checks its SHA-256.</li>
 			<li>It checks every file's hash, path and size before anything runs.</li>
 			<li>If the app wants internet access, the admin sees exactly which hosts and decides.</li>
-			<li>The app starts in a fresh sandbox. Updating keeps your data.</li>
+			<li>The app starts in a fresh isolated space. Updating keeps your data.</li>
 		</ol>
 	</section>
 
@@ -52,7 +52,15 @@
 		<ul class="steps">
 			<li>The store team sees every app and can remove releases. Publishing does not make code private.</li>
 			<li>Apps are not signed yet. The checksum protects the download, not who wrote it.</li>
-			<li>The sandbox is the security boundary: internet access is opt-in, and data stays on your machine.</li>
+			<li>
+				Hamstr isolates apps from each other and gives them no internet unless you allow it. We do not yet claim
+				this runtime can safely contain deliberately hostile apps — that is a goal, not a promise. Run apps you
+				trust.
+			</li>
+			<li>
+				The official store moderates what it lists: automated checks, review, takedowns and publisher suspensions.
+				That lowers the risk of a bad app reaching you, but moderation is not a sandbox.
+			</li>
 		</ul>
 	</section>
 </div>
