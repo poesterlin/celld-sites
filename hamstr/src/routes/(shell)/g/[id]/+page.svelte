@@ -16,6 +16,21 @@
 	// Back to where it lives: the app's own page, or Home for a single-instance app.
 	const back = $derived(app && app.instances !== "single" ? `/a/${app.slug}` : "/");
 
+	// Only a device the admin approved at install (the manifest's `devices`) is
+	// handed to the app's frame; the browser still asks the person.
+	const frameAllow = $derived(["clipboard-write", "fullscreen", ...(app?.devices ?? [])].join("; "));
+	const needsMic = $derived(Boolean(app?.devices?.includes("microphone")));
+	// Browsers allow the microphone on https and localhost only.
+	const micBlocked = $derived.by(() => {
+		if (!needsMic || !frameSrc) return false;
+		try {
+			const u = new URL(frameSrc);
+			return !(u.protocol === "https:" || u.hostname === "localhost" || u.hostname.endsWith(".localhost") || /^127\./.test(u.hostname));
+		} catch {
+			return false;
+		}
+	});
+
 	let title = $state("");
 	let frameSrc = $state("");
 	let titleInput = $state(null);
@@ -139,6 +154,12 @@
 				</a>
 				<MoreMenu items={menu} />
 			</div>
+			{#if micBlocked}
+				<div class="callout warn grain-warn" role="alert">
+					<strong>{app.name} needs the microphone, but this page is not on https.</strong>
+					<span class="small">Your browser blocks the microphone on plain http addresses, so the app can't listen here. Open Hamstr over https (a Tailscale or Cloudflare link, or a reverse proxy with a certificate) and it will work.</span>
+				</div>
+			{/if}
 			{#if frameSrc}
 				<!-- A grain is another origin. No top navigation without a click, so an
 				     app cannot silently replace the shell with a look-alike page. -->
@@ -146,7 +167,7 @@
 					class="grain-frame"
 					title={grain.title}
 					sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-top-navigation-by-user-activation"
-					allow="clipboard-write; fullscreen"
+					allow={frameAllow}
 					src={frameSrc}></iframe>
 			{:else}
 				<div class="grain-loading"><span class="spinner"></span></div>

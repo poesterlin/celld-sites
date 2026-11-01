@@ -1,7 +1,7 @@
 <script>
 	import { invalidateAll } from "$app/navigation";
 	import { page } from "$app/state";
-	import { install, latestRelease, newHosts } from "#lib/client/install.ts";
+	import { install, latestRelease, newDevices, newHosts } from "#lib/client/install.ts";
 	import { askUninstall, oops, toast } from "#lib/client/ui.svelte.ts";
 	import { appMenu, openApp } from "#lib/client/actions.ts";
 	import { ICON, sized } from "@hamstr/ui/icons.ts";
@@ -40,6 +40,7 @@
 	const releaseBadges = (release) => [
 		installed?.version === release.version && { label: "Installed", tone: "ok" },
 		installed && newHosts(release, installed).length && { label: "New internet access", tone: "warn" },
+		installed && newDevices(release, installed).length && { label: "Wants the microphone", tone: "warn" },
 	].filter(Boolean);
 
 	// --- get, update, switch version, open, remove -----------------------------------
@@ -49,14 +50,16 @@
 	async function get(release, update = Boolean(installed)) {
 		if (busy || !release) return;
 		const added = newHosts(release, installed);
+		const addedDevices = newDevices(release, installed);
 		const egress = release.manifest?.egress ?? [];
-		if (added.length) return void (consent = { release, update, name: app.name, app, version: release.version, egress, added });
+		const devices = release.manifest?.devices ?? [];
+		if (added.length || addedDevices.length) return void (consent = { release, update, name: app.name, app, version: release.version, egress, added, devices, addedDevices });
 		await run(release, update, false);
 	}
 	async function run(release, update, allowEgress) {
 		busy = release.version;
 		try {
-			await install({ slug: app.slug, version: release.version, name: app.name, update, allowEgress });
+			await install({ id: listing?.id ?? installed?.storeId ?? app.slug, version: release.version, name: app.name, update, allowEgress });
 			consent = null;
 			await invalidateAll();
 		} catch (err) {
@@ -68,7 +71,7 @@
 
 	const open = () => openApp(installed);
 
-	const storeLink = $derived(data.storePublic && app ? `${data.storePublic}/apps/${app.slug}` : null);
+	const storeLink = $derived(data.storePublic && app ? `${data.storePublic}/apps/${listing?.id ?? installed?.storeId ?? app.slug}` : null);
 	const menu = $derived([
 		{ label: "View in the Hamstr Store", icon: "external", hidden: !storeLink || !listing, onclick: () => window.open(storeLink, "_blank", "noopener") },
 		{ label: "Uninstall…", icon: "trash", danger: true, separator: true, hidden: !(data.admin && installed), onclick: () => askUninstall(installed) },

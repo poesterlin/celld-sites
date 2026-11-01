@@ -7,25 +7,28 @@
 	import { appMenu, openApp } from "#lib/client/actions.ts";
 	import AppCard from "@hamstr/ui/components/AppCard.svelte";
 	import ConsentModal from "#lib/components/ConsentModal.svelte";
-	import { install as installApp, latestRelease, newHosts } from "#lib/client/install.ts";
+	import { install as installApp, latestRelease, newDevices, newHosts } from "#lib/client/install.ts";
 
 	let { data } = $props();
 
 	const admin = $derived(data.admin);
-	const installed = $derived(new Map(data.apps.map((a) => [a.slug, a])));
+	// Store cards are <publisher>/<app> (id); installed apps know theirs (storeId),
+	// except ones from before namespaces until the store has told us.
+	const keyOf = (app) => app.id ?? app.storeId ?? app.slug;
+	const installed = $derived(new Map(data.apps.map((a) => [keyOf(a), a])));
 
 	let market = $state(data.market);
 	let query = $state(page.url.searchParams.get("q") ?? "");
 	let updates = $state({});
-	let busy = $state(""); // the slug being installed or updated
+	let busy = $state(""); // the id being installed or updated
 
 	// What the store lists, plus installed apps it no longer lists (so they can
 	// still be opened or removed).
 	const cards = $derived.by(() => {
 		const listed = market.apps ?? [];
 		if (query) return listed;
-		const seen = new Set(listed.map((a) => a.slug));
-		return [...listed, ...data.apps.filter((a) => !seen.has(a.slug))];
+		const seen = new Set(listed.map(keyOf));
+		return [...listed, ...data.apps.filter((a) => !seen.has(keyOf(a)))];
 	});
 
 	onMount(() => {
@@ -44,21 +47,22 @@
 		}, 250);
 	}
 
-	// "Get" and "Update" go straight through; only new internet access asks first.
+	// "Get" and "Update" go straight through; only new internet access or devices ask first.
 	let consent = $state(null);
-	async function get(slug, update = false) {
+	async function get(id, update = false) {
 		if (busy) return;
-		busy = slug;
+		busy = id;
 		try {
-			const detail = await api(`/api/market/${encodeURIComponent(slug)}`);
+			const detail = await api(`/api/market/${id.split("/").map(encodeURIComponent).join("/")}`);
 			const release = latestRelease(detail);
 			if (!release) throw new Error(`${detail.app.name} has no published release`);
-			const added = newHosts(release, installed.get(slug));
-			if (added.length) {
-				consent = { slug, update, release, name: detail.app.name, app: detail.app, version: release.version, egress: release.manifest.egress, added };
+			const added = newHosts(release, installed.get(id));
+			const addedDevices = newDevices(release, installed.get(id));
+			if (added.length || addedDevices.length) {
+				consent = { id, update, release, name: detail.app.name, app: detail.app, version: release.version, egress: release.manifest.egress ?? [], added, devices: release.manifest.devices ?? [], addedDevices };
 				return;
 			}
-			await run(slug, release.version, detail.app.name, update, false);
+			await run(id, release.version, detail.app.name, update, false);
 		} catch (err) {
 			oops(err);
 		} finally {
@@ -66,12 +70,13 @@
 		}
 	}
 
-	async function run(slug, version, name, update, allowEgress) {
-		busy = slug;
+	async function run(id, version, name, update, allowEgress) {
+		busy = id;
 		try {
-			await installApp({ slug, version, name, update, allowEgress });
+			await installApp({ id, version, name, update, allowEgress });
 			consent = null;
-			delete updates[slug];
+			const mine = installed.get(id);
+			if (mine) delete updates[mine.slug];
 			await invalidateAll();
 		} catch (err) {
 			oops(err);
@@ -82,12 +87,14 @@
 
 	// Right click on a card: the installed app's menu, or Get / Details.
 	function cardMenu(app) {
-		const mine = installed.get(app.slug);
-		const details = { label: "Details", icon: "info", onclick: () => goto(`/store/${app.slug}`) };
-		if (!mine) return [{ label: "Get", icon: "download", hidden: !admin || Boolean(busy), onclick: () => get(app.slug) }, details];
+		const id = keyOf(app);
+		const mine = installed.get(id);
+		const details = { label: "Details", icon: "info", onclick: () => goto(`/store/${id}`) };
+		if (!mine) return [{ label: "Get", icon: "download", hidden: !admin || Boolean(busy), onclick: () => get(id) }, details];
+		const update = updates[mine.slug];
 		return [
 			...appMenu(mine, { admin, here: "store" }).slice(0, -1),
-			{ label: `Update to v${updates[app.slug]?.version}`, icon: "restore", hidden: !admin || !updates[app.slug] || Boolean(busy), onclick: () => get(app.slug, true) },
+			{ label: `Update to v${update?.version}`, icon: "restore", hidden: !admin || !update || Boolean(busy), onclick: () => get(id, true) },
 			{ ...details, separator: true },
 			...appMenu(mine, { admin, here: "store" }).slice(-1),
 		];
@@ -111,31 +118,33 @@
 			<p class="error">{market.error}</p>
 		{/if}
 		<div class="cards">
-			{#each cards as app (app.slug)}
-				{@const mine = installed.get(app.slug)}
+			{#each cards as app (keyOf(app))}
+				{@const id = keyOf(app)}
+				{@const mine = installed.get(id)}
+				{@const update = mine && updates[mine.slug]}
 				<AppCard
 					{app}
-					href="/store/{app.slug}"
+					href="/store/{id}"
 					meta="{app.publisher ?? ""}{app.publisher && app.version ? " · " : ""}{app.version ? `v${mine?.version ?? app.version}` : ""}"
 					menu={() => cardMenu(app)}
 				>
 					{#snippet actions()}
 						{#if mine}
 							<button type="button" class="button small" onclick={() => openApp(mine)}>Open</button>
-							{#if updates[app.slug]}
-								<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(app.slug, true)}>
-									{#if busy === app.slug}<span class="spinner"></span> Updating{:else}Update to v{updates[app.slug].version}{/if}
+							{#if update}
+								<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(id, true)}>
+									{#if busy === id}<span class="spinner"></span> Updating{:else}Update to v{update.version}{/if}
 								</button>
 							{/if}
 							{#if admin}
 								<button type="button" class="button quiet small danger-text" onclick={() => askUninstall(mine)}>Uninstall</button>
 							{/if}
 						{:else if admin}
-							<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(app.slug)}>
-								{#if busy === app.slug}<span class="spinner"></span> Getting{:else}Get{/if}
+							<button type="button" class="button ghost small" disabled={Boolean(busy)} onclick={() => get(id)}>
+								{#if busy === id}<span class="spinner"></span> Getting{:else}Get{/if}
 							</button>
 						{/if}
-						<a class="button quiet small push" href="/store/{app.slug}">Details</a>
+						<a class="button quiet small push" href="/store/{id}">Details</a>
 					{/snippet}
 				</AppCard>
 			{:else}
@@ -148,8 +157,8 @@
 {#if consent}
 	<ConsentModal
 		{consent}
-		busy={busy === consent.slug}
+		busy={busy === consent.id}
 		onclose={() => (consent = null)}
-		onallow={() => run(consent.slug, consent.version, consent.name, consent.update, true)}
+		onallow={() => run(consent.id, consent.version, consent.name, consent.update, true)}
 	/>
 {/if}

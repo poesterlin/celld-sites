@@ -17,6 +17,7 @@ export const ICON = {
 	trash: svg('<path d="M4 7h16M9 7V4.8c0-.4.4-.8.8-.8h4.4c.4 0 .8.4.8.8V7M6.5 7l.9 12.2c.1.5.5.8 1 .8h7.2c.5 0 .9-.3 1-.8L17.5 7"/>'),
 	restore: svg('<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>'),
 	pencil: svg('<path d="M14.5 5.5l4 4M4 20l1-4.5L15.8 4.7a1.4 1.4 0 0 1 2 0l1.5 1.5a1.4 1.4 0 0 1 0 2L8.5 19 4 20z"/>'),
+	mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'),
 	info: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>'),
 	plus: svg('<path d="M12 5v14M5 12h14"/>'),
 	chevron: svg('<path d="M9 6l6 6-6 6"/>'),

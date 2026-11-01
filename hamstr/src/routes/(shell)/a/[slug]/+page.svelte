@@ -156,6 +156,7 @@
 					<span class="chip">v{app.version}</span>
 					<span class="chip">{data.mine.length} {data.mine.length === 1 ? "item" : "items"}</span>
 					{#if app.egress.length}<span class="chip warn" title="Can connect to: {app.egress.join(", ")}">Uses the internet</span>{:else}<span class="chip" title="Can't connect to anything outside this Hamstr; its data never leaves it">Doesn't use the internet</span>{/if}
+					{#if app.devices.includes("microphone")}<span class="chip warn" title="Can ask to use your microphone">Uses the microphone</span>{/if}
 					{#if app.canExport}<span class="chip">Exports data</span>{/if}
 				</div>
 			</div>
@@ -311,6 +312,7 @@
 			<ul class="perm-list">
 				<li>Keep data inside each item, separately per item</li>
 				{#if app.egress.length}<li><strong>Connect to the internet:</strong> {app.egress.join(", ")}</li>{:else}<li>No internet access</li>{/if}
+				{#if app.devices.includes("microphone")}<li><strong>Use your microphone</strong> (your browser asks first; needs https)</li>{/if}
 				<li>{app.canExport ? "Download each item's data, or a full backup to restore later" : "Back up each item and restore it later, or as a new item"}</li>
 				<li>{app.instances === "single" ? "One per person, opened straight from Home" : "As many as you like"}</li>
 			</ul>
@@ -323,7 +325,7 @@
 		</dl>
 		<div class="sheet-foot">
 			{#if data.admin}<button type="button" class="button quiet danger-text push-left" onclick={() => ((about = false), askUninstall(app))}>Uninstall…</button>{/if}
-			<a class="button ghost" href="/store/{app.slug}">View in Store</a>
+			<a class="button ghost" href="/store/{app.storeId ?? app.slug}">View in Store</a>
 			<button type="button" class="button" onclick={() => (about = false)}>Done</button>
 		</div>
 	</Modal>

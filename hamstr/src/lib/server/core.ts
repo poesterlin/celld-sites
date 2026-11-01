@@ -239,6 +239,9 @@ export function createCore(options: CoreOptions = {}) {
 			throw err;
 		}
 	}
+	// Store apps are <publisher>/<app>: remember which one each installed app
+	// is, so an update can never swap in someone else's app of the same name.
+	if (!db.prepare("SELECT 1 FROM pragma_table_info('apps') WHERE name = 'store_id'").get()) db.exec("ALTER TABLE apps ADD COLUMN store_id TEXT");
 	// --- accounts ---------------------------------------------------------------------
 	// People, groups, sign-in providers, invites and sessions live in their own
 	// database (lib/auth); this one keeps a users row per person for the grains.
@@ -303,6 +306,7 @@ export function createCore(options: CoreOptions = {}) {
 		user: db.prepare("SELECT * FROM users WHERE id = ?"),
 		userBySub: db.prepare("SELECT * FROM users WHERE sub = ?"),
 		app: db.prepare("SELECT * FROM apps WHERE slug = ?"),
+		appByStoreId: db.prepare("SELECT * FROM apps WHERE store_id = ?"),
 		grain: db.prepare("SELECT * FROM grains WHERE id = ?"),
 	};
 
@@ -351,6 +355,7 @@ export function createCore(options: CoreOptions = {}) {
 		const m = manifestOf(app);
 		return {
 			slug: app.slug,
+			storeId: app.store_id ?? null,
 			name: app.name,
 			icon: app.icon,
 			summary: app.summary,
@@ -361,6 +366,7 @@ export function createCore(options: CoreOptions = {}) {
 			version: app.version,
 			canExport: Boolean(m.export),
 			egress: m.egress ?? [],
+			devices: m.devices ?? [],
 			instances: m.instances ?? "many",
 			installedAt: app.installed_at,
 			updatedAt: app.updated_at,
@@ -403,30 +409,65 @@ export function createCore(options: CoreOptions = {}) {
 		return body;
 	}
 
-	/** Install or update an app; updates move every grain of it to the new code. */
+	const storePath = (id) => String(id).split("/").map(encodeURIComponent).join("/");
+
+	/** Which store app an installed app from before namespaces is. The store
+	 *  answers bare names only for apps that existed then, so a new
+	 *  "someone/<name>" can never claim it. */
+	async function legacyStoreId(slug) {
+		try {
+			return (await storeJson(`/api/v1/apps/${encodeURIComponent(slug)}`)).app?.id ?? null;
+		} catch {
+			return null;
+		}
+	}
+	async function backfillStoreIds() {
+		for (const row of db.prepare("SELECT slug FROM apps WHERE store_id IS NULL").all()) {
+			const id = await legacyStoreId(row.slug);
+			if (id && id.split("/").pop() === row.slug) db.prepare("UPDATE apps SET store_id = ? WHERE slug = ? AND store_id IS NULL").run(id, row.slug);
+		}
+	}
+
+	/** Install or update an app (`id` is the store's <publisher>/<app>); updates
+	 *  move every grain of it to the new code. Locally an app goes by its own
+	 *  name, so one Hamstr holds one app of each name. */
 	const installing = new Map();
-	async function install(slug, { version, allowEgress, user }) {
-		if (installing.has(slug)) throw new HttpError(409, `${slug} is already being installed`);
+	async function install(id, { version, allowEgress, user }) {
+		if (installing.has(id)) throw new HttpError(409, `${id} is already being installed`);
 		const job = (async () => {
-			const detail: any = await storeJson(`/api/v1/apps/${encodeURIComponent(slug)}`);
+			const detail: any = await storeJson(`/api/v1/apps/${storePath(id)}`);
+			// The store's name for it (an old bare name redirects to it).
+			const storeId = String(detail.app?.id ?? id);
 			const releases = (detail.releases ?? []).filter((r) => r.status === "published");
 			const release = version ? releases.find((r) => r.version === version) : releases[0];
-			if (!release) throw new HttpError(404, version ? `${slug}@${version} is not published` : `${slug} has no published release`);
+			if (!release) throw new HttpError(404, version ? `${storeId}@${version} is not published` : `${storeId} has no published release`);
 			let manifest;
 			try {
 				manifest = validateManifest(release.manifest);
 			} catch (err) {
 				throw new HttpError(422, `the store's manifest is invalid: ${err.message}`);
 			}
-			if (manifest.slug !== slug) throw new HttpError(422, "the release manifest is for another app");
+			if (manifest.slug !== storeId.split("/").pop()) throw new HttpError(422, "the release manifest is for another app");
+			const slug = manifest.slug;
 			const existing = q.app.get(slug);
+			if (existing) {
+				const owner = existing.store_id ?? (await legacyStoreId(slug));
+				if (owner !== storeId) {
+					throw new HttpError(409, `this Hamstr already has an app called ${existing.name}${owner ? ` (${owner})` : ""}; remove it before getting ${storeId}`);
+				}
+			}
 			const oldEgress = existing ? (manifestOf(existing).egress ?? []) : [];
 			const newEgress = manifest.egress ?? [];
-			const needsConsent = newEgress.some((h) => !oldEgress.includes(h));
-			if (needsConsent && !allowEgress) {
+			const oldDevices = existing ? (manifestOf(existing).devices ?? []) : [];
+			const newDevices = (manifest.devices ?? []).filter((d) => !oldDevices.includes(d));
+			// `allowEgress` is the admin's consent to everything the install dialog listed: hosts and devices.
+			if (newEgress.some((h) => !oldEgress.includes(h)) && !allowEgress) {
 				throw new HttpError(403, `${manifest.name} wants network access to ${newEgress.join(", ")}; review and allow it first`);
 			}
-			const { file, sha } = await downloadBundle(config.store, slug, release.version, release.bundleSha256, tmpDir);
+			if (newDevices.length && !allowEgress) {
+				throw new HttpError(403, `${manifest.name} wants to use the ${newDevices.join(", ")}; review and allow it first`);
+			}
+			const { file, sha } = await downloadBundle(config.store, storeId, release.version, release.bundleSha256, tmpDir);
 			let uploaded;
 			try {
 				uploaded = await celld.upload(file, { egress: newEgress, probeHost: `${config.grainPrefix}probe-${randomId(8)}.${config.grainDomain}` });
@@ -436,12 +477,12 @@ export function createCore(options: CoreOptions = {}) {
 			const stamp = now();
 			if (existing) {
 				db.prepare(
-					"UPDATE apps SET name = ?, icon = ?, summary = ?, version = ?, code_version = ?, bundle_sha = ?, manifest = ?, updated_at = ? WHERE slug = ?",
-				).run(manifest.name, manifest.icon, manifest.summary, manifest.version, uploaded.version, sha, JSON.stringify(manifest), stamp, slug);
+					"UPDATE apps SET name = ?, icon = ?, summary = ?, version = ?, code_version = ?, bundle_sha = ?, manifest = ?, updated_at = ?, store_id = ? WHERE slug = ?",
+				).run(manifest.name, manifest.icon, manifest.summary, manifest.version, uploaded.version, sha, JSON.stringify(manifest), stamp, storeId, slug);
 			} else {
 				db.prepare(
-					"INSERT INTO apps (slug, name, icon, summary, version, code_version, bundle_sha, manifest, installed_by, installed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-				).run(slug, manifest.name, manifest.icon, manifest.summary, manifest.version, uploaded.version, sha, JSON.stringify(manifest), user.id, stamp, stamp);
+					"INSERT INTO apps (slug, store_id, name, icon, summary, version, code_version, bundle_sha, manifest, installed_by, installed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				).run(slug, storeId, manifest.name, manifest.icon, manifest.summary, manifest.version, uploaded.version, sha, JSON.stringify(manifest), user.id, stamp, stamp);
 			}
 			// Move existing grains. Their Durable Objects keep their data; migrations run on first use.
 			const failed = [];
@@ -458,11 +499,11 @@ export function createCore(options: CoreOptions = {}) {
 			}
 			return { app: appJson(q.app.get(slug)), updatedGrains: moved, failedGrains: failed };
 		})();
-		installing.set(slug, job);
+		installing.set(id, job);
 		try {
 			return await job;
 		} finally {
-			installing.delete(slug);
+			installing.delete(id);
 		}
 	}
 
@@ -771,6 +812,8 @@ export function createCore(options: CoreOptions = {}) {
 	}
 	const timer = setInterval(() => housekeeping().catch((err) => console.error("hamstr: housekeeping failed", err)), 10 * 60 * 1000);
 	timer.unref();
+	// Apps installed before namespaces learn their <publisher>/<app> from the store.
+	if (config.store) setTimeout(() => backfillStoreIds().catch(() => {}), 2000).unref();
 
 	return {
 		NAME,
@@ -822,6 +865,7 @@ export function createCore(options: CoreOptions = {}) {
 		appJson,
 		grainJson,
 		storeJson,
+		storePath,
 		install,
 		createGrain,
 		openApp,

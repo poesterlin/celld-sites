@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createStore } from "../../store/server.ts";
 import { bundle, call, manifest } from "../../store/test/helpers.ts";
+import { grainPolicy } from "../lib/proxy.ts";
 import { createHamstr, siteOf } from "../server.ts";
 import { Browser, mockCelld, mockIdp } from "./helpers.ts";
 
@@ -34,7 +35,7 @@ let port;
 
 async function publish(over, version = "aaaaaaaaaaaa", files = { "index.html": `<h1>${version}</h1>` }) {
 	const m = manifest(over);
-	const created = await call(storeBase, `/api/v1/apps/${m.slug}/releases`, { method: "POST", token: publisherToken, json: { manifest: m } });
+	const created = await call(storeBase, `/api/v1/apps/pub/${m.slug}/releases`, { method: "POST", token: publisherToken, json: { manifest: m } });
 	assert.equal(created.status, 201, created.text);
 	const bytes = await bundle({ version, files });
 	const up = await call(storeBase, created.body.upload.url, { method: "PUT", token: publisherToken, body: bytes, headers: { "content-type": "application/gzip" } });
@@ -74,11 +75,12 @@ before(async () => {
 	celld = await mockCelld();
 	store = createStore({ dataDir: join(dir, "store"), rateLimit: false, logging: false });
 	storeBase = `http://127.0.0.1:${(await store.listen(0, "127.0.0.1")).port}`;
-	const reg = await call(storeBase, "/api/v1/publishers", { method: "POST", json: { name: "pub", password: "correct horse battery" } });
+	const reg = await call(storeBase, "/api/v1/publishers", { method: "POST", json: { name: "pub", password: "correct horse battery", acceptPolicy: true } });
 	publisherToken = reg.body.token;
 	await publish({ slug: "board", name: "Board", icon: "📌", ...ROLES });
 	await publish({ slug: "plain", name: "Plain", icon: "▫" }, "bbbbbbbbbbbb");
 	await publish({ slug: "fetcher", name: "Fetcher", egress: ["api.example.com"] }, "cccccccccccc");
+	await publish({ slug: "listener", name: "Listener", devices: ["microphone"] }, "dddddddddddd");
 	hamstr = createHamstr({
 		dataDir: join(dir, "hamstr"),
 		shellHost: SHELL,
@@ -259,9 +261,9 @@ describe("apps and grains", () => {
 		bob = await signIn(BOB);
 	});
 	it("lets only admins install, and checks the app boots on a probe site", async () => {
-		assert.equal((await apiCall(bob, "POST", "/api/apps", { slug: "board" })).status, 403);
+		assert.equal((await apiCall(bob, "POST", "/api/apps", { id: "pub/board" })).status, 403);
 		celld.calls.length = 0;
-		const r = await apiCall(ada, "POST", "/api/apps", { slug: "board" });
+		const r = await apiCall(ada, "POST", "/api/apps", { id: "pub/board" });
 		assert.equal(r.status, 200, r.text);
 		const seq = celld.calls.map((c) => `${c.method} ${c.path}`);
 		assert.deepEqual(seq.slice(0, 2), ["POST /blobs/missing", "PUT /blob"]);
@@ -270,20 +272,49 @@ describe("apps and grains", () => {
 		assert.match(probe, /^grain-probe-[a-z0-9]{8}\.grains\.test$/);
 		assert.ok(celld.calls.some((c) => c.method === "DELETE" && c.path === "/site" && c.query.id === probe), "probe removed");
 		assert.equal(celld.sites.has(probe), false);
-		assert.equal((await apiCall(ada, "POST", "/api/apps", { slug: "plain" })).status, 200);
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { id: "pub/plain" })).status, 200);
 	});
 	it("refuses an app whose start-up check fails", async () => {
 		celld.failCheck = true;
-		const r = await apiCall(ada, "POST", "/api/apps", { slug: "fetcher", allowEgress: true });
+		const r = await apiCall(ada, "POST", "/api/apps", { id: "pub/fetcher", allowEgress: true });
 		celld.failCheck = false;
 		assert.equal(r.status, 422);
 		assert.match(r.json.error, /start-up check/);
 	});
 	it("needs explicit consent for network access", async () => {
-		const r = await apiCall(ada, "POST", "/api/apps", { slug: "fetcher" });
+		const r = await apiCall(ada, "POST", "/api/apps", { id: "pub/fetcher" });
 		assert.equal(r.status, 403);
 		assert.match(r.json.error, /api\.example\.com/);
-		assert.equal((await apiCall(ada, "POST", "/api/apps", { slug: "fetcher", allowEgress: true })).status, 200);
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { id: "pub/fetcher", allowEgress: true })).status, 200);
+	});
+	it("needs explicit consent for the microphone, and only then lists it", async () => {
+		const r = await apiCall(ada, "POST", "/api/apps", { id: "pub/listener" });
+		assert.equal(r.status, 403);
+		assert.match(r.json.error, /microphone/);
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { id: "pub/listener", allowEgress: true })).status, 200);
+		const apps = await apiCall(ada, "GET", "/api/apps");
+		assert.deepEqual(apps.json.apps.find((a) => a.slug === "listener").devices, ["microphone"]);
+		assert.deepEqual(apps.json.apps.find((a) => a.slug === "plain").devices, []);
+	});
+	it("never lets another publisher's app of the same name replace an installed one", async () => {
+		const other = (await call(storeBase, "/api/v1/publishers", { method: "POST", json: { name: "someone", password: "correct horse battery", acceptPolicy: true } })).body.token;
+		const m = manifest({ slug: "plain", name: "Plain", icon: "▫", version: "9.0.0" });
+		const created = await call(storeBase, "/api/v1/apps/someone/plain/releases", { method: "POST", token: other, json: { manifest: m } });
+		await call(storeBase, created.body.upload.url, { method: "PUT", token: other, body: await bundle({ version: "999999999999" }), headers: { "content-type": "application/gzip" } });
+		const r = await apiCall(ada, "POST", "/api/apps", { id: "someone/plain" });
+		assert.equal(r.status, 409);
+		assert.match(r.json.error, /already has an app called Plain \(pub\/plain\)/);
+		const apps = (await ada.request("GET", "/api/apps", { host: SHELL })).json.apps;
+		assert.equal(apps.find((a) => a.slug === "plain").storeId, "pub/plain");
+	});
+	it("holds a grain's browser code to the app's declared hosts", () => {
+		const none = grainPolicy([], "https://shell.test");
+		assert.match(none, /connect-src 'self';/);
+		assert.match(none, /img-src 'self' data: blob:;/);
+		const some = grainPolicy(["api.example.com"], "https://shell.test");
+		assert.match(some, /connect-src 'self' https:\/\/api\.example\.com https:\/\/\*\.api\.example\.com wss:\/\/api\.example\.com;/);
+		assert.match(some, /font-src 'self' data:;/, "fonts never come from elsewhere");
+		assert.match(some, /frame-ancestors https:\/\/shell\.test$/);
 	});
 	it("creates a grain as its own celld site, with the app's egress", async () => {
 		celld.calls.length = 0;
@@ -314,7 +345,7 @@ describe("apps and grains", () => {
 	});
 	it("opens a single-instance app's one grain, making it on first open", async () => {
 		await publish({ slug: "family", name: "Family", instances: "single" }, "eeeeeeeeeeee");
-		assert.equal((await apiCall(ada, "POST", "/api/apps", { slug: "family" })).status, 200);
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { id: "pub/family" })).status, 200);
 		const apps = (await bob.request("GET", "/api/apps", { host: SHELL })).json.apps;
 		assert.equal(apps.find((a) => a.slug === "family").instances, "single");
 		assert.equal(apps.find((a) => a.slug === "board").instances, "many");
@@ -357,7 +388,7 @@ describe("apps and grains", () => {
 	});
 	it("downloads a grain's data from the app's export path, as the owner only", async () => {
 		await publish({ slug: "notes", name: "Notes", export: "/export?all=1" }, "ffffffffffff");
-		assert.equal((await apiCall(ada, "POST", "/api/apps", { slug: "notes" })).status, 200);
+		assert.equal((await apiCall(ada, "POST", "/api/apps", { id: "pub/notes" })).status, 200);
 		const apps = (await bob.request("GET", "/api/apps", { host: SHELL })).json.apps;
 		assert.equal(apps.find((a) => a.slug === "notes").canExport, true);
 		assert.equal(apps.find((a) => a.slug === "plain").canExport, false);
@@ -438,7 +469,13 @@ describe("the grain proxy", () => {
 		assert.equal(h["x-hamstr-grain-id"], board.id);
 		assert.equal(h.cookie, "app=1", "the grain session cookie never reaches the app");
 		assert.equal(h["x-forwarded-proto"], "http");
-		assert.equal(r.headers["content-security-policy"], `frame-ancestors http://${SHELL}`);
+		// Hamstr's policy: framed by the shell only, and the page's code can reach
+		// nothing beyond the grain itself (this app declares no hosts).
+		const policy = r.headers["content-security-policy"];
+		assert.match(policy, new RegExp(`frame-ancestors http://${SHELL.replace(/\./g, "\\.")}$`));
+		assert.match(policy, /connect-src 'self';/);
+		assert.match(policy, /script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:;/);
+		assert.match(policy, /font-src 'self' data:;/);
 	});
 	it("passes a grain's 304 through without dying", async () => {
 		await enter(bob, board.id);
@@ -491,7 +528,8 @@ describe("the grain proxy", () => {
 	it("lets a grain set cookies for itself only", async () => {
 		const r = await bob.request("GET", "/setcookie", { host: grainHost(board.id) });
 		assert.deepEqual(r.headers["set-cookie"], ["app=1; Path=/"]);
-		assert.equal(r.headers["content-security-policy"], `default-src 'self', frame-ancestors http://${SHELL}`);
+		// The app's own policy stays, next to Hamstr's: the browser enforces both.
+		assert.match(r.headers["content-security-policy"], new RegExp(`^default-src 'self', default-src 'self'; .*frame-ancestors http://${SHELL.replace(/\./g, "\\.")}$`));
 	});
 	it("ends grain sessions when the shell session signs out", async () => {
 		const carol = await signIn(BOB);
@@ -542,7 +580,7 @@ describe("trash and updates", () => {
 		await publish({ slug: "board", name: "Board", icon: "📌", version: "1.1.0", ...ROLES }, "dddddddddddd");
 		const updates = await ada.request("GET", "/api/apps/updates", { host: SHELL });
 		assert.equal(updates.json.updates.board.version, "1.1.0");
-		const r = await apiCall(ada, "POST", "/api/apps", { slug: "board" });
+		const r = await apiCall(ada, "POST", "/api/apps", { id: "pub/board" });
 		assert.equal(r.status, 200, r.text);
 		assert.equal(r.json.updatedGrains, 1);
 		assert.equal(celld.sites.get(grainHost(board.id)), "dddddddddddd");

@@ -6,6 +6,7 @@
 	let { manifest, name, place = "your Hamstr" } = $props();
 
 	const egress = $derived(manifest?.egress ?? []);
+	const mic = $derived((manifest?.devices ?? []).includes("microphone"));
 </script>
 
 <div class="caps">
@@ -25,6 +26,15 @@
 			{/if}
 		</div>
 	</div>
+	{#if mic}
+		<div class="cap warn">
+			<span class="cap-icon">{@html ICON.mic}</span>
+			<div>
+				<strong>Can ask to use your microphone</strong>
+				<p class="dim small">Only after an admin allows it, and your browser still asks first. It needs a secure (https) address to work.</p>
+			</div>
+		</div>
+	{/if}
 	<div class="cap">
 		<span class="cap-icon">{@html ICON.people}</span>
 		<div><strong>Private to you</strong><p class="dim small">Only you can open what you make with it. Other people on {place} have their own.</p></div>
