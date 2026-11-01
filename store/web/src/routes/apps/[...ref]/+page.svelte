@@ -28,7 +28,7 @@
 			.then((body) => {
 				if (want !== slug) return;
 				detail = body;
-				if (body.app.id !== want) goto(`/apps/${body.app.id}${page.url.search}`, { replaceState: true, noScroll: true });
+				if (body.app.id !== want) goto(`/apps/${body.app.id}${page.url.search}`, { replace: true, reset: false });
 			})
 			.catch((err) => want === slug && (error = err.status === 404 ? "not-found" : err.message));
 	});

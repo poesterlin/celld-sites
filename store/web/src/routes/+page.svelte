@@ -45,7 +45,9 @@
 	function filter(next) {
 		const params = new URLSearchParams(page.url.searchParams);
 		for (const [key, value] of Object.entries(next)) value ? params.set(key, value) : params.delete(key);
-		goto(`?${params}`, { replaceState: true, keepFocus: true, noScroll: true });
+		// `reset: false` keeps the search field focused while typing; SvelteKit 3
+		// removed the old keepFocus/noScroll options.
+		goto(`?${params}`, { replace: true, reset: false });
 	}
 
 	let timer;
