@@ -19,19 +19,24 @@ browser → Traefik → celld (router) → site → its Durable Objects
 
 ## Folders
 
-| Folder | What it is |
-| --- | --- |
-| `router/` | The router that picks a site by hostname |
-| `node/` | The celld node image |
-| `tools/` | Deploy, preview, admin and backup scripts |
-| `sites/` | Example sites, each with a `RECIPE.md` |
-| `hamstr/` | Hamstr: grains, accounts, sign-in |
-| `store/` | The Hamstr Store and the `hamstr` CLI |
-| `names/` | Hostnames and certificates for installs |
-| `appliance/` | Everything in one container |
-| `dashboard/` | A read-only status page |
-| `packages/` | Shared design system and app format |
-| `tests/` | API and security tests |
+| Folder | What it is | Status |
+| --- | --- | --- |
+| `router/` | The router that picks a site by hostname | core |
+| `node/` | The celld node image | core |
+| `tools/` | Deploy, preview, admin and backup scripts | core |
+| `sites/` | Example sites, each with a `RECIPE.md` | core (templates) |
+| `hamstr/` | Hamstr: grains, accounts, sign-in | core |
+| `store/` | The Hamstr Store and the `hamstr` CLI | core |
+| `appliance/` | Everything in one container | core |
+| `ha-addon/` | The Home Assistant add-on wrapper | optional |
+| `dashboard/` | A read-only status page | optional |
+| `names/` | Hostnames and certificates for installs | experimental (not deployed) |
+| `adapters/` | Framework adapters (EmDash) | experimental |
+| `packages/` | Shared design system and app format | core |
+| `tests/` | API and security tests | core |
+
+Core runs on every install, optional suits some deployments, experimental is
+not ready to rely on.
 
 ## Start the stack
 
@@ -149,9 +154,9 @@ printf '["api.example.com"]\n' | tools/admin.sh PUT '/egress?host=blog.example.c
 - [hamstr/README.md](../hamstr/README.md): grains, accounts and sign-in.
 - [store/README.md](../store/README.md): the store, publishing, the CLI and moderation.
 
-## EmDash sites
+## EmDash sites (experimental)
 
-[EmDash](https://github.com/emdash-cms/emdash) (an Astro CMS) runs here too:
+[EmDash](https://github.com/emdash-cms/emdash) (an Astro CMS) has an adapter here:
 
 ```sh
 tools/deploy-emdash.sh ../emdash-site blog.example.com
@@ -161,6 +166,8 @@ tools/deploy-emdash.sh ../emdash-site blog.example.com
 - The first person to open it becomes the admin. Open it straight after the first deploy.
 - Email, scheduled publishing and image resizing do not work yet.
 - Each loaded EmDash site uses about 120 MB of memory.
+- Known issue: the first request runs a D1 migration that fails with
+  `not authorized` on celld, so the editor never opens. The cause is not found yet.
 
 ## Data
 

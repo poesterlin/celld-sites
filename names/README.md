@@ -1,5 +1,9 @@
 # Hamstr names
 
+**Not deployed yet.** The service and agent work and are tested, but no public
+service runs; see [Before running it for other people](#before-running-it-for-other-people)
+for what that needs.
+
 Gives every Hamstr install a hostname with a wildcard below it, and a real
 certificate for both, with nothing to set up on the user's side: no domain, no
 DNS server, no reverse proxy. The same idea as Sandstorm's sandcats.io and
