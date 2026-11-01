@@ -354,6 +354,41 @@ describe("store API", () => {
 		assert.equal(bad.status, 422);
 	});
 
+	it("searches by word, prefix, typo and accent, best match first", async () => {
+		const published = async (slug: string, name: string, summary: string, description = "") => {
+			assert.equal((await publish(slug, "1.0.0", { name, summary, description })).uploaded.status, 201);
+		};
+		await published("tuner", "Guitar Tuner", "Tune your guitar by ear", "A chromatic tuner with a metronome.");
+		await published("pins", "Pinboard", "A board for notes", "Stick notes on a shared board.");
+		await published("cafe", "Café Ledger", "Track café spendings", "What you spend on coffee.");
+		await published("sketch", "Excalidraw", "A whiteboard", "Sketch diagrams together.");
+
+		const names = async (q: string) => (await call(base, `/api/v1/apps?q=${encodeURIComponent(q)}`)).body.apps.map((a) => a.name);
+		const total = async (q: string) => (await call(base, `/api/v1/apps?q=${encodeURIComponent(q)}`)).body.total;
+
+		// Case never matters.
+		assert.deepEqual(await names("TUNER"), ["Guitar Tuner"]);
+		// Half-typed words and typos still find the app.
+		assert.deepEqual(await names("pinb"), ["Pinboard"]);
+		assert.deepEqual(await names("pinbord"), ["Pinboard"]);
+		// Accents are folded in both directions.
+		assert.deepEqual(await names("cafe"), ["Café Ledger"]);
+		assert.deepEqual(await names("CAFÉ"), ["Café Ledger"]);
+		// Words in the description count too.
+		assert.deepEqual(await names("metronome"), ["Guitar Tuner"]);
+		// Every word has to match; stop words are ignored.
+		assert.deepEqual(await names("the guitar tuner"), ["Guitar Tuner"]);
+		// Exact names beat apps that merely mention the word.
+		assert.equal((await names("board"))[0], "board");
+		assert.ok((await names("board")).includes("Pinboard"));
+		// LIKE wildcards in the query are text, not patterns.
+		assert.equal(await total("%"), 0);
+		assert.equal(await total("_"), 0);
+		// The count matches the rows for a query that fits on one page.
+		const result = await call(base, "/api/v1/apps?q=pinbord");
+		assert.equal(result.body.total, result.body.apps.length);
+	});
+
 	it("can require review before listing a release", async () => {
 		const dir2 = mkdtempSync(join(tmpdir(), "store-api-review-"));
 		const reviewed = createStore({ dataDir: dir2, rateLimit: false, logging: false, requireReview: true });

@@ -47,7 +47,14 @@ function wrap(run: Runner): Sql {
 export async function openDb({ url, dir }: { url?: string; dir?: string }): Promise<Db> {
 	if (url) {
 		const { default: pg } = await import("pg");
-		const pool = new pg.Pool({ connectionString: url, max: 10, connectionTimeoutMillis: 10_000, idleTimeoutMillis: 30_000 });
+		const pool = new pg.Pool({
+			connectionString: url,
+			max: 10,
+			connectionTimeoutMillis: 10_000,
+			idleTimeoutMillis: 30_000,
+			// Search's typo branch (`<%`) is only useful below the default 0.6.
+			options: "-c pg_trgm.word_similarity_threshold=0.45",
+		});
 		// An idle client losing its connection must not crash the process; the
 		// pool replaces it on the next query.
 		pool.on("error", (err) => console.error("db: idle connection failed", err.message));
@@ -75,13 +82,21 @@ export async function openDb({ url, dir }: { url?: string; dir?: string }): Prom
 		};
 		return db;
 	}
-	const { PGlite } = await import("@electric-sql/pglite");
+	// Search needs two contrib extensions; PGlite only has them when they are
+	// passed in at creation time (a Postgres server has them from the image).
+	const [{ PGlite }, { pg_trgm }, { unaccent }] = await Promise.all([
+		import("@electric-sql/pglite"),
+		import("@electric-sql/pglite/contrib/pg_trgm"),
+		import("@electric-sql/pglite/contrib/unaccent"),
+	]);
 	let where = "memory://";
 	if (dir) {
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		where = dir;
 	}
-	const lite = await PGlite.create(where);
+	const lite = await PGlite.create({ dataDir: where, extensions: { pg_trgm, unaccent } });
+	// One connection, so a session setting is the database setting.
+	await lite.exec("SET pg_trgm.word_similarity_threshold = 0.45");
 	return {
 		kind: "embedded",
 		...wrap((text, params) => lite.query(text, params as any[])),
@@ -242,6 +257,28 @@ const MIGRATIONS: string[] = [
 	-- A fresh password or token is when a stolen account publishes: such
 	-- releases always go to a person.
 	ALTER TABLE publishers ADD COLUMN password_changed_at timestamptz;
+	`,
+	// Search: one stored tsvector per app, ranked by where the words appear
+	// (name and ref first), with English stemming and accent folding from the
+	// `unaccent` dictionary, so "Café" and "cafe" are the same word and
+	// "boards" finds "board". A trigram index on the title covers what a
+	// tsquery cannot: half-typed words ("tun") and typos ("pinbord"), both as
+	// substrings and with the `<%` similarity operator. Both extensions are
+	// trusted, so the database owner may create them.
+	`
+	CREATE EXTENSION IF NOT EXISTS pg_trgm;
+	CREATE EXTENSION IF NOT EXISTS unaccent;
+	CREATE TEXT SEARCH CONFIGURATION store_search (COPY = english);
+	ALTER TEXT SEARCH CONFIGURATION store_search ALTER MAPPING FOR hword, hword_part, word WITH unaccent, english_stem;
+	ALTER TABLE apps ADD COLUMN search tsvector GENERATED ALWAYS AS (
+		setweight(to_tsvector('store_search', coalesce(name, '')), 'A') ||
+		setweight(to_tsvector('store_search', coalesce(ref, '')), 'A') ||
+		setweight(to_tsvector('store_search', coalesce(summary, '')), 'B') ||
+		setweight(to_tsvector('store_search', coalesce(tags::text, '')), 'B') ||
+		setweight(to_tsvector('store_search', coalesce(description, '')), 'C')
+	) STORED;
+	CREATE INDEX apps_search ON apps USING gin (search);
+	CREATE INDEX apps_title_trgm ON apps USING gin (lower(name || ' ' || summary) gin_trgm_ops);
 	`,
 ];
 

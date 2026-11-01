@@ -65,9 +65,83 @@ const sha256 = (value: string | Buffer): string => createHash("sha256").update(v
 const strip = (value: unknown): string => String(value ?? "").replace(/\/+$/, "");
 const bytes = (n: number): string => `${Math.round((n / 1024 / 1024) * 10) / 10} MiB`;
 
+/** A release's manifest: JSON text in the row, already an object otherwise. */
+const manifestOf = (row) => (typeof row.manifest === "string" ? JSON.parse(row.manifest) : row.manifest);
+
+/** Why "try it" is not on offer for a published release, or null when it is. */
+function demoUnavailable(demoOn: boolean, published): string | null {
+	if (!demoOn) return "demos are not enabled on this store";
+	if (!published) return "no published release";
+	if ((manifestOf(published)?.egress?.length ?? 0) > 0) return "this app needs network access; install it to try it";
+	return null;
+}
+
 const SESSION_COOKIE = "store_session";
 const SESSION_DAYS = 30;
 const TOKEN_RE = /^cub_([a-f0-9]{12})_([A-Za-z0-9_-]{43})$/;
+
+// The full-text query understands "quoted phrases", OR and -exclusions.
+const TSQUERY = `websearch_to_tsquery('store_search', $1)`;
+
+// Apps whose publisher is suspended are not in the catalog.
+const LISTED = `p.suspended_at IS NULL AND EXISTS (SELECT 1 FROM releases r WHERE r.app_id = a.id AND r.status = 'published')`;
+
+/** What a catalog page matches: the WHERE clause and its arguments. `q` reaches
+ *  apps by word, prefix or typo, so only its LIKE pattern needs the text
+ *  lowercased, and its wildcards are defused so a query is never a pattern. */
+function catalogFilter(query: URLSearchParams) {
+	const search = String(query.get("q") ?? "").trim().toLowerCase().slice(0, 100);
+	const tag = String(query.get("tag") ?? "").trim().toLowerCase().slice(0, 20);
+	const category = String(query.get("category") ?? "").trim().toLowerCase().slice(0, 20);
+	const like = search.replace(/[\\%_]/g, (c) => `\\${c}`);
+	// Three ways in, all backed by an index: the stored tsvector, a substring
+	// of the title, and a word in the title close enough to be a typo (`<%`,
+	// threshold 0.45). Description text is reached through the tsvector, not
+	// substrings. `$1` is on the left of `<%` so the trigram index on the title
+	// is usable.
+	const where = `${LISTED}
+		AND ($1 = '' OR a.search @@ ${TSQUERY}
+			OR lower(a.name || ' ' || a.summary) LIKE $4 ESCAPE '\\'
+			OR $1 <% lower(a.name || ' ' || a.summary))
+		AND ($2 = '' OR EXISTS (SELECT 1 FROM app_tags t WHERE t.tag = $2 AND t.app_id = a.id))
+		AND ($3 = '' OR a.category = $3)`;
+	return { search, like, where, args: [search, tag, category, `%${like}%`] };
+}
+
+/** One page of the catalog: ranking, both queries and the total in one place.
+ *  Ranking is the database's job (name and ref weigh more than summary,
+ *  description least); only half-typed words and typos need pg_trgm. */
+async function listCatalog(db: Db, query: URLSearchParams) {
+	const { search, like, where, args } = catalogFilter(query);
+	const limit = Math.min(100, Math.max(1, Number(query.get("limit") ?? 30) || 30));
+	const offset = Math.max(0, Number(query.get("offset") ?? 0) || 0);
+	// With a query: an exact name first, then names starting with it, then the
+	// full-text rank, then trigram closeness; popularity settles the rest.
+	//
+	// The argument lists differ on purpose: Postgres cannot infer a type for a
+	// numbered parameter the statement never uses, so the prefix pattern and
+	// its sort key only exist when there is a query.
+	const order = search
+		? `(lower(a.name) = $1) DESC, (lower(a.name) LIKE $5 ESCAPE '\\') DESC,
+			ts_rank_cd(a.search, ${TSQUERY}, 32) DESC,
+			word_similarity($1, lower(a.name || ' ' || a.summary)) DESC,
+			downloads DESC, a.updated_at DESC
+			LIMIT $6 OFFSET $7`
+		: `a.updated_at DESC LIMIT $5 OFFSET $6`;
+	const rows = await db.query(
+		`SELECT a.*, p.name AS publisher,
+			(SELECT version FROM releases r WHERE r.app_id = a.id AND r.status = 'published' ORDER BY r.published_at DESC LIMIT 1) AS version,
+			(SELECT COUNT(*)::int FROM releases r WHERE r.app_id = a.id AND r.status = 'published') AS release_count,
+			(SELECT COALESCE(SUM(r.downloads), 0)::int FROM releases r WHERE r.app_id = a.id AND r.status = 'published') AS downloads
+		 FROM apps a JOIN publishers p ON p.id = a.publisher_id
+		 WHERE ${where}
+		 ORDER BY ${order}`,
+		search ? [...args, `${like}%`, limit, offset] : [...args, limit, offset],
+	);
+	// The count only needs the filter parameters (the WHERE clause's).
+	const total = (await db.one(`SELECT COUNT(*)::int AS n FROM apps a JOIN publishers p ON p.id = a.publisher_id WHERE ${where}`, args)).n;
+	return { rows, total, limit, offset };
+}
 
 /** What the store reads from its environment or from tests. */
 export interface StoreOptions {
@@ -408,7 +482,6 @@ export function createStore(options: StoreOptions = {}) {
 		return { sha: hash.digest("hex"), size: got };
 	}
 
-	const manifestOf = (row) => (typeof row.manifest === "string" ? JSON.parse(row.manifest) : row.manifest);
 	const tagsOf = (app) => {
 		if (Array.isArray(app.tags)) return app.tags;
 		try {
@@ -712,22 +785,13 @@ export function createStore(options: StoreOptions = {}) {
 		if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
 	});
 
-	// Apps whose publisher is suspended are not in the catalog.
-	const LISTED = `p.suspended_at IS NULL AND EXISTS (SELECT 1 FROM releases r WHERE r.app_id = a.id AND r.status = 'published')`;
-
 	/** Whether the "try it" button is on offer for an app, and why not. */
 	async function demoOffer(releases) {
 		const published = releases.find((r) => r.status === "published");
-		const reason = demoUnavailable(published);
+		const reason = demoUnavailable(demoOn, published);
 		// Under load the button goes away instead of failing when pressed.
 		const busy = reason ? null : await demoBusy();
 		return { enabled: demoOn, available: !reason && !busy, reason: reason ?? busy, busy: Boolean(busy) };
-	}
-	function demoUnavailable(published): string | null {
-		if (!demoOn) return "demos are not enabled on this store";
-		if (!published) return "no published release";
-		if ((manifestOf(published)?.egress?.length ?? 0) > 0) return "this app needs network access; install it to try it";
-		return null;
 	}
 
 	async function api(req, res, method, pathname, url) {
@@ -838,27 +902,7 @@ export function createStore(options: StoreOptions = {}) {
 
 		// Catalog.
 		if (pathname === "/api/v1/apps" && method === "GET") {
-			const search = String(url.searchParams.get("q") ?? "").trim().toLowerCase().slice(0, 100);
-			const tag = String(url.searchParams.get("tag") ?? "").trim().toLowerCase().slice(0, 20);
-			const category = String(url.searchParams.get("category") ?? "").trim().toLowerCase().slice(0, 20);
-			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 30) || 30));
-			const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-			const where = `${LISTED}
-				AND ($1 = '' OR strpos(lower(a.name || ' ' || a.summary || ' ' || a.description || ' ' || a.tags::text), $1) > 0)
-				AND ($2 = '' OR EXISTS (SELECT 1 FROM app_tags t WHERE t.tag = $2 AND t.app_id = a.id))
-				AND ($3 = '' OR a.category = $3)`;
-			const args = [search, tag, category];
-			const rows = await db.query(
-				`SELECT a.*, p.name AS publisher,
-					(SELECT version FROM releases r WHERE r.app_id = a.id AND r.status = 'published' ORDER BY r.published_at DESC LIMIT 1) AS version,
-					(SELECT COUNT(*)::int FROM releases r WHERE r.app_id = a.id AND r.status = 'published') AS release_count,
-					(SELECT COALESCE(SUM(r.downloads), 0)::int FROM releases r WHERE r.app_id = a.id AND r.status = 'published') AS downloads
-				 FROM apps a JOIN publishers p ON p.id = a.publisher_id
-				 WHERE ${where}
-				 ORDER BY a.updated_at DESC LIMIT $4 OFFSET $5`,
-				[...args, limit, offset],
-			);
-			const total = (await db.one(`SELECT COUNT(*)::int AS n FROM apps a JOIN publishers p ON p.id = a.publisher_id WHERE ${where}`, args)).n;
+			const { rows, total, limit, offset } = await listCatalog(db, url.searchParams);
 			return json(res, 200, { apps: rows.map(cardView), total, limit, offset });
 		}
 
